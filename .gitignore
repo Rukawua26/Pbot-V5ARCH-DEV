@@ -1,0 +1,36 @@
+# Secrets
+.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local runtime artifacts
+*.log
+sniper.log*
+logs/
+bot_output.log
+
+# Local databases / state
+*.db
+*.sqlite
+
+# ML models / binaries (local)
+*.pkl
+*.joblib
+
+# Local lock/state files
+.sniperai.lock
+
+# Data/cache artifacts
+data_storage/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

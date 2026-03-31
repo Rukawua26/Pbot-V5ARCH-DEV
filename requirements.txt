@@ -1,0 +1,15 @@
+ccxt
+pandas
+pandas_ta
+rich
+python-dotenv
+requests
+scikit-learn
+pyinstaller
+pyarmor
+xgboost
+lightgbm
+imbalanced-learn
+websockets
+websocket-client
+optuna
