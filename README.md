@@ -160,3 +160,12 @@ Puedes agregar una captura del dashboard para mejorar la portada:
 Ruta sugerida:
 
 - `docs/images/dashboard.png`
+
+## 📚 Documentacion adicional
+
+| Documento | Proposito |
+|---|---|
+| `CONTRIBUTING.md` | Guia de contribucion y checklist de validacion |
+| `SECURITY.md` | Politica de seguridad y reporte de vulnerabilidades |
+| `.github/PULL_REQUEST_TEMPLATE.md` | Plantilla estandar para PRs |
+| `.github/ISSUE_TEMPLATE/` | Plantillas para bugs y mejoras |
