@@ -2,6 +2,11 @@
 
 > 🤖 Bot de trading cuantitativo para Binance Futures, orientado a señales 1H con triaje dinamico, filtros estructurales y modo shadow/real.
 
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Active-22c55e)
+![Strategy](https://img.shields.io/badge/Strategy-Trinity_MT%2FSR%2FG-7c3aed)
+![Risk](https://img.shields.io/badge/Risk-SHOCK_Filter_On-ef4444)
+
 ## 🚀 Resumen rapido
 
 | Modulo | Estado | Descripcion |
@@ -75,6 +80,26 @@ sudo systemctl status sniper-ai.service --no-pager
 | `🔌 LATENCIA` | El fetch del par fue lento y entro en cuarentena temporal |
 | `⏱️ TIMEOUT HILO` | El hilo no termino dentro del timeout del ciclo |
 | `❌ ERR: SIZE_ERROR` | El sizing no dio un notional/cantidad valida |
+
+## 🧯 Quick Troubleshooting
+
+| Problema visible | Causa probable | Accion recomendada |
+|---|---|---|
+| Muchos `🔌 LATENCIA` | Timeout agresivo o API lenta | Revisar timeout de triaje y carga concurrente |
+| `⏱️ TIMEOUT HILO` frecuente | Hilos no completan en ventana del ciclo | Aumentar timeout o reducir retries |
+| `❌ ERR: SIZE_ERROR` | Precision/min notional del simbolo | Revisar sizing y reglas de lote/notional |
+| Todo queda en `50%` | Agentes neutralizados o IA sin boost | Verificar modelos de Ghost y votos MT/SR |
+| Casi todo veta por SHOCK | Distancia minima muy estricta | Calibrar `SHOCK_MIN_DIST_PCT` con datos reales |
+
+## 🗺️ Roadmap
+
+| Fase | Objetivo | Estado |
+|---|---|---|
+| Fase 1 | Baseline y telemetria | ✅ Completado |
+| Fase 2 | Trinity + limpieza de deuda tecnica | ✅ Completado |
+| Fase 3 | Triaje dinamico top volumen | ✅ Completado |
+| Fase 4 | Integracion SHOCK y hardening | ✅ Completado |
+| Fase 5 | Optimizacion continua y tuning live | 🔄 En progreso |
 
 ## 🔐 Seguridad del repositorio
 
