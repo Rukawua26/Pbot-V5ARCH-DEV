@@ -115,3 +115,48 @@ sudo systemctl status sniper-ai.service --no-pager
 | `core/` | Motor de estrategia, riesgo, ejecucion y datos |
 | `tools/` | Utilidades de auditoria, reportes y entrenamiento |
 | `sniper-ai.service` | Servicio systemd listo para despliegue |
+
+## 🏗️ Arquitectura (alto nivel)
+
+```mermaid
+flowchart LR
+    A[Binance Futures API] --> B[DataService]
+    B --> C[Triaje Dinamico Top Volumen]
+    C --> D[Pipeline de Analisis 1H/4H]
+    D --> E[Trinity MT SR G]
+    E --> F[Filtros de Riesgo]
+    F --> G{Decision}
+    G -->|Shadow| H[Shadow Trade]
+    G -->|Real| I[Real Trade]
+    H --> J[Learning Brain / Telemetria]
+    I --> J
+    J --> K[Telegram + Dashboard]
+    K --> L[Logs / DB]
+```
+
+## 🤖 Comandos Telegram utiles
+
+| Comando | Funcion |
+|---|---|
+| `/targets` | Muestra objetivos activos del radar |
+| `/shadow_report` | Reporte de rendimiento shadow |
+| `/paper_review` | Resumen de desempeño paper/real |
+| `/performance_trends` | Eficiencia por tipo de mercado |
+| `/trade <id>` | Detalle completo de un trade por ID |
+| `/trade_detail <symbol>` | Analisis del simbolo en radar |
+| `/dna <symbol>` | Estado genetico de parametros por simbolo |
+| `/explain <symbol>` | Explicacion IA de la decision |
+| `/reset` | Reinicio de PnL diario |
+| `/archive` | Rotacion/archivo de historial DB |
+
+## 🖼️ Vista sugerida del repositorio
+
+Puedes agregar una captura del dashboard para mejorar la portada:
+
+```md
+![Dashboard](docs/images/dashboard.png)
+```
+
+Ruta sugerida:
+
+- `docs/images/dashboard.png`
