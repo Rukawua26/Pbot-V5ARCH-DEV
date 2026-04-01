@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-SNIPER AI v117 - COMMANDER (NEURAL CONSENSUS)
-====================================
-- Versión unificada v117.
-- 14 Agentes con Red Neuronal de Consenso (incl. K Whale Tracker).
-- Sistema de Tiers ELITE/GOLD/SILVER con visualización en RADAR.
-- SL/TP Dinámico Multi-TF + Indulto BTC Gradual.
+SNIPER AI v118 - COMMANDER (TRINITY + SHOCK)
+===========================================
+- Versión unificada v118.
+- Consenso Trinity: MT (Tendencia), SR (Estructura), G (IA).
+- Triaje dinámico por liquidez + filtro SHOCK estructural.
+- Gestión de riesgo y ejecución real/shadow.
 """
 
 import time
@@ -19,8 +19,9 @@ import pickle
 import ctypes
 import platform
 import json
+import importlib.util
 import joblib
-import concurrent.futures  # [V115-PRO] Para paralelismo total
+import concurrent.futures  # [V118-PRO] Para paralelismo total
 import sqlite3
 from collections import Counter
 from typing import Dict, List, Tuple, Optional, Any
@@ -47,6 +48,14 @@ except ImportError:
 import pandas_ta as ta
 
 try:
+    from core.api_weight_tracker import BinanceWeightTracker
+
+    HAS_WEIGHT_TRACKER = True
+except ImportError:
+    BinanceWeightTracker = None
+    HAS_WEIGHT_TRACKER = False
+
+try:
     import tensorflow as tf
 except ImportError:
     tf = None
@@ -61,15 +70,25 @@ from crash_predictor import CrashPredictor
 from core.execution_service import ExecutionService
 from core.risk_engine import RiskEngine
 from core.data_service import DataService
-from core.types import SignalContext  # [V116] Type Fortification
+from core.types import SignalContext  # [V118] Type Fortification
 from core.strategy.shocks import next_shock_distance_pct
+from core.strategy.agents.breakout_agent import BreakoutAgent
+from core.risk.exit_engine_v1 import ExitEngineV1
 
 try:
     from export_master_dataset import export_dataset
 except ImportError:
     export_dataset = None
 
-# --- [V115-PRO] CONFIGURACIÓN PROFESIONAL DE LOGS ---
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+# --- [V118-PRO] CONFIGURACIÓN PROFESIONAL DE LOGS ---
 logger = logging.getLogger("SniperAI")
 logger.setLevel(logging.INFO)
 log_handler = RotatingFileHandler(
@@ -143,13 +162,54 @@ class Bot:
         self.ui = UI()
         self.brain = Brain()
 
-        # --- [V116-ULTIMATE] SERVICIOS DESACOPLADOS ---
+        # --- [V118-ULTIMATE] SERVICIOS DESACOPLADOS ---
         self.execution = ExecutionService(
             Config.BINANCE_API_KEY, Config.BINANCE_API_SECRET
         )
         self.data_service = DataService(self.execution.exchange)
         self.risk_engine = RiskEngine(self.brain)
         self.crash_predictor = self.risk_engine.crash_predictor  # Retrocompatibilidad
+        self.breakout_agent = BreakoutAgent(
+            min_ia_prob=float(getattr(Config, "BREAKOUT_MIN_IA_PROB", 60.0)),
+            volume_multiplier=float(getattr(Config, "BREAKOUT_VOLUME_MULT", 1.5)),
+            breakout_buffer_pct=float(getattr(Config, "BREAKOUT_BUFFER_PCT", 0.5)),
+            timeout_minutes=int(getattr(Config, "BREAKOUT_TIMEOUT_MINUTES", 60)),
+        )
+        self.exit_engine = ExitEngineV1(
+            time_decay_bars=int(getattr(Config, "EXIT_TIME_DECAY_BARS", 4)),
+            escape_velocity_pct=float(getattr(Config, "EXIT_ESCAPE_VELOCITY_PCT", 0.2)),
+            structural_atr_buffer=float(
+                getattr(Config, "EXIT_STRUCTURAL_ATR_BUFFER", 0.25)
+            ),
+            structural_min_buffer_pct=float(
+                getattr(Config, "EXIT_STRUCTURAL_MIN_BUFFER_PCT", 0.05)
+            ),
+            structural_min_hold_seconds=int(
+                getattr(Config, "EXIT_STRUCTURAL_MIN_HOLD_SECONDS", 120)
+            ),
+            trailing_activation_pct=float(
+                getattr(Config, "EXIT_TRAILING_ACTIVATION_PCT", 0.9)
+            ),
+            trailing_atr_mult=float(getattr(Config, "EXIT_TRAILING_ATR_MULT", 3.0)),
+            trailing_atr_mult_tight=float(
+                getattr(Config, "EXIT_TRAILING_ATR_MULT_TIGHT", 1.5)
+            ),
+            trailing_tighten_pnl_pct=float(
+                getattr(Config, "EXIT_TRAILING_TIGHTEN_PNL_PCT", 2.0)
+            ),
+            trailing_min_distance_pct=float(
+                getattr(Config, "EXIT_TRAILING_MIN_DISTANCE_PCT", 0.3)
+            ),
+            breakeven_trigger_pct=float(
+                getattr(Config, "EXIT_BREAKEVEN_TRIGGER_PCT", 1.2)
+            ),
+            breakeven_atr_mult=float(getattr(Config, "EXIT_BREAKEVEN_ATR_MULT", 1.2)),
+            breakeven_lock_pct=float(getattr(Config, "EXIT_BREAKEVEN_LOCK_PCT", 0.1)),
+            flat_time_decay_bars=int(getattr(Config, "EXIT_FLAT_TIME_DECAY_BARS", 3)),
+            flat_time_decay_atr_mult=float(
+                getattr(Config, "EXIT_FLAT_TIME_DECAY_ATR_MULT", 0.5)
+            ),
+        )
 
         self.active_trades = {}
         self.scanner_history = []
@@ -160,12 +220,22 @@ class Bot:
         self.is_running = True
         self.stop_requested = False
         self.init_complete = threading.Event()
-        self._api_weight_counter = 0  # [DEBUG] Contador de peso API
         self._api_weight_logged = False  # [DEBUG] Flag para logging por minuto
+        self.weight_tracker = None
+        if HAS_WEIGHT_TRACKER and BinanceWeightTracker is not None:
+            self.weight_tracker = BinanceWeightTracker()
+        if hasattr(self.execution, "set_weight_tracker"):
+            self.execution.set_weight_tracker(self.weight_tracker)
+        if hasattr(self.data_service, "set_weight_tracker"):
+            self.data_service.set_weight_tracker(self.weight_tracker)
         self._funding_rate_cache = {}  # Cache: symbol → (rate, timestamp)
         self._funding_cache_ttl = 300  # 5 min (funding cambia cada 8h)
         self._btc_data_cache = None  # Cache de datos BTC por ciclo
         self._btc_data_cache_ts = 0  # Timestamp del cache BTC
+        self._exit_eval_last_log = {}
+        self._daily_report_next_ts = time.time() + 24 * 3600
+        self.breakout_overrides_today = 0
+        self._mfe_alert_last_ts = 0.0
         self.lock = threading.Lock()
         self.price_lock = threading.Lock()  # Lock para proteger self.live_prices
         self.db_lock = (
@@ -180,7 +250,7 @@ class Bot:
         self.cooldown_pairs = {}
         self.restricted_hours = []
         self.restricted_sectors = []
-        self.restricted_symbols = []  # [v114] Símbolos con mal rendimiento
+        self.restricted_symbols = []  # [v118] Símbolos con mal rendimiento
         self.circuit_breaker_active = False
         self.pause_time = None
         self.is_paused = False  # Para el Circuit Breaker v104.0
@@ -232,12 +302,12 @@ class Bot:
         self.current_sentiment = ("⚪ ANALIZANDO...", "white")
         self.last_ohlcv_fetch = {}  # [OPTIMIZACIÓN] Rastrear última descarga por par
         self.last_train_date = self.brain.get_last_train_timestamp()
-        self.ml_healthy = True  # [v114] ML Health Veto
+        self.ml_healthy = True  # [v118] ML Health Veto
         self.last_radar_update = (
             time.time()
-        )  # [v114] Heartbeat: Rastrear frescura del radar
+        )  # [v118] Heartbeat: Rastrear frescura del radar
 
-        # --- [V116] ATRIBUTOS DE ESTADO Y TELEMETRÍA ---
+        # --- [V118] ATRIBUTOS DE ESTADO Y TELEMETRÍA ---
         self._weekly_sent = False
         self._vol_ema = {}
         self._snapshot_tickers = {}
@@ -270,7 +340,7 @@ class Bot:
         self._secondary_scan_due_at = 0.0
         self._last_weekly_maintenance_utc = None
 
-        # --- [V115-PRO] CIRCUIT BREAKER DE LATENCIA (QoE) ---
+        # --- [V118-PRO] CIRCUIT BREAKER DE LATENCIA (QoE) ---
         self.latency_quarantine = {}  # {symbol: release_timestamp}
 
         # --- Cargar Modelo de IA (Nivel 5) ---
@@ -295,14 +365,14 @@ class Bot:
             pro_model_path = "ghost_brain_pro.pkl"
             advanced_model_path = "ghost_brain_advanced.pkl"
 
-            # 0. PRIORIDAD MÁXIMA: Cargar Advanced Learning System (v114)
+            # 0. PRIORIDAD MÁXIMA: Cargar Advanced Learning System (v118)
             if os.path.exists(advanced_model_path):
                 try:
                     with open(advanced_model_path, "rb") as f:
                         self.ghost_model = pickle.load(f)
                     self.ghost_model_type = "ADVANCED_ENSEMBLE"
                     self.log(
-                        "👻 Agente Ghost (Advanced Ensemble v114): Sistema avanzado cargado."
+                        "👻 Agente Ghost (Advanced Ensemble v118): Sistema avanzado cargado."
                     )
                     self.log(
                         f"   📊 Features: {len(self.ghost_model.get('general', {}).get('feature_cols', []))}"
@@ -310,7 +380,7 @@ class Bot:
                     self.log(
                         f"   🎯 Modelos: General + {len(self.ghost_model.get('regime', {}))} regímenes + {len(self.ghost_model.get('sector', {}))} sectores"
                     )
-                    send_telegram_msg("🧠 *IA v114 (Advanced Ensemble) operativa*")
+                    send_telegram_msg("🧠 *IA v118 (Advanced Ensemble) operativa*")
                 except Exception as e:
                     self.log(
                         f"⚠️ Error cargando Advanced: {e}, intentando otros modelos..."
@@ -342,7 +412,7 @@ class Bot:
                     self.log("👻 Agente Ghost (Random Forest): Cerebro cargado.")
                     send_telegram_msg("🧠 *IA Nivel 4 (Random Forest) operativa*")
 
-                # 4. [V115-PRO]Fallback: Intentar cargar agent_models.pkl
+                # 4. [V118-PRO]Fallback: Intentar cargar agent_models.pkl
                 elif os.path.exists("agent_models.pkl"):
                     try:
                         with open("agent_models.pkl", "rb") as f:
@@ -436,18 +506,18 @@ class Bot:
         mode="NONE",
         ctx: Optional[SignalContext] = None,
     ):
-        """Analiza todos los filtros y devuelve la razón exacta del estado actual (v114 - UMBRALES CORREGIDOS)."""
+        """Analiza todos los filtros y devuelve la razón exacta del estado actual (v118 - UMBRALES CORREGIDOS)."""
         if signal not in ["BUY", "SELL"]:
             return "⏳ ESPERANDO TÉCNICA"
 
-        # === [NUEVO v114] FILTROS DE ENTRADA Y CONCESIONES ===
+        # === [NUEVO v118] FILTROS DE ENTRADA Y CONCESIONES ===
         if ctx:
             filter_veto = ctx.get("filter_veto")
             if filter_veto:
                 return f"⛔ VETO: {filter_veto}"
 
             # Concesión granular desde Strategy.analyze
-            # [v114 FIX] Las concesiones son INFORMATIVOS, NO son vetos duros.
+            # [v118 FIX] Las concesiones son INFORMATIVOS, NO son vetos duros.
             # Un trade con prob >= 75 Y veto_reason NO debería ser bloqueado;
             # la probabilidad alta significa que el consenso de 14 agentes superó
             # los warnings individuales. Solo reportar como concesión, no bloquear.
@@ -613,7 +683,7 @@ class Bot:
                 "pattern_type": pattern_type,
                 "wr_hist": wr_hist,
                 "ml_score": prob_ia * 100 if prob_ia > 0 else -1,
-                # [V115-PRO] Calidad de Ejecución: tiempo de respuesta en ms (-1 = no medido)
+                # [V118-PRO] Calidad de Ejecución: tiempo de respuesta en ms (-1 = no medido)
                 "response_ms": response_ms,
             },
         )
@@ -788,7 +858,7 @@ class Bot:
                     except Exception:
                         pass
 
-            # [v114] ML HEALTH VETO: Verificar accuracy mínima
+            # [v118] ML HEALTH VETO: Verificar accuracy mínima
             if Config.ML_HEALTH_VETO_ENABLED:
                 perf_metrics = getattr(self, "ml_performance", None)
                 if perf_metrics:
@@ -868,7 +938,7 @@ class Bot:
                 time.sleep(5)  # Reintento
 
     def check_for_evolution(self):
-        """[v114] Entrenamiento automático basado en tiempo y trades."""
+        """[v118] Entrenamiento automático basado en tiempo y trades."""
         from datetime import timedelta
 
         last_train = self.brain.get_last_train_timestamp()
@@ -1055,8 +1125,8 @@ class Bot:
         try:
             self.log("Conectando a Binance...")
 
-            # [v114] Soporte para Testnet
-            # [V115-PRO] Session pooling para evitar fugas de sockets
+            # [v118] Soporte para Testnet
+            # [V118-PRO] Session pooling para evitar fugas de sockets
             import requests
 
             session = requests.Session()
@@ -1069,10 +1139,14 @@ class Bot:
             exchange_config = {
                 "apiKey": Config.BINANCE_API_KEY,
                 "secret": Config.BINANCE_API_SECRET,
-                "options": {"defaultType": "future", "recvWindow": 60000},
+                "options": {
+                    "defaultType": "future",
+                    "recvWindow": 60000,
+                    "fetchCurrencies": False,
+                },
                 "enableRateLimit": True,
                 "adjustForTimeDifference": True,
-                "session": session,  # [V115-PRO] Session pooling
+                "session": session,  # [V118-PRO] Session pooling
                 "timeout": 30000,  # FIX: ccxt espera el timeout en ms (30000 ms = 30s)
             }
 
@@ -1084,11 +1158,12 @@ class Bot:
                 }
 
             self.execution.exchange = ccxt.binance(exchange_config)
-            self.execution.exchange.load_markets()
+            self.data_service.exchange = self.execution.exchange
+            self.execution.load_markets()
 
             # Verificación explícita de permisos
             try:
-                self.execution.exchange.fetch_balance()
+                self.execution.fetch_balance()
                 self.log(
                     "✅ Conectado: API Keys válidas y permisos de Futuros activos."
                 )
@@ -1100,17 +1175,17 @@ class Bot:
                     if hasattr(self.execution.exchange, "fetch_position_mode"):
                         try:
                             # Intentar primero con símbolo BTC
-                            mode = self.execution.exchange.fetch_position_mode(
+                            mode = self.execution.fetch_position_mode(
                                 symbol="BTC/USDT:USDT"
                             )
                             self.is_hedge_mode = mode.get("hedged", False)
                         except Exception:
                             # Fallback: intentar sin símbolo
-                            mode = self.execution.exchange.fetch_position_mode()
+                            mode = self.execution.fetch_position_mode()
                             self.is_hedge_mode = mode.get("hedged", False)
                     else:
                         # Fallback a endpoint directo
-                        mode = self.execution.exchange.fapiPrivateGetPositionSideDual()
+                        mode = self.execution.get_position_side_dual()
                         self.is_hedge_mode = mode["dualSidePosition"]
                     self.log(
                         f"ℹ️ Modo de Posición: {'HEDGE' if self.is_hedge_mode else 'ONE-WAY'}"
@@ -1132,6 +1207,7 @@ class Bot:
             )
         except Exception as e:
             self.log(f"❌ ERROR FATAL: {e}")
+            raise RuntimeError(f"No se pudo inicializar conexión Binance: {e}") from e
 
     def acquire_targets(self):
         """Fase 2: Selección Dinámica de Líderes con Prioridad Inteligente (v110.3)"""
@@ -1144,9 +1220,7 @@ class Bot:
                 s: e for s, e in self.cooldown_pairs.items() if now < e
             }
 
-            tickers = self.execution.exchange.fetch_tickers()
-            if hasattr(self, "_api_weight_counter"):
-                self._api_weight_counter += 40  # fetch_tickers = 40 weight
+            tickers = self.execution.fetch_tickers(params={"type": "future"})
             # [CIRUGÍA LÁSER] Ampliar filtro para capturar todos los pares USDT (ej: BTC/USDT)
             all_future_tickers = [t for s, t in tickers.items() if "/USDT" in s]
 
@@ -1163,7 +1237,7 @@ class Bot:
                     reverse=True,
                 )[: Config.MAX_REAL_PAIRS + Config.MAX_SHADOW_PAIRS]
 
-                # 2. Filtro de Volumen y Madurez v114.5
+                # 2. Filtro de Volumen y Madurez v118.5
                 valid_pool = []
                 for t in top_pool:
                     symbol = t.get("symbol")
@@ -1174,7 +1248,7 @@ class Bot:
                     if t.get("quoteVolume", 0) < Config.MIN_VOLUME_24H:
                         continue
 
-                    # [v114.5] AUDITORÍA DE MADUREZ (Source Filtering)
+                    # [v118.5] AUDITORÍA DE MADUREZ (Source Filtering)
                     if not self.data_service.audit_symbol_maturity(symbol):
                         # Si fue rechazado, lo removemos de cualquier lista activa
                         if symbol in self.pairs_to_scan:
@@ -1265,7 +1339,7 @@ class Bot:
                         not in self.restricted_sectors
                     ]
 
-                # [v114] Filtrado por Symbol Blacklist
+                # [v118] Filtrado por Symbol Blacklist
                 if hasattr(self.brain, "get_symbol_blacklist"):
                     symbol_blacklist = self.brain.get_symbol_blacklist()
                     # Normalizar blacklist para comparación (quitar /USDT si existe)
@@ -1380,7 +1454,7 @@ class Bot:
             elif self.market_btc_price == 0:
                 # Intento forzado si no vino en el paquete
                 try:
-                    btc_t = self.execution.exchange.fetch_ticker("BTC/USDT")
+                    btc_t = self.execution.fetch_ticker("BTC/USDT")
                     self.market_btc_price = float(btc_t["last"])
                 except:
                     pass
@@ -1393,13 +1467,29 @@ class Bot:
 
         except Exception as e:
             self.log(f"⚠️ Error en acquire_targets: {e}")
+            # Fallback resiliente: reutilizar snapshot dinámico si está disponible.
+            try:
+                ranked = self._get_active_market_snapshot()
+                if ranked:
+                    self.pairs_to_scan = [
+                        r["symbol"]
+                        for r in ranked[: int(getattr(Config, "TOP_TRIAGE_COUNT", 50))]
+                    ]
+                    self.log(
+                        f"♻️ Fallback acquire_targets: {len(self.pairs_to_scan)} pares desde snapshot dinámico."
+                    )
+                    return {item["symbol"]: item.get("ticker", {}) for item in ranked}
+            except Exception:
+                pass
             # Intento de rescate de BTC si todo lo demás falla
             try:
-                btc_t = self.execution.exchange.fetch_ticker("BTC/USDT")
+                btc_t = self.execution.fetch_ticker("BTC/USDT")
                 self.market_btc_price = float(btc_t["last"])
             except Exception:
                 pass
-            self.pairs_to_scan = []
+            # No vaciar radar si ya hay lista previa válida.
+            if not self.pairs_to_scan:
+                self.pairs_to_scan = []
             return {}
 
     def sync_wallet(self):
@@ -1409,7 +1499,7 @@ class Bot:
             with self.lock:
                 active_trades_snapshot = self.active_trades.copy()
 
-            positions = self.execution.exchange.fetch_positions()
+            positions = self.execution.fetch_positions()
             real_active_on_binance = {}
 
             # PROTECCIÓN DE INTEGRIDAD: Si Binance devuelve lista vacía pero tenemos trades REALES activos,
@@ -1595,7 +1685,7 @@ class Bot:
         ob_status: str = "⚪",
         override_usd_size: float = 0.0,
     ) -> str:
-        # [V117] — EMERGENCY SHUTDOWN: Caja Negra Inaccesible
+        # [V118] — EMERGENCY SHUTDOWN: Caja Negra Inaccesible
         if not is_shadow and shadow_logger.is_trading_halted():
             self.log(
                 "🛑 BLOQUEO DE SEGURIDAD: Trading real detenido por fallo persistente de persistencia (DB)."
@@ -1613,7 +1703,7 @@ class Bot:
         req_shadow = is_shadow  # Guardar estado original
         degradation_reason = "UNKNOWN"
 
-        # === [V116-ULTIMATE] RISK ENGINE POSITION SIZING (Kelly Fraccional) ===
+        # === [V118-ULTIMATE] RISK ENGINE POSITION SIZING (Kelly Fraccional) ===
         atr_pct = context.get("atr_pct", 0) if context else 0.02
         min_notional = Config.MIN_NOTIONAL_VALUE
         confidence_score = context.get("prob_final", 0.0) if context else 0.0
@@ -1683,10 +1773,10 @@ class Bot:
         sl_dist_pct = abs(price - sl_val) / price * 100.0
 
         # --- RESTRICTED HOURS (AI COACH) ---
-        # [V115-PRO] ELIMINADO - Operativa 24/7 sin degradación forzada
+        # [V118-PRO] ELIMINADO - Operativa 24/7 sin degradación forzada
         # El mercado cripto es global y las oportunidades existen en cualquier sesión.
 
-        # --- [V116-ULTIMATE] CENTRALIZED RISK SAFETY ---
+        # --- [V118-ULTIMATE] CENTRALIZED RISK SAFETY ---
         funding = (context or {}).get("funding_rate", 0)
         ob = self.ws_manager.get_l2_state(symbol)
         btc_delta = getattr(self, "market_btc_change_tf", 0)
@@ -1807,7 +1897,7 @@ class Bot:
 
         # --- FIX: PRECIO REALISTA PARA SHADOW (Slippage Simulado) ---
         try:
-            ticker = self.execution.exchange.fetch_ticker(symbol)
+            ticker = self.execution.fetch_ticker(symbol)
             current_price = float(ticker["last"])
             if current_price > 0:
                 price = current_price
@@ -1842,7 +1932,7 @@ class Bot:
                 is_shadow = True
 
             if not is_shadow and not Config.PAPER_MODE:
-                # IA HÍBRIDA: Ejecución de precisión v116
+                # IA HÍBRIDA: Ejecución de precisión v118
                 self.log(
                     f"🚀 [PRECISION ENTRY] {symbol} {side} ${final_usd:.2f} @ {price:.5f} (Lev: {current_leverage}x)"
                 )
@@ -1935,6 +2025,11 @@ class Bot:
                     "market_snapshot": clean_snapshot,
                     "entry_ob": ob_status,
                     "entry_confidence": (context or {}).get("prob_final", 75.0),
+                    "entry_shock_level": (context or {}).get("shock_level"),
+                    "entry_atr": (context or {}).get("atr", 0.0),
+                    "breakout_origin": bool(
+                        (context or {}).get("breakout_ready", False)
+                    ),
                 }
 
                 if symbol not in self.active_trades:
@@ -1991,7 +2086,7 @@ class Bot:
         try:
             fees = 0
             if not trade.get("is_shadow", False) and not Config.PAPER_MODE:
-                # [V116-ULTIMATE] DELEGACIÓN A EXECUTION SERVICE
+                # [V118-ULTIMATE] DELEGACIÓN A EXECUTION SERVICE
                 try:
                     self.log(
                         f"🔄 [CLOSING POSITION] {symbol} {trade['side']} (Reason: {reason})"
@@ -2052,7 +2147,7 @@ class Bot:
                 time.sleep(1)
                 try:
                     # Acceso directo al exchange para histórico de trades (Mantenido por ahora)
-                    my_trades = self.execution.exchange.fetch_my_trades(symbol, limit=2)
+                    my_trades = self.execution.fetch_my_trades(symbol, limit=2)
                     fees = sum(
                         t["fee"]["cost"]
                         for t in my_trades
@@ -2133,6 +2228,9 @@ class Bot:
                             "market_regime": self._get_market_regime(),
                             "entry_confidence": trade.get("entry_confidence", 0.0),
                             "exit_confidence": exit_confidence,
+                            "entry_shock_level": trade.get("entry_shock_level"),
+                            "entry_atr": trade.get("entry_atr"),
+                            "breakout_origin": trade.get("breakout_origin", False),
                         }
                     )
                     # Log de depuración
@@ -2145,7 +2243,7 @@ class Bot:
                     # Recuperamos los votos de los agentes de este trade
                     votos = trade.get("market_snapshot", {}).get("votos", {})
                     if votos:
-                        # [V116] Shadow Logging Asíncrono
+                        # [V118] Shadow Logging Asíncrono
                         shadow_logger.log(
                             {
                                 "type": "TRADE_FEEDBACK",
@@ -2213,13 +2311,16 @@ class Bot:
                             symbol, Config.TIMEFRAME
                         )
                         if df_snap is not None and not df_snap.empty:
-                            from tools.ai_mapper import generate_strategy_snapshot
+                            if _module_available("tools.ai_mapper"):
+                                from tools.ai_mapper import generate_strategy_snapshot
 
-                            img = generate_strategy_snapshot(
-                                symbol, df_snap.tail(100).reset_index(drop=True)
-                            )
-                            if img:
-                                send_telegram_photo(msg, img)
+                                img = generate_strategy_snapshot(
+                                    symbol, df_snap.tail(100).reset_index(drop=True)
+                                )
+                                if img:
+                                    send_telegram_photo(msg, img)
+                                else:
+                                    send_telegram_msg(msg)
                             else:
                                 send_telegram_msg(msg)
                         else:
@@ -2251,6 +2352,34 @@ class Bot:
             market_snap = trade.get("market_snapshot", {})
             entry_price = trade.get("entry", 0)
             entry_time = trade.get("open_time", "")
+            entry_conf = float(trade.get("entry_confidence", 0.0) or 0.0)
+            exit_conf = float(exit_confidence or 0.0)
+            ia_delta = exit_conf - entry_conf
+
+            shock_level = trade.get("entry_shock_level")
+            shock_dist_pct = None
+            try:
+                if shock_level is not None and float(exit_price) > 0:
+                    shock_dist_pct = (
+                        abs(float(shock_level) - float(exit_price)) / float(exit_price)
+                    ) * 100.0
+            except Exception:
+                shock_dist_pct = None
+
+            atr_val = float(
+                trade.get("entry_atr")
+                or market_snap.get("atr")
+                or (market_snap.get("atr_pct", 0.0) * float(entry_price))
+                or 0.0
+            )
+            drift_4h_est_pct = (
+                ((atr_val / float(exit_price)) * 100.0 * 4.0)
+                if float(exit_price) > 0 and atr_val > 0
+                else 0.0
+            )
+            shock_dist_txt = (
+                f"{shock_dist_pct:.2f}%" if shock_dist_pct is not None else "N/A"
+            )
             duration = "N/A"
             if entry_time:
                 try:
@@ -2274,11 +2403,16 @@ class Bot:
                 f"📝 *Razón:* {reason}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🆔 Trade ID: #{trade_id if 'trade_id' in locals() and trade_id else 'N/A'}\n"
+                f"🧠 IA: {entry_conf:.1f}% → {exit_conf:.1f}% (Δ {ia_delta:+.1f}pp)\n"
+                f"🏔️ MFE: {mfe_percent:+.2f}%\n"
+                f"📏 Distancia SHOCK: {shock_dist_txt}\n"
+                f"🌬️ Drift esperado 4h: {drift_4h_est_pct:.2f}%\n"
                 f"💰 Entry: ${entry_price:.6f}\n"
                 f"💸 Exit: ${exit_price:.6f}\n"
                 f"⏱️ Duración: {duration}"
             )
             send_telegram_msg(msg_telegram)
+            self._check_recent_mfe_health()
 
             # --- BLOQUEO ANTI-REBOTE (Revenge Trading) ---
             # [INSTRUCCIÓN 2] COOLDOWN UNIVERSAL: Se activa al cerrar CUALQUIER trade (Real o Shadow)
@@ -2370,7 +2504,7 @@ class Bot:
 
         for symbol in symbols:
             try:
-                # [v114.6] IGNITION COOLDOWN: No bailouts en los primeros 15 minutos (micro-ruido inicial)
+                # [v118.6] IGNITION COOLDOWN: No bailouts en los primeros 15 minutos (micro-ruido inicial)
                 # Permite que el trade respire y absorba el ruido de ejecución/spread.
                 trade = self.active_trades.get(symbol)
                 if not trade:
@@ -2413,7 +2547,7 @@ class Bot:
                 duration = datetime.now() - open_time
                 elapsed_mins = duration.total_seconds() / 60
 
-                # --- [V116] SMART EXIT: SALIDA POR DEGRADACIÓN ---
+                # --- [V118] SMART EXIT: SALIDA POR DEGRADACIÓN ---
                 is_degraded, deg_reason = self.risk_engine.check_signal_integrity(
                     trade, prob_final, elapsed_mins
                 )
@@ -2458,7 +2592,7 @@ class Bot:
                 with self.lock:
                     snapshot = self.active_trades.copy()
 
-                # [v117] BAILOUT PRIORITARIO: Monitoreo de integridad de señales (Smart Exit)
+                # [v118] BAILOUT PRIORITARIO: Monitoreo de integridad de señales (Smart Exit)
                 self.monitor_open_trades()
 
                 syms = list(snapshot.keys())
@@ -2473,9 +2607,7 @@ class Bot:
 
                 if not price_map:
                     try:
-                        all_prices_raw = (
-                            self.execution.exchange.fapiPublicGetTickerPrice()
-                        )
+                        all_prices_raw = self.execution.fetch_all_prices()
                         price_map = {p["symbol"]: p["price"] for p in all_prices_raw}
                     except Exception as e:
                         # self.log(f"⚠️ Guardian: fapiPublicGetTickerPrice falló: {e}")
@@ -2528,9 +2660,7 @@ class Bot:
                         else:
                             # Fallback a fetch_ticker individual solo si el endpoint masivo falló o el par es nuevo
                             try:
-                                curr = float(
-                                    self.execution.exchange.fetch_ticker(s)["last"]
-                                )
+                                curr = float(self.execution.fetch_ticker(s)["last"])
                             except Exception as fetch_e:
                                 self.log(
                                     f"Guardian: No se pudo obtener precio para {s}: {fetch_e}"
@@ -2566,12 +2696,40 @@ class Bot:
                         if t["pnl"] > t.get("peak_pnl", -999):
                             t["peak_pnl"] = t["pnl"]
 
-                        # [NUEVO] Activación temprana de Break-Even para asegurar ganancias.
-                        # Si el trade alcanza +1.5% (neto), movemos SL a entrada + buffer de fees.
-                        if t[
-                            "pnl"
-                        ] >= Config.EARLY_BREAKEVEN_ACTIVATION_PNL and not t.get(
-                            "early_be_armed", False
+                        # Exit Engine v118 (dinámico y persistente)
+                        if bool(getattr(Config, "EXIT_ENGINE_V1_ENABLED", True)):
+                            snap_ctx = t.get("market_snapshot", {}) or {}
+                            current_atr = float(
+                                t.get("entry_atr")
+                                or snap_ctx.get("atr")
+                                or snap_ctx.get("atr_pct", 0.0) * t.get("entry", 0.0)
+                                or 0.0
+                            )
+
+                            exit_eval = self.exit_engine.evaluate_exit(
+                                trade=t,
+                                current_price=curr,
+                                current_atr=current_atr,
+                            )
+                            now_ts = time.time()
+                            last_log_ts = float(self._exit_eval_last_log.get(s, 0.0))
+                            if now_ts - last_log_ts >= 120:
+                                self._exit_eval_last_log[s] = now_ts
+                                self.log(
+                                    f"🧭 EXIT_EVAL {s}: reason={exit_eval.get('reason')} pnl={t.get('pnl', 0.0):.2f}%"
+                                )
+                            if bool(exit_eval.get("should_exit", False)):
+                                exit_reason = str(
+                                    exit_eval.get("reason", "EXIT_ENGINE")
+                                )
+                                self.close_trade(s, exit_reason, curr)
+                                continue
+
+                        # Fallback legacy de break-even (solo si Exit Engine v1 está desactivado).
+                        if (
+                            not bool(getattr(Config, "EXIT_ENGINE_V1_ENABLED", True))
+                            and t["pnl"] >= Config.EARLY_BREAKEVEN_ACTIVATION_PNL
+                            and not t.get("early_be_armed", False)
                         ):
                             be_fee_buffer = max(Config.VIRTUAL_FEE * 2, 0.0)
                             if t["side"] == "BUY":
@@ -2599,7 +2757,7 @@ class Bot:
                         if isinstance(ot, str):
                             ot = datetime.fromisoformat(ot)
                         # Time limit controlado por Config
-                        # [SMART TIME LIMIT v114] No cerrar si va ganando (PnL > 0)
+                        # [SMART TIME LIMIT v118] No cerrar si va ganando (PnL > 0)
                         duration_mins = (datetime.now() - ot).total_seconds() / 60
                         if duration_mins >= Config.MAX_TRADE_DURATION_MINUTES:
                             if (
@@ -2647,7 +2805,7 @@ class Bot:
 
                                     if (
                                         prob < 0.48
-                                    ):  # [v117-RELAXED] Umbral bajado de 0.55 a 0.48 para dar aire
+                                    ):  # [v118-RELAXED] Umbral bajado de 0.55 a 0.48 para dar aire
                                         self.log(
                                             f"👻 GHOST ALERT {s}: Probabilidad cayó a {prob:.2f} (Umbral 0.48). Apretando SL a Break Even."
                                         )
@@ -2670,7 +2828,7 @@ class Bot:
                             self.close_trade(s, f"Hard SL ({max_loss}%)", curr)
                             continue
 
-                        # === [NUEVO v114] TAKE PROFIT ESCALONADO ===
+                        # === [NUEVO v118] TAKE PROFIT ESCALONADO ===
                         # TP1: Cerrar 50% de la posición a +1%
                         if Config.TP1_ENABLED and not t.get("tp1_triggered", False):
                             if t["pnl"] >= Config.TP1_LEVEL:
@@ -2691,9 +2849,8 @@ class Bot:
                                                 if t["side"] == "BUY"
                                                 else "SHORT"
                                             )
-                                        self.execution.exchange.create_order(
+                                        self.execution.create_reduce_only_market_order(
                                             s,
-                                            "MARKET",
                                             "SELL" if t["side"] == "BUY" else "BUY",
                                             close_amount / curr,
                                             params=params,
@@ -2701,7 +2858,7 @@ class Bot:
                                     except Exception as e:
                                         self.log(f"⚠️ Error TP1: {e}")
 
-                                    # [FIX v114] Marcar siempre como disparado para evitar bucles infinitos en errores de precisión/min_notional
+                                    # [FIX v118] Marcar siempre como disparado para evitar bucles infinitos en errores de precisión/min_notional
                                     t["tp1_triggered"] = True
                                     t["size_usd"] = t.get("size_usd", 0) * (
                                         1 - Config.TP1_PERCENT / 100
@@ -2752,13 +2909,13 @@ class Bot:
                         if not t or not t.get("trailing_active"):
                             continue
 
-                        # === [MEJORADO v114] TRAILING STOP DINÁMICO ===
+                        # === [MEJORADO v118] TRAILING STOP DINÁMICO ===
                         # Si TP1 ya fue ejecutado, usar trailing más agresivo
                         if Config.TRAIL_AFTER_TP1 and t.get("tp1_triggered", False):
                             # Trailing más agresivo después del TP1
                             trail_distance = Config.TRAIL_ENTRY_OFFSET  # 0.5%
                             if t["pnl"] >= Config.TP2_LEVEL:
-                                trail_distance = 1.0  # [v117-OPTIMIZED] Subido de 0.3 a 1.0 para evitar asfixia post-TP1
+                                trail_distance = 1.0  # [v118-OPTIMIZED] Subido de 0.3 a 1.0 para evitar asfixia post-TP1
                         else:
                             # Trailing normal basado en ATR
                             try:
@@ -2800,7 +2957,7 @@ class Bot:
             except Exception as e:
                 self.log(f"Err Guardián: {e}")
 
-            # MODULACIÓN DE FRECUENCIA v117: 0.1s para dominio < 500ms (trades activos), 2s tranquilo
+            # MODULACIÓN DE FRECUENCIA v118: 0.1s para dominio < 500ms (trades activos), 2s tranquilo
             sleep_for = 0.1 if self.active_trades else 2.0
             work_s = max(time.perf_counter() - loop_started, 0.0)
             self._guardian_stats["loops"] += 1
@@ -2892,7 +3049,7 @@ class Bot:
                 time.sleep(60)
 
     def get_current_balance(self):
-        """Obtiene el balance total en USDT desde Binance (v116)."""
+        """Obtiene el balance total en USDT desde Binance (v118)."""
         try:
             return self.execution.get_balance()
         except Exception as e:
@@ -2925,9 +3082,9 @@ class Bot:
     def perform_healthcheck(self):
         """Verifica conectividad y balance (v104.5)."""
         try:
-            balance = self.execution.exchange.fetch_balance()
+            balance = self.execution.fetch_balance()
             usdt = balance["total"].get("USDT", 0)
-            btc = self.execution.exchange.fetch_ticker("BTC/USDT:USDT")["last"]
+            btc = self.execution.fetch_ticker("BTC/USDT:USDT")["last"]
             return (
                 f"🩺 *DIAGNÓSTICO v104.5*\n"
                 f"💰 Balance: ${usdt:.2f} USDT\n"
@@ -2966,12 +3123,17 @@ class Bot:
         if ahora.weekday() == 6 and ahora.hour == 20 and ahora.minute == 0:
             if not self._weekly_sent:
                 try:
-                    from evolution_logger import get_evolution_report
+                    if _module_available("evolution_logger"):
+                        from evolution_logger import get_evolution_report
 
-                    reporte = get_evolution_report()
-                    send_telegram_msg(
-                        f"📊 *RESUMEN DE CRECIMIENTO SEMANAL*\n\n{reporte}"
-                    )
+                        reporte = get_evolution_report()
+                        send_telegram_msg(
+                            f"📊 *RESUMEN DE CRECIMIENTO SEMANAL*\n\n{reporte}"
+                        )
+                    else:
+                        self.log(
+                            "ℹ️ Resumen semanal omitido: evolution_logger no disponible."
+                        )
                 except Exception as e:
                     self.log(f"⚠️ Error en reporte semanal: {e}")
                 self._weekly_sent = True
@@ -3003,7 +3165,7 @@ class Bot:
 
         if text == "/help":
             msg = (
-                "🤖 *SNIPER AI v117 - CENTRO DE MANDO*\n\n"
+                "🤖 *SNIPER AI v118 - CENTRO DE MANDO*\n\n"
                 "🕒 *MARCO OPERATIVO*\n"
                 "• Motor principal: *1H*\n"
                 "• Filtro macro: *4H (veto direccional)*\n"
@@ -3028,6 +3190,7 @@ class Bot:
                 "• `/trade_detail [PAR]`: Análisis profundo de un par\n"
                 "• `/trade [ID]`: Detalle de trade histórico\n"
                 "• `/thinking`: Vetos recientes de la IA\n"
+                "• `/watchlist`: Estado de acecho breakout\n"
                 "• `/intelligence`: Mapa mental del modelo\n"
                 "• `/agents`: Reputación de agentes\n"
                 "• `/explain [PAR]`: Explicación en tiempo real\n\n"
@@ -3224,6 +3387,48 @@ class Bot:
             msg += f"🔄 *Estado:* Analizando {len(self.pairs_to_scan)} pares."
             send_telegram_msg(msg)
 
+        elif text == "/watchlist":
+            rows = list(self.breakout_agent.watchlist.values())
+            if not rows:
+                send_telegram_msg("👁️ *WATCHLIST BREAKOUT*\n\n(vacía)")
+                return
+
+            rows = sorted(
+                rows,
+                key=lambda r: (
+                    float(r.get("ia_prob", 0.0) or 0.0),
+                    float(r.get("updated_at", 0.0) or 0.0),
+                ),
+                reverse=True,
+            )
+            source_counts = self.breakout_agent.summary_by_source()
+            source_txt = " | ".join(
+                [f"{k}:{int(v)}" for k, v in sorted(source_counts.items())]
+            )
+            if not source_txt:
+                source_txt = "N/A"
+
+            msg = (
+                f"👁️ *WATCHLIST BREAKOUT*\n"
+                f"• Total: {len(rows)}\n"
+                f"• Fuentes: {source_txt}\n\n"
+            )
+            for r in rows[:10]:
+                meta = r.get("meta") or {}
+                src = str(meta.get("source", "UNK"))
+                dist = meta.get("shock_dist_pct")
+                dist_txt = (
+                    f"{float(dist):.2f}%" if isinstance(dist, (int, float)) else "--"
+                )
+                msg += (
+                    f"• {r.get('symbol')} {r.get('side')} | IA {float(r.get('ia_prob', 0.0)):.1f}%"
+                    f" | dist {dist_txt} | src {src}\n"
+                )
+
+            if len(rows) > 10:
+                msg += f"\n... +{len(rows) - 10} más"
+            send_telegram_msg(msg)
+
         elif text == "/quarantine":
             msg = "☣️ *ZONA DE CUARENTENA (Strike System)*\n"
             msg += "Monedas bloqueadas por 3 pérdidas consecutivas:\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -3244,14 +3449,9 @@ class Bot:
             msg = "🕵️ *REPUTACIÓN DE AGENTES (CONFIDENCE)*\n━━━━━━━━━━━━━━━━━━━━\n"
 
             agent_names = {
-                "T": "🛠️ Técnico",
-                "V": "👁️ Visual",
-                "J": "⚖️ Juez",
-                "G": "👻 Ghost",
-                "C": "🔗 Correl",
-                "L": "💧 Liquidez",
-                "F": "😫 Fatiga",
-                "S": "📢 Sentimiento",
+                "MT": "📈 Tendencia (MT)",
+                "SR": "🧱 Estructura (SR)",
+                "G": "👻 IA (G)",
                 "R": "🧠 RAG Vectorial",
             }
 
@@ -3283,6 +3483,12 @@ class Bot:
         elif text == "/ai_intel":
             send_telegram_msg("🎨 Generando inteligencia visual (XAI)...")
             try:
+                if not _module_available("tools.ai_mapper"):
+                    send_telegram_msg(
+                        "ℹ️ Módulo visual no disponible (`tools.ai_mapper`)."
+                    )
+                    return
+
                 from tools.ai_mapper import generate_ai_intel_image
 
                 img_bio = generate_ai_intel_image(self.brain)
@@ -3485,6 +3691,12 @@ class Bot:
         elif text in ["/train", "/force_train"]:
             send_telegram_msg("🧠 *FORZANDO ENTRENAMIENTO...*")
             try:
+                if not _module_available("ghost_trainer"):
+                    send_telegram_msg(
+                        "ℹ️ Entrenamiento manual no disponible (`ghost_trainer.py` ausente)."
+                    )
+                    return
+
                 last_mtime = 0
                 if os.path.exists("ghost_brain.pkl"):
                     last_mtime = os.path.getmtime("ghost_brain.pkl")
@@ -3510,7 +3722,18 @@ class Bot:
         elif text == "/evolution":
             send_telegram_msg("🧬 Ejecutando AI Coach para optimizar filtros...")
             try:
-                os.system(f"{sys.executable} ai_coach.py")
+                coach_candidates = [
+                    os.path.join(os.path.dirname(__file__), "tools", "ai_coach.py"),
+                    os.path.join(os.path.dirname(__file__), "ai_coach.py"),
+                ]
+                coach_path = next(
+                    (p for p in coach_candidates if os.path.exists(p)), None
+                )
+                if not coach_path:
+                    send_telegram_msg("ℹ️ AI Coach no disponible en este entorno.")
+                    return
+
+                os.system(f'{sys.executable} "{coach_path}"')
                 send_telegram_msg("🚀 Evolución completada. Parámetros ajustados.")
             except Exception as e:
                 send_telegram_msg(f"❌ Error evolución: {e}")
@@ -3596,16 +3819,9 @@ class Bot:
             if votos:
                 msg += "🗳️ *VOTOS DE AGENTES:*\n"
                 agent_names = {
-                    "T": "🛠️ Tec",
-                    "V": "👁️ Vis",
-                    "J": "⚖️ Judge",
-                    "G": "👻 Ghost",
-                    "C": "🔗 Corr",
-                    "L": "💧 Liq",
-                    "F": "😫 Fat",
-                    "S": "📢 Sent",
-                    "O": "⛓️ OnC",
-                    "R": "🧠 Reg",
+                    "MT": "📈 Tend",
+                    "SR": "🧱 Estr",
+                    "G": "👻 IA",
                 }
                 for agent_id, vote in sorted(
                     votos.items(), key=lambda x: x[1], reverse=True
@@ -3737,9 +3953,9 @@ class Bot:
                             f"🧐 *EXPLICACIÓN IA: {sym}*\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"🎯 *Score Final:* {prob:.1f}/100\n"
-                            f"👻 *Ghost Pro:* {votos.get('G', 0):.1f}% (Predicción ML)\n"
-                            f"⚖️ *Juez:* {votos.get('J', 0):.1f}% (Histórico)\n"
-                            f"🛠️ *Técnico:* {votos.get('T', 0):.1f}% (RSI/ADX)\n\n"
+                            f"👻 *IA (G):* {votos.get('G', 50):.1f}%\n"
+                            f"📈 *Tendencia (MT):* {votos.get('MT', 50):.1f}%\n"
+                            f"🧱 *Estructura (SR):* {votos.get('SR', 50):.1f}%\n\n"
                             f"📊 *Factores Clave:*\n"
                             f"• RSI: {ind['rsi']['val']:.1f}\n"
                             f"• ADX: {ind['adx']['val']:.1f}\n"
@@ -3781,6 +3997,10 @@ class Bot:
                         f"• ✅ REAL: {stats['REAL']}\n"
                         f"• 🧪 SHADOW: {stats['SHADOW']}\n"
                         f"• ❌ VETO: {stats['VETO']}\n\n"
+                        f"*Watchlist Breakout:*\n"
+                        f"• Total: {self.breakout_agent.size()}\n"
+                        f"• SHOCK_VETO: {self.breakout_agent.summary_by_source().get('SHOCK_VETO', 0)}\n"
+                        f"• COHERENCE_VETO: {self.breakout_agent.summary_by_source().get('COHERENCE_VETO', 0)}\n\n"
                         f"Total pares escaneados: {total}"
                     )
                 else:
@@ -3866,6 +4086,7 @@ class Bot:
     def _telegram_listener(self):
         """Escucha comandos como /report o /train desde Telegram."""
         last_update_id = 0
+        backoff_seconds = 5
         while self.is_running:
             try:
                 if not Config.TELEGRAM_TOKEN:
@@ -3884,9 +4105,16 @@ class Bot:
                     # Lógica centralizada
                     self.handle_command(text)
 
+                backoff_seconds = 5
+
             except Exception as e:
-                time.sleep(10)
-                self.log(f"Telegram Error: {e}")
+                now_ts = time.time()
+                if now_ts - float(getattr(self, "_telegram_last_err_log", 0.0)) > 120:
+                    self._telegram_last_err_log = now_ts
+                    self.log(f"Telegram Error: {e}")
+                time.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 60)
+                continue
             time.sleep(1)
 
     def _terminal_command_listener(self):
@@ -3933,7 +4161,7 @@ class Bot:
                     if (now - close_time).total_seconds() < 900:
                         continue  # Esperar 15 min
 
-                    ticker = self.execution.exchange.fetch_ticker(t["symbol"])
+                    ticker = self.execution.fetch_ticker(t["symbol"])
                     curr_price = float(ticker["last"])
 
                     verdict = "NEUTRAL"
@@ -4025,7 +4253,7 @@ class Bot:
                 return
 
             self.log("🌪️ ESCANEO DINÁMICO: Reordenando pares por volatilidad...")
-            tickers = self.execution.exchange.fetch_tickers(self.pairs_to_scan)
+            tickers = self.execution.fetch_tickers(self.pairs_to_scan)
 
             def get_vol(s):
                 # Búsqueda robusta del ticker
@@ -4085,8 +4313,7 @@ class Bot:
             # --- CAPA 0: BookTicker para spreads reales (peso ~1) ---
             bid_ask_map = {}
             try:
-                book_tickers = self.execution.exchange.fapiPublicGetTickerBookTicker()
-                self._track_api_weight(1)
+                book_tickers = self.execution.fetch_book_tickers()
                 for bt in book_tickers:
                     raw_sym = bt.get("symbol", "")
                     bid_price = float(bt.get("bidPrice", 0) or 0)
@@ -4101,13 +4328,20 @@ class Bot:
             if now - self._market_cache_ts > MARKET_REFRESH or not self._market_cache:
                 self.log("📡 [TRIAJE] Refresh mercado completo (cada 5 min)...")
                 try:
-                    if not self.execution.exchange.markets:
-                        self.execution.exchange.load_markets()
+                    if not self.execution.has_markets_loaded():
+                        self.execution.load_markets()
 
-                    raw_tickers = self.execution.exchange.fetch_tickers(
-                        params={"type": "future"}
-                    )
-                    self._track_api_weight(40)
+                    if self.weight_tracker and self.weight_tracker.should_block(
+                        "market"
+                    ):
+                        self.log(
+                            "🛑 [TRIAJE] Saltando refresh mercado por presión de API Weight"
+                        )
+                        raw_tickers = {}
+                    else:
+                        raw_tickers = self.execution.fetch_tickers(
+                            params={"type": "future"}
+                        )
 
                     # Construir pool de candidatos
                     all_candidates = []
@@ -4136,7 +4370,9 @@ class Bot:
                     )
                 except Exception as e_tickers:
                     self.log(f"⚠️ [TRIAJE] fetch_tickers falló: {e_tickers}")
-                    self._market_cache = {"tickers": {}, "candidates": []}
+                    # Mantener último cache válido para no dejar el bot ciego.
+                    if not self._market_cache:
+                        self._market_cache = {"tickers": {}, "candidates": []}
             else:
                 self.log(
                     f"📦 [TRIAJE] Usando cache de mercado ({int(now - self._market_cache_ts)}s atrás)"
@@ -4313,17 +4549,11 @@ class Bot:
 
     def _perform_triage(self):
         """
-        [V115-PRO] Alias público de _get_active_market_snapshot().
+        [V118-PRO] Alias público de _get_active_market_snapshot().
         Ejecuta el Scouting Masivo + Ranking RVOL y devuelve los pares activos ordenados.
         Úsalo cuando quieras invocar el triaje manualmente desde comandos o tests.
         """
         return self._get_active_market_snapshot()
-
-    def _track_api_weight(self, weight):
-        """Incrementa el contador de peso API para monitoreo."""
-        if not hasattr(self, "_api_weight_counter"):
-            self._api_weight_counter = 0
-        self._api_weight_counter += weight
 
     def _get_cached_funding_rate(self, symbol):
         """
@@ -4338,7 +4568,7 @@ class Bot:
                 return rate
 
         try:
-            fr = self.execution.exchange.fetch_funding_rate(symbol)
+            fr = self.execution.fetch_funding_rate(symbol)
             rate = float(fr.get("fundingRate", 0))
             self._funding_rate_cache[symbol] = (rate, now)
             return rate
@@ -4360,6 +4590,230 @@ class Bot:
             return btc_data
         except Exception:
             return None
+
+    def _safe_div(self, a, b):
+        try:
+            return float(a) / float(b) if float(b) != 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def _load_local_candles(self, symbol, timeframe="1h"):
+        try:
+            fname = f"{symbol.replace('/', '_').replace(':', '_')}_{timeframe}.parquet"
+            path = os.path.join("data_storage", "candles", fname)
+            if not os.path.exists(path):
+                return None
+            df = pd.read_parquet(path)
+            if df is None or df.empty:
+                return None
+            required = {"time", "high", "low"}
+            if not required.issubset(set(df.columns)):
+                return None
+            return (
+                df.sort_values("time")
+                .drop_duplicates(subset=["time"])
+                .reset_index(drop=True)
+            )
+        except Exception:
+            return None
+
+    def _calc_post_exit_drift(
+        self, symbol, side, exit_ts_iso, exit_price, lookahead_bars=4
+    ):
+        try:
+            if not exit_ts_iso or float(exit_price) <= 0:
+                return None
+            df = self._load_local_candles(symbol, "1h")
+            if df is None or df.empty:
+                return None
+            ts_ms = int(pd.to_datetime(exit_ts_iso).timestamp() * 1000)
+            idx = df[df["time"] >= ts_ms].index
+            if len(idx) == 0:
+                return None
+            i0 = int(idx[0])
+            i1 = min(len(df) - 1, i0 + max(1, int(lookahead_bars)))
+            w = df.iloc[i0 : i1 + 1]
+            if w.empty:
+                return None
+            if side == "BUY":
+                best = float(w["high"].max())
+                return ((best - float(exit_price)) / float(exit_price)) * 100.0
+            best = float(w["low"].min())
+            return ((float(exit_price) - best) / float(exit_price)) * 100.0
+        except Exception:
+            return None
+
+    def _check_recent_mfe_health(self):
+        try:
+            now_ts = time.time()
+            if now_ts - float(self._mfe_alert_last_ts) < 900:
+                return
+            conn = sqlite3.connect(self.brain.db_name)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT mfe_percent
+                FROM trades
+                WHERE is_shadow = 1
+                ORDER BY id DESC
+                LIMIT 5
+                """
+            ).fetchall()
+            conn.close()
+            if not rows:
+                return
+            vals = [float(r["mfe_percent"] or 0.0) for r in rows]
+            avg_mfe = sum(vals) / max(1, len(vals))
+            if avg_mfe < 0.1:
+                self._mfe_alert_last_ts = now_ts
+                self.log(
+                    f"⚠️ EXIT_MFE_ALERT: MFE medio últimos 5 trades={avg_mfe:.3f}% (<0.1%)."
+                )
+        except Exception:
+            pass
+
+    def _send_daily_exit_scorecard(self):
+        try:
+            conn = sqlite3.connect(self.brain.db_name)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, timestamp, symbol, side, exit_price, pnl_percent, mfe_percent, reason
+                FROM trades
+                WHERE is_shadow = 1
+                ORDER BY id DESC
+                LIMIT 500
+                """
+            ).fetchall()
+            conn.close()
+
+            reason_keys = [
+                "STRUCTURAL_INVALIDATION",
+                "TIME_DECAY_ESCAPE_VELOCITY",
+                "ATR_TRAILING_HIT",
+            ]
+            buckets = {
+                k: {
+                    "n": 0,
+                    "pnl": 0.0,
+                    "mfe": 0.0,
+                    "gp": 0.0,
+                    "gl": 0.0,
+                    "drift": 0.0,
+                    "drift_n": 0,
+                }
+                for k in reason_keys
+            }
+
+            total_trades = 0
+            wins = 0
+            losses = 0
+            avg_win_sum = 0.0
+            avg_loss_sum = 0.0
+            gp_all = 0.0
+            gl_all = 0.0
+
+            for r in rows:
+                reason = str(r["reason"] or "")
+                key = None
+                for k in reason_keys:
+                    if k in reason:
+                        key = k
+                        break
+                if key is None:
+                    continue
+
+                pnl = float(r["pnl_percent"] or 0.0)
+                mfe = float(r["mfe_percent"] or 0.0)
+                total_trades += 1
+                if pnl > 0:
+                    wins += 1
+                    avg_win_sum += pnl
+                    gp_all += pnl
+                else:
+                    losses += 1
+                    avg_loss_sum += pnl
+                    gl_all += pnl
+
+                b = buckets[key]
+                b["n"] += 1
+                b["pnl"] += pnl
+                b["mfe"] += mfe
+                if pnl > 0:
+                    b["gp"] += pnl
+                else:
+                    b["gl"] += pnl
+
+                drift = self._calc_post_exit_drift(
+                    symbol=str(r["symbol"]),
+                    side=str(r["side"]),
+                    exit_ts_iso=str(r["timestamp"]),
+                    exit_price=float(r["exit_price"] or 0.0),
+                    lookahead_bars=4,
+                )
+                if drift is not None:
+                    b["drift"] += float(drift)
+                    b["drift_n"] += 1
+
+            wr = self._safe_div(wins, total_trades) * 100.0
+            avg_win = self._safe_div(avg_win_sum, wins)
+            avg_loss = self._safe_div(avg_loss_sum, losses)
+            expectancy = (self._safe_div(wins, total_trades) * avg_win) + (
+                self._safe_div(losses, total_trades) * avg_loss
+            )
+            pf_all = self._safe_div(gp_all, abs(gl_all))
+
+            wl = list(self.breakout_agent.watchlist.keys())[:8]
+            wl_txt = ", ".join(wl) if wl else "vacía"
+            wl_sources = self.breakout_agent.summary_by_source()
+            wl_sources_txt = " | ".join(
+                [f"{k}:{int(v)}" for k, v in sorted(wl_sources.items())]
+            )
+            if not wl_sources_txt:
+                wl_sources_txt = "N/A"
+
+            def row_text(label, key):
+                b = buckets[key]
+                n = int(b["n"])
+                pnl_m = self._safe_div(b["pnl"], n)
+                mfe_m = self._safe_div(b["mfe"], n)
+                pf = self._safe_div(b["gp"], abs(b["gl"]))
+                drift_m = self._safe_div(b["drift"], int(b["drift_n"]))
+                return (
+                    f"{label}\n"
+                    f"- Qty: {n} | PnL: {pnl_m:+.2f}% | MFE: {mfe_m:.2f}% | Drift: {drift_m:+.2f}%\n"
+                    f"- PF: {pf:.2f}"
+                )
+
+            msg = (
+                "📊 *SCORECARD DIARIO DE EFICIENCIA (v118)*\n"
+                "---------------------------------------\n"
+                f"Total Trades (Shadow): {total_trades}\n"
+                f"Win Rate: {wr:.2f}%\n"
+                f"Expectancy: {expectancy:+.4f}%\n"
+                f"Profit Factor: {pf_all:.2f}\n\n"
+                "🧪 *DESGLOSE POR SALIDA:*\n"
+                f"1) INVALIDACIÓN (Structural)\n{row_text('', 'STRUCTURAL_INVALIDATION')}\n\n"
+                f"2) ESCAPE (Time Decay)\n{row_text('', 'TIME_DECAY_ESCAPE_VELOCITY')}\n\n"
+                f"3) CAZA (ATR Trailing)\n{row_text('', 'ATR_TRAILING_HIT')}\n\n"
+                "🚀 *BREAKOUTS:*\n"
+                f"- Watchlist actual: {wl_txt}\n"
+                f"- Fuentes watchlist: {wl_sources_txt}\n"
+                f"- Overrides Shadow ejecutados: {int(self.breakout_overrides_today)}"
+            )
+            send_telegram_msg(msg)
+        except Exception as e:
+            self.log(f"⚠️ Error scorecard diario: {e}")
+
+    def _maybe_send_daily_exit_scorecard(self):
+        try:
+            now_ts = time.time()
+            if now_ts >= float(self._daily_report_next_ts):
+                self._send_daily_exit_scorecard()
+                self._daily_report_next_ts = now_ts + 24 * 3600
+                self.breakout_overrides_today = 0
+        except Exception:
+            pass
 
     def _get_shock_distance_pct(self, df, side):
         """Wrapper del modulo SHOCK compartido (core/strategy/shocks.py)."""
@@ -4386,12 +4840,12 @@ class Bot:
         )
 
     def _fetch_pair_data(self, symbol):
-        """Helper para fetch paralelo [V115-PRO] con reintentos agresivos."""
+        """Helper para fetch paralelo [V118-PRO] con reintentos agresivos."""
         _par_start_time = time.time()
         data = (None, None)
         elapsed = -1
 
-        # [V115-PRO] Estrategia de reintentos
+        # [V118-PRO] Estrategia de reintentos
         max_retries = 1
 
         for attempt in range(max_retries + 1):
@@ -4442,7 +4896,7 @@ class Bot:
 
         self.init_complete.wait()
 
-        # [V115-PRO] SYNC de Websockets (Asegurar que inicia ANTES del primer pase de Triaje)
+        # [V118-PRO] SYNC de Websockets (Asegurar que inicia ANTES del primer pase de Triaje)
         if (
             hasattr(self, "ws_manager")
             and getattr(self.ws_manager, "is_running", False) is False
@@ -4457,6 +4911,13 @@ class Bot:
 
         while self.is_running:
             try:
+                if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)):
+                    cleaned = self.breakout_agent.clean_stale_watchlist()
+                    if cleaned > 0:
+                        self.log(
+                            f"🧹 BREAKOUT_WATCH cleaned={cleaned} remaining={self.breakout_agent.size()}"
+                        )
+
                 # [FASE 3: BAILOUT] Movido a _guardian_loop para polling de alta frecuencia (100ms)
                 # self.monitor_open_trades()
 
@@ -4529,7 +4990,7 @@ class Bot:
                 self.check_weekly_schedule()
                 self.check_weekly_maintenance_utc()
                 # --- VERIFICACIÓN DE SEGURIDAD Y METAS ---
-                # [v114 FIX] Protegido con try/except para evitar deadlock.
+                # [v118 FIX] Protegido con try/except para evitar deadlock.
                 # El comentario original indicaba riesgo de deadlock por acceso
                 # concurrente desde _guardian_loop. El try asegura que un fallo
                 # no detenga el loop principal.
@@ -4547,7 +5008,7 @@ class Bot:
                     self.log(f"⚠️ check_safety_and_goals error (non-fatal): {e_safety}")
                 # self.check_for_evolution() deshabilitado para evitar deadlock
 
-                # [v114] Heartbeat: Actualizar timestamp de radar exitoso
+                # [v118] Heartbeat: Actualizar timestamp de radar exitoso
                 self.last_radar_update = time.time()
 
                 # --- ACTUALIZACIÓN DINÁMICA DE MERCADO (Cada 12 horas) ---
@@ -4556,7 +5017,7 @@ class Bot:
                     self.acquire_targets()
                     self.last_market_update = time.time()
 
-                # --- [V115-PRO] TRIAJE DINÁMICO: 1 llamada, N monedas, 50 ganadoras ---
+                # --- [V118-PRO] TRIAJE DINÁMICO: 1 llamada, N monedas, 50 ganadoras ---
                 triage_snapshot = self._get_active_market_snapshot()
                 # Construir tickers-dict de compatibilidad para todo el código downstream
                 tickers = {item["symbol"]: item["ticker"] for item in triage_snapshot}
@@ -4625,9 +5086,7 @@ class Bot:
                     if os.path.exists(coach_path):
                         self.log("🧠 Ejecutando AI Coach programado...")
                         try:
-                            from tools.ai_coach import run_coach
-
-                            run_coach(silent=True)
+                            os.system(f'{sys.executable} "{coach_path}" --silent')
                             self.log("✅ AI Coach finalizado.")
                         except Exception as e:
                             self.log(f"⚠️ Error AI Coach auto: {e}")
@@ -4707,7 +5166,7 @@ class Bot:
                     time.sleep(10)
                     continue
 
-                # [v114] ML HEALTH VETO: Bloquear scouting si el ML no es saludable
+                # [v118] ML HEALTH VETO: Bloquear scouting si el ML no es saludable
                 if not self.ml_healthy and Config.ML_HEALTH_VETO_ENABLED:
                     self.log("🛑 VETO ML ACTIVO: Saltando escaneo de señales...")
                     time.sleep(60)
@@ -4755,7 +5214,7 @@ class Bot:
                 if self.market_btc_price == 0:
                     try:
                         self.log("📡 Recatando precio de BTC manualmente...")
-                        btc_t = self.execution.exchange.fetch_ticker("BTC/USDT")
+                        btc_t = self.execution.fetch_ticker("BTC/USDT")
                         self.market_btc_price = float(btc_t["last"])
                     except (
                         ccxt.NetworkError,
@@ -4878,7 +5337,7 @@ class Bot:
                     self.log(f"⚠️ Error en Radar de Sentimiento: {e}")
                     self.log(f"📋 Traceback: {traceback.format_exc(limit=3)}")
 
-                # --- [V115-PRO] BUCLE DE TRIAJE: PARALELISMO TOTAL ---
+                # --- [V118-PRO] BUCLE DE TRIAJE: PARALELISMO TOTAL ---
                 triage_snapshot = [
                     t
                     for t in triage_snapshot
@@ -4900,7 +5359,7 @@ class Bot:
                 if hasattr(self, "ws_manager") and self.ws_manager:
                     self.ws_manager.update_symbols(top_symbols)
 
-                # [v115.1] Inicialización proactiva del Radar para evitar 'EN COLA'
+                # [v118.1] Inicialización proactiva del Radar para evitar 'EN COLA'
                 for t in top_triage:
                     self.update_radar(
                         t["symbol"],
@@ -4993,7 +5452,7 @@ class Bot:
                     df_main, df_4h = res_data["data"]
                     elapsed = res_data["elapsed"]
 
-                    # [V115-PRO] CIRCUIT BREAKER DE LATENCIA (Veto Activo)
+                    # [V118-PRO] CIRCUIT BREAKER DE LATENCIA (Veto Activo)
                     latency_veto_ms = int(getattr(Config, "LATENCY_VETO_MS", 4500))
                     latency_quarantine_seconds = int(
                         getattr(Config, "LATENCY_QUARANTINE_SECONDS", 300)
@@ -5117,11 +5576,19 @@ class Bot:
                                 # Si el score preliminar es prometedor (>= 50%), invertimos tiempo en descargar el Order Book y Funding Rate
                                 if res[3] >= 50.0:
                                     try:
-                                        order_book = (
-                                            self.execution.exchange.fetch_order_book(
-                                                symbol, limit=20
+                                        if (
+                                            self.weight_tracker
+                                            and self.weight_tracker.should_block(
+                                                "market"
                                             )
-                                        )
+                                        ):
+                                            order_book = None
+                                        else:
+                                            order_book = (
+                                                self.execution.fetch_order_book(
+                                                    symbol, limit=20
+                                                )
+                                            )
                                         funding_rate = self._get_cached_funding_rate(
                                             symbol
                                         )
@@ -5196,7 +5663,7 @@ class Bot:
 
                         audit_signal, mode, price, prob_final, ind, votos = res
 
-                        # [v114.5] Abortar si la estrategia detectó problemas de integridad
+                        # [v118.5] Abortar si la estrategia detectó problemas de integridad
                         if "error" in ind:
                             # self.log(f"⏭️ {symbol} descartado por estrategia: {ind['error']}")
                             self.update_radar(
@@ -5232,7 +5699,6 @@ class Bot:
                         if self.global_rag_impact > 10.0:
                             self.risk_multiplier = 0.5
 
-                        voto_juez = votos.get("J", 50.0)
                         self.render_consensus_telemetry(symbol, prob_final, mode, votos)
 
                         # Compatibilidad legacy para objetos compartidos
@@ -5299,10 +5765,10 @@ class Bot:
                             else 0.0,
                             "tier": ind.get(
                                 "tier", "IRON"
-                            ),  # [v114] Propagación de Tier
+                            ),  # [v118] Propagación de Tier
                             "spread": ind.get(
                                 "spread", 0.0
-                            ),  # [V115-PRO] Para TP Fee-Aware
+                            ),  # [V118-PRO] Para TP Fee-Aware
                         }
 
                         ob_status = Strategy.detect_order_block(df_main, symbol)
@@ -5333,14 +5799,14 @@ class Bot:
                         # 3. Sesgo Horario
                         ctx["market_hour"] = datetime.now().hour
 
-                        # === [NUEVO v114] FILTROS DE ENTRADA OPTIMIZADOS ===
+                        # === [NUEVO v118] FILTROS DE ENTRADA OPTIMIZADOS ===
                         # Aplicar filtros de RSI, ADX y horario antes de evaluar
                         rsi_val = ctx.get("rsi", 50)
                         adx_val = ctx.get("adx", 20)
                         current_time = datetime.now()
                         volatility_val = ctx.get("atr_pct", 0)
 
-                        # [v114] Determinar prospecto de modo (Shadow/Real) para bypass de filtros
+                        # [v118] Determinar prospecto de modo (Shadow/Real) para bypass de filtros
                         prob_prospect = prob_final
                         is_shadow_prospect = prob_prospect < (
                             Config.REAL_CONFIDENCE_MIN * 100
@@ -5378,10 +5844,61 @@ class Bot:
                                 shock_dist_pct is not None
                                 and shock_dist_pct < min_shock_dist
                             ):
+                                # Breakout Hunter (pasivo): poner en acecho si IA es fuerte.
+                                if bool(
+                                    getattr(Config, "BREAKOUT_WATCH_ENABLED", True)
+                                ):
+                                    added_watch = self.breakout_agent.add_to_watchlist(
+                                        symbol=symbol,
+                                        side=audit_signal,
+                                        ia_prob=float(prob_final),
+                                        shock_level=float(shock_level)
+                                        if shock_level is not None
+                                        else 0.0,
+                                        trend=str(ctx.get("trend", "RANGO")),
+                                        metadata={
+                                            "source": "SHOCK_VETO",
+                                            "shock_dist_pct": shock_dist_pct,
+                                            "regime": self._get_market_regime(),
+                                        },
+                                        min_ia_prob=float(
+                                            getattr(
+                                                Config,
+                                                "BREAKOUT_SHOCK_MIN_IA_PROB",
+                                                getattr(
+                                                    Config,
+                                                    "BREAKOUT_MIN_IA_PROB",
+                                                    60.0,
+                                                ),
+                                            )
+                                        ),
+                                    )
+                                    if added_watch:
+                                        self.log(
+                                            f"👁️ [ACECHO:SHOCK] {symbol} side={audit_signal} IA={prob_final:.1f}% "
+                                            f"shock={float(shock_level):.6f} dist={shock_dist_pct:.2f}%"
+                                        )
                                 filter_passed = False
                                 filter_reason = f"SHOCK DEMASIADO CERCA ({shock_dist_pct:.2f}% < {min_shock_dist:.2f}%)"
 
-                        # [v114] FILTRO BLACKLIST DE SÍMBOLOS (Mejorado)
+                        # Breakout Hunter (pasivo): evaluar ruptura con el df ya cargado (sin API extra)
+                        breakout_ready = False
+                        breakout_info = None
+                        if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)):
+                            breakout_ready, breakout_info = (
+                                self.breakout_agent.evaluate_breakout(symbol, df_main)
+                            )
+                            if breakout_ready and breakout_info is not None:
+                                self.log(
+                                    f"🚀 BREAKOUT_READY {symbol} side={breakout_info['side']} "
+                                    f"close={breakout_info['breakout_close']:.6f} "
+                                    f"shock={breakout_info['shock_level']:.6f} "
+                                    f"vol={breakout_info['volume_now']:.2f}/{breakout_info['volume_avg20']:.2f}"
+                                )
+                                ctx["breakout_ready"] = True
+                                ctx["breakout_info"] = breakout_info
+
+                        # [v118] FILTRO BLACKLIST DE SÍMBOLOS (Mejorado)
                         blacklist = getattr(Config, "SYMBOL_BLACKLIST", [])
                         base_sym = symbol.split("/")[0]
                         if symbol in blacklist or base_sym in [
@@ -5409,7 +5926,7 @@ class Bot:
                         # --- CÁLCULO ANTICIPADO DE IA (AUDITORÍA) ---
                         prob_ia = 0.0
                         adjustment_reason = "N/A"
-                        # [v114 FIX] prob_ia solo se usa en _calculate_quant_consensus
+                        # [v118 FIX] prob_ia solo se usa en _calculate_quant_consensus
                         # para el radar visual, NO como entrada adicional a decisión.
                         # Ghost (G) ya contribuye DENTRO de p_final con su peso ponderado.
                         # Usar votos.G aquí de nuevo sería double-counting.
@@ -5423,7 +5940,7 @@ class Bot:
                                 self._calculate_quant_consensus(prob_ia, ctx)
                             )
 
-                        # [NUEVO v114] Aplicar pesos de día/hora a la probabilidad IA
+                        # [NUEVO v118] Aplicar pesos de día/hora a la probabilidad IA
                         day_weight = ctx.get("day_weight", 1.0)
                         hour_weight = ctx.get("hour_weight", 1.0)
                         combined_weight = (day_weight + hour_weight) / 2
@@ -5457,7 +5974,7 @@ class Bot:
                                 f"📊 {symbol}: BTC={btc_regime} [{regime_reason}] x{regime_weight:.2f}"
                             )
 
-                        # [v114 paso B] BYPASS TEMPORAL PARA ELITE/GOLD
+                        # [v118 paso B] BYPASS TEMPORAL PARA ELITE/GOLD
                         # Conservamos la probabilidad original antes de aplicar pesos temporales
                         original_prob = prob_final
                         tier_current = ctx.get("tier", "IRON")
@@ -5498,10 +6015,12 @@ class Bot:
                             ctx,
                         )
 
-                        # --- [1] KILL SWITCH (Seguridad Anti-Overfitting v114) ---
-                        # [v114] VETO POR FILTROS (ADX, VOL, BLACKLIST)
+                        # --- [1] KILL SWITCH (Seguridad Anti-Overfitting v118) ---
+                        # [v118] VETO POR FILTROS (ADX, VOL, BLACKLIST)
                         if not filter_passed:
                             audit_verdict = f"⛔ VETO: {filter_reason}"
+                            if bool(ctx.get("breakout_ready", False)):
+                                audit_verdict += " | 👁️ BREAKOUT READY"
                             self.log(f"⛔ {symbol} vetado: {filter_reason}")
 
                         elif prob_final > 95.0:
@@ -5510,7 +6029,7 @@ class Bot:
                             )
                             audit_verdict = f"⛔ VETO: ML_CONF {prob_final:.1f}%"
 
-                        # --- [2] A/B TEST INTERNO (Conflict Logger v114) ---
+                        # --- [2] A/B TEST INTERNO (Conflict Logger v118) ---
                         if ml_pure_prob >= 75.0 and "VETO" in audit_verdict:
                             conflict_msg = f"[A/B TEST CONFLICT] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {symbol} | ML_CONFIDENCE: {ml_pure_prob:.1f}% -> QUERÍA OPERAR ({audit_signal}) PERO FUE VETADO POR: {audit_verdict}\n"
                             try:
@@ -5585,7 +6104,7 @@ class Bot:
 
                         # [CIRUGÍA LÁSER] Actualizar scanner_history para Dashboard
                         # FIX: Usar update_radar unificado para evitar duplicados y errores de matching
-                        # [V115-PRO] Usar tiempo de respuesta medido en la fase paralela
+                        # [V118-PRO] Usar tiempo de respuesta medido en la fase paralela
                         self.update_radar(
                             symbol_raw,
                             decision,
@@ -5643,7 +6162,7 @@ class Bot:
                             )
                             continue
 
-                        # [v114] UMBRALES CORRECTOS:
+                        # [v118] UMBRALES CORRECTOS:
                         # SHADOW: 60% - 74.99% (exploración/aprendizaje)
                         # REAL: 75% - 100% (operación real)
                         REAL_THRESHOLD = Config.REAL_CONFIDENCE_MIN * 100
@@ -5655,7 +6174,168 @@ class Bot:
                             )
                         )
 
-                        if audit_signal != "NEUTRAL" and filter_passed:
+                        breakout_shadow_override = False
+                        if (
+                            bool(getattr(Config, "BREAKOUT_SEMI_ACTIVE_SHADOW", True))
+                            and audit_signal != "NEUTRAL"
+                            and not filter_passed
+                            and bool(ctx.get("breakout_ready", False))
+                            and "SHOCK DEMASIADO CERCA" in str(filter_reason)
+                            and prob_final
+                            >= max(
+                                SHADOW_MIN_THRESHOLD,
+                                float(getattr(Config, "BREAKOUT_MIN_IA_PROB", 60.0)),
+                            )
+                        ):
+                            breakout_shadow_override = True
+                            is_shadow_exec = True
+                            should_execute = True
+                            self.breakout_overrides_today += 1
+                            audit_verdict = (
+                                f"🧪 BREAKOUT SHADOW READY (IA {prob_final:.1f}%)"
+                            )
+                            self.log(
+                                f"🧨 BREAKOUT OVERRIDE SHADOW: {symbol} [{audit_signal}] "
+                                f"IA={prob_final:.1f}%"
+                            )
+
+                        # Filtro de coherencia direccional con sentimiento global
+                        if bool(getattr(Config, "DIRECTIONAL_COHERENCE_FILTER", True)):
+                            sentiment_label = str(self.current_sentiment[0])
+                            is_bull = "ALCISTA" in sentiment_label
+                            is_bear = "BAJISTA" in sentiment_label
+                            extreme_breakout_ok = (
+                                breakout_shadow_override
+                                and prob_final
+                                >= float(
+                                    getattr(Config, "BREAKOUT_EXTREME_IA_PROB", 75.0)
+                                )
+                            )
+
+                            if (
+                                audit_signal == "SELL"
+                                and is_bull
+                                and not extreme_breakout_ok
+                            ):
+                                should_execute = False
+                                filter_passed = False
+                                filter_reason = (
+                                    "COHERENCIA: SELL bloqueado en régimen ALCISTA"
+                                )
+                                audit_verdict = f"⛔ VETO: {filter_reason}"
+
+                                if bool(
+                                    getattr(Config, "BREAKOUT_WATCH_ENABLED", True)
+                                ) and bool(
+                                    getattr(
+                                        Config, "BREAKOUT_WATCH_COHERENCE_ENABLED", True
+                                    )
+                                ):
+                                    shock_level_coh = (
+                                        ctx.get("shock_level") if ctx else None
+                                    )
+                                    if shock_level_coh is not None:
+                                        added_watch = self.breakout_agent.add_to_watchlist(
+                                            symbol=symbol,
+                                            side=audit_signal,
+                                            ia_prob=float(prob_final),
+                                            shock_level=float(shock_level_coh),
+                                            trend=str(ctx.get("trend", "RANGO"))
+                                            if ctx
+                                            else "RANGO",
+                                            metadata={
+                                                "source": "COHERENCE_VETO",
+                                                "shock_dist_pct": ctx.get(
+                                                    "shock_dist_pct"
+                                                )
+                                                if ctx
+                                                else None,
+                                                "regime": self._get_market_regime(),
+                                                "sentiment": sentiment_label,
+                                                "reason": filter_reason,
+                                            },
+                                            min_ia_prob=float(
+                                                getattr(
+                                                    Config,
+                                                    "BREAKOUT_COHERENCE_MIN_IA_PROB",
+                                                    getattr(
+                                                        Config,
+                                                        "BREAKOUT_MIN_IA_PROB",
+                                                        60.0,
+                                                    ),
+                                                )
+                                            ),
+                                        )
+                                        if added_watch:
+                                            self.log(
+                                                f"👁️ [ACECHO:COHERENCIA] {symbol} side={audit_signal} "
+                                                f"IA={prob_final:.1f}% sentiment={sentiment_label}"
+                                            )
+                            elif (
+                                audit_signal == "BUY"
+                                and is_bear
+                                and not extreme_breakout_ok
+                            ):
+                                should_execute = False
+                                filter_passed = False
+                                filter_reason = (
+                                    "COHERENCIA: BUY bloqueado en régimen BAJISTA"
+                                )
+                                audit_verdict = f"⛔ VETO: {filter_reason}"
+
+                                if bool(
+                                    getattr(Config, "BREAKOUT_WATCH_ENABLED", True)
+                                ) and bool(
+                                    getattr(
+                                        Config, "BREAKOUT_WATCH_COHERENCE_ENABLED", True
+                                    )
+                                ):
+                                    shock_level_coh = (
+                                        ctx.get("shock_level") if ctx else None
+                                    )
+                                    if shock_level_coh is not None:
+                                        added_watch = self.breakout_agent.add_to_watchlist(
+                                            symbol=symbol,
+                                            side=audit_signal,
+                                            ia_prob=float(prob_final),
+                                            shock_level=float(shock_level_coh),
+                                            trend=str(ctx.get("trend", "RANGO"))
+                                            if ctx
+                                            else "RANGO",
+                                            metadata={
+                                                "source": "COHERENCE_VETO",
+                                                "shock_dist_pct": ctx.get(
+                                                    "shock_dist_pct"
+                                                )
+                                                if ctx
+                                                else None,
+                                                "regime": self._get_market_regime(),
+                                                "sentiment": sentiment_label,
+                                                "reason": filter_reason,
+                                            },
+                                            min_ia_prob=float(
+                                                getattr(
+                                                    Config,
+                                                    "BREAKOUT_COHERENCE_MIN_IA_PROB",
+                                                    getattr(
+                                                        Config,
+                                                        "BREAKOUT_MIN_IA_PROB",
+                                                        60.0,
+                                                    ),
+                                                )
+                                            ),
+                                        )
+                                        if added_watch:
+                                            self.log(
+                                                f"👁️ [ACECHO:COHERENCIA] {symbol} side={audit_signal} "
+                                                f"IA={prob_final:.1f}% sentiment={sentiment_label}"
+                                            )
+
+                        if (
+                            not breakout_shadow_override
+                            and audit_signal != "NEUTRAL"
+                            and filter_passed
+                        ):
                             if prob_final >= REAL_THRESHOLD:
                                 # ESCENARIO REAL: Alta confianza y sin vetos
                                 is_shadow_exec = False
@@ -5689,6 +6369,7 @@ class Bot:
                                 )
 
                         # EJECUCIÓN FINAL
+                        final_verdict_for_ui = audit_verdict
                         if should_execute:
                             # Preparar contexto con votos e info adicional
                             if ctx:
@@ -5712,6 +6393,13 @@ class Bot:
                                 self.log(
                                     f"✅ GATILLO {modo_str}: {symbol} [{audit_signal}] -> {audit_verdict}"
                                 )
+                                with self.lock:
+                                    if symbol in self.active_trades:
+                                        final_verdict_for_ui = (
+                                            "⚡ OPEN | 🔒 OPERACIÓN ACTIVA"
+                                        )
+                                    else:
+                                        final_verdict_for_ui = audit_verdict
 
                                 # [CIRUGÍA LÁSER] Actualizar Radar si hubo degradación
                                 if "DEGRADED" in exec_result:
@@ -5734,6 +6422,7 @@ class Bot:
                                     else exec_result
                                 )
                                 self.log(f"❌ FALLO EJECUCIÓN {symbol}: {exec_result}")
+                                final_verdict_for_ui = f"❌ ERR: {error_msg}"
                                 for item in self.scanner_history:
                                     if item["symbol"] == symbol:
                                         item["result"] = f"❌ ERR: {error_msg}"
@@ -5741,11 +6430,29 @@ class Bot:
                                         item["ia_real"] = "❌"
                                         item["ia_shadow"] = "❌"
                                         break
+                            else:
+                                final_verdict_for_ui = (
+                                    "❄️ COOLDOWN"
+                                    if exec_result == "COOLDOWN"
+                                    else "🔒 OPERACIÓN ACTIVA"
+                                )
                         else:
                             # No se cumplen condiciones para ejecutar
-                            pass
+                            final_verdict_for_ui = audit_verdict
 
-                        # [V115-PRO] Yield al sistema para evitar spin-waiting
+                        # [FIX UI] Refrescar radar con el veredicto FINAL después de filtros/ejecución.
+                        self.update_radar(
+                            symbol_raw,
+                            decision,
+                            prob_final / 100.0,
+                            ob_status,
+                            final_verdict_for_ui,
+                            ctx,
+                            votos,
+                            response_ms=elapsed,
+                        )
+
+                        # [V118-PRO] Yield al sistema para evitar spin-waiting
                         time.sleep(0.05)  # 50ms entre símbolos para no saturar CPU
 
                     except Exception as e:
@@ -5787,6 +6494,9 @@ class Bot:
                     # Guardar para comando /signals
                     self.last_signal_stats = signal_stats
 
+                # Scorecard diario automático (Telegram)
+                self._maybe_send_daily_exit_scorecard()
+
                 # --- CONSCIENCIA DE IA v105.5 ---
                 suffix = self.self_adjust_exigency()
                 valid_signals = [
@@ -5817,9 +6527,15 @@ class Bot:
 
                 # [DEBUG] Log de peso API cada minuto
                 if time.time() - getattr(self, "_api_weight_logged_time", 0) > 60:
-                    weight = getattr(self, "_api_weight_counter", 0)
+                    weight = 0
+                    if self.weight_tracker:
+                        weight = self.weight_tracker.get_current_weight()
                     self.log(f"⚖️ API Weight (1 min): {weight}")
-                    self._api_weight_counter = 0
+                    if self.weight_tracker:
+                        status = self.weight_tracker.get_status()
+                        self.log(
+                            f"📊 API Usage: {status['usage_pct']}% | Remaining: {status['remaining']} | Level: {status['level']}"
+                        )
                     self._api_weight_logged_time = time.time()
 
             except Exception as e:
@@ -5827,14 +6543,14 @@ class Bot:
                 time.sleep(10)
 
     def _initial_load(self, dashboard_module):
-        """[v114] Carga asíncrona de servicios para no bloquear la UI."""
+        """[v118] Carga asíncrona de servicios para no bloquear la UI."""
         try:
             # --- CARGA INICIAL v104.0 ---
             self.connect()
             self.acquire_targets()
             self._load_ai_restrictions()
 
-            # [v114] Auto-blacklist de símbolos con mal rendimiento
+            # [v118] Auto-blacklist de símbolos con mal rendimiento
             self.log("🔍 Ejecutando auto-blacklist de poor performers...")
             self.brain.auto_blacklist_poor_performers(
                 min_trades=5, max_loss_pct=-5.0, max_wr=40.0
@@ -5853,7 +6569,7 @@ class Bot:
                 except Exception as e:
                     self.log(f"⚠️ Error Dashboard: {e}")
 
-            # --- SRE SANITY CHECK (v114.1) ---
+            # --- SRE SANITY CHECK (v118.1) ---
             if Config.MAX_SHADOW_TRADES <= 5:
                 self.log(
                     f"⚠️ ADVERTENCIA DE CONFIGURACIÓN: MAX_SHADOW_TRADES está en {Config.MAX_SHADOW_TRADES}. "
@@ -5878,6 +6594,7 @@ class Bot:
 
         except Exception as e:
             self.log(f"❌ FALLO CRÍTICO EN CARGA: {e}")
+            self.is_running = False
             self.init_complete.set()  # Evitar bloqueo de otros hilos
 
     def save_cache(self):
@@ -5893,12 +6610,12 @@ class Bot:
         if not sys.stdout.isatty() and not getattr(Config, "FORCE_UI", False):
             print("""
 ╔═══════════════════════════════════════════════════════════════════════════╗
-║              🏆 SNIPER AI v114 - MODO REAL 🏆                       ║
+║             🏆 SNIPER AI v118 - MODO TRINITY 🏆                      ║
 ╠═══════════════════════════════════════════════════════════════════════════╣
-║  🤖 14 Agentes: [T][V][J][G][C][L][F][S][O][R][M][D][E][K]               ║
-║  🧠 Ghost ML: v114 Ensemble (RF+GB+XGB+LGB) | F1: 66%                ║
-║  📊 Filtros: Pesos inteligentes (día/hora) | TP: +1%/+2%               ║
-║  🛡️ Protecciones: Crash | Pump&Dump | SL: -6% | Daily: -3%             ║
+║  🤖 Trinity: [MT][SR][G] + RAG + SHOCK                                  ║
+║  🧠 Consensus NN 1H + Ghost Ensemble + Risk Engine                       ║
+║  📊 Filtros: Liquidez | Spread | SHOCK | Latencia                        ║
+║  🛡️ Protecciones: TP/SL dinámico | Daily guard | Cooldowns               ║
 ╠═══════════════════════════════════════════════════════════════════════════╣
 ║  💰 BALANCE: $20.00 | PnL Hoy: +0.00% | Target: 5%                    ║
 ║  📈 REAL: 0 | SHADOW: 0 | WR: 0% | SCAN: 0 pares                     ║
@@ -5909,13 +6626,13 @@ class Bot:
         # [CIRUGÍA LÁSER] Reactivar UI de Terminal
         self.ui.start()
 
-        # [v114] DISPARAR CARGA ASÍNCRONA
+        # [v118] DISPARAR CARGA ASÍNCRONA
         # Esto permite que el hilo principal (UI) no se bloquee esperando a Binance
         threading.Thread(
             target=self._initial_load, args=(dashboard,), daemon=True
         ).start()
 
-        # [v114] BUCLE PRINCIPAL DE RENDERIZADO (Hilo Principal)
+        # [v118] BUCLE PRINCIPAL DE RENDERIZADO (Hilo Principal)
         # Mantiene la terminal fluida (2s) mientras el bot trabaja en segundo plano.
         try:
             while self.is_running:
@@ -5962,7 +6679,7 @@ class Bot:
             self.ui.stop()
             self.log("🛑 Guardando caché y forzando flasheo de Shadow Logs...")
             self.save_cache()
-            shadow_logger.stop()  # [FIX v116.1] Forzar guardado de trades pendientes
+            shadow_logger.stop()  # [FIX v118.1] Forzar guardado de trades pendientes
             self.log("✅ Caché y Logs guardados.")
 
 
