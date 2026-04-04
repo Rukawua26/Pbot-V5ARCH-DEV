@@ -2,6 +2,7 @@ from datetime import datetime
 import time
 
 from config import Config
+from core.execution_telemetry import append_execution_event
 from core.reconciliation import generate_child_client_order_id
 from notifier import send_telegram_msg
 
@@ -59,6 +60,7 @@ def _is_immediate_trigger_rejection(error_text: str) -> bool:
 def _emergency_market_close_unprotected(
     bot, symbol: str, trade: dict, amount: float, sl_error: str
 ):
+    started = time.perf_counter()
     trade["status"] = "CLOSING_INITIATED"
     trade["closing_in_progress"] = True
     with bot.db_lock:
@@ -82,6 +84,7 @@ def _emergency_market_close_unprotected(
                 time.sleep(2 ** (attempt - 1))
 
     if close_ok:
+        ttr = time.perf_counter() - started
         with bot.db_lock:
             bot.brain.save_error_snapshot(
                 symbol,
@@ -89,6 +92,15 @@ def _emergency_market_close_unprotected(
                 {"sl_error": str(sl_error)[:200]},
             )
             bot.brain.delete_active_trade_state(symbol)
+        append_execution_event(
+            bot,
+            "EMERGENCY_CLOSE_EXECUTED",
+            {
+                "symbol": symbol,
+                "ttr_seconds": round(ttr, 6),
+                "sl_error": str(sl_error)[:180],
+            },
+        )
         with bot.lock:
             if symbol in bot.active_trades:
                 del bot.active_trades[symbol]
@@ -102,6 +114,15 @@ def _emergency_market_close_unprotected(
     setattr(bot, "halt_system_active", True)
     bot.log(
         f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado tras 3 intentos."
+    )
+    append_execution_event(
+        bot,
+        "EMERGENCY_CLOSE_FAILED_HALT",
+        {
+            "symbol": symbol,
+            "sl_error": str(sl_error)[:180],
+            "close_error": last_close_error[:180],
+        },
     )
     try:
         send_telegram_msg(
@@ -170,6 +191,142 @@ def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):
             return True
         bot.log(f"⚠️ Riesgo crítico: {symbol} sigue sin HARD SL en exchange")
     return False
+
+
+def _parse_iso_dt(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _find_open_entry_order(bot, symbol: str, trade: dict):
+    fetch_open_orders = getattr(bot.execution, "fetch_open_orders", None)
+    if not callable(fetch_open_orders):
+        return None
+    try:
+        open_orders = fetch_open_orders(symbol) or []
+    except Exception:
+        return None
+    orders_iter = open_orders if isinstance(open_orders, (list, tuple)) else []
+    entry_order_id = str(trade.get("entry_exchange_order_id") or "")
+    entry_coid = str(trade.get("entry_client_order_id") or "")
+    for order in orders_iter:
+        if not isinstance(order, dict):
+            continue
+        order_id = str(order.get("id") or "")
+        coid = str(
+            order.get("clientOrderId")
+            or (order.get("info") or {}).get("clientOrderId")
+            or ""
+        )
+        if entry_order_id and order_id == entry_order_id:
+            return order
+        if entry_coid and coid == entry_coid:
+            return order
+    return None
+
+
+def _manage_partial_fill_trade(bot, symbol: str, trade: dict, info: dict):
+    if (
+        not trade.get("partial_fill_pending")
+        and trade.get("status") != "PARTIAL_FILL_PENDING"
+    ):
+        return
+
+    executed_amount = float(info.get("amount") or trade.get("amount") or 0.0)
+    if executed_amount <= 0:
+        return
+    requested_amount = float(trade.get("requested_amount") or executed_amount)
+    if requested_amount < executed_amount:
+        requested_amount = executed_amount
+
+    trade["amount"] = executed_amount
+    trade["requested_amount"] = requested_amount
+    trade["entry"] = float(info.get("entry") or trade.get("entry") or 0.0)
+    remaining_estimated = max(0.0, requested_amount - executed_amount)
+
+    open_entry_order = _find_open_entry_order(bot, symbol, trade)
+    if open_entry_order is None:
+        trade["remaining_amount"] = 0.0
+        trade["partial_fill_pending"] = False
+        trade["status"] = "OPEN"
+        with bot.db_lock:
+            bot.brain.save_active_trade_state(symbol, trade)
+        append_execution_event(
+            bot,
+            "PARTIAL_FILL_COMPLETED",
+            {
+                "symbol": symbol,
+                "requested_amount": requested_amount,
+                "executed_amount": executed_amount,
+                "remaining_amount": remaining_estimated,
+            },
+        )
+        return
+
+    started_at = _parse_iso_dt(trade.get("partial_fill_started_at")) or _parse_iso_dt(
+        trade.get("open_time")
+    )
+    if started_at is None:
+        started_at = datetime.now()
+    age_seconds = max(0.0, (datetime.now() - started_at).total_seconds())
+
+    trade["remaining_amount"] = remaining_estimated
+    trade["status"] = "PARTIAL_FILL_PENDING"
+    trade["partial_fill_pending"] = True
+
+    timeout_s = int(getattr(Config, "PARTIAL_FILL_TIMEOUT_SECONDS", 300) or 300)
+    if age_seconds < timeout_s:
+        with bot.db_lock:
+            bot.brain.save_active_trade_state(symbol, trade)
+        return
+
+    cancel_order = getattr(bot.execution, "cancel_order", None)
+    order_id = str(
+        open_entry_order.get("id") or trade.get("entry_exchange_order_id") or ""
+    )
+    if callable(cancel_order) and order_id:
+        try:
+            cancel_order(symbol, order_id)
+            trade["remaining_amount"] = 0.0
+            trade["unfilled_canceled_amount"] = remaining_estimated
+            trade["status"] = "OPEN"
+            trade["partial_fill_pending"] = False
+            with bot.db_lock:
+                bot.brain.save_active_trade_state(symbol, trade)
+            append_execution_event(
+                bot,
+                "PARTIAL_FILL_TIMEOUT_CANCEL",
+                {
+                    "symbol": symbol,
+                    "entry_order_id": order_id,
+                    "executed_amount": executed_amount,
+                    "canceled_amount": remaining_estimated,
+                    "age_seconds": round(age_seconds, 3),
+                },
+            )
+            bot.log(
+                f"⏱️ PARTIAL_FILL timeout {symbol}: cancelado remanente {remaining_estimated:.6f}"
+            )
+        except Exception as error:
+            append_execution_event(
+                bot,
+                "PARTIAL_FILL_CANCEL_FAILED",
+                {
+                    "symbol": symbol,
+                    "entry_order_id": order_id,
+                    "age_seconds": round(age_seconds, 3),
+                    "error": str(error)[:180],
+                },
+            )
+            bot.log(f"⚠️ No se pudo cancelar remanente parcial en {symbol}: {error}")
 
 
 def sync_wallet(bot):
@@ -258,6 +415,9 @@ def sync_wallet(bot):
                         )
 
                     emergency_closed = _ensure_hard_sl_attached(
+                        bot, symbol, bot.active_trades[symbol], info
+                    )
+                    _manage_partial_fill_trade(
                         bot, symbol, bot.active_trades[symbol], info
                     )
                     if emergency_closed:

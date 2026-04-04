@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from config import Config
+from core.execution_telemetry import append_execution_event
 from core.reconciliation import (
     allocate_signal_timestamp,
     generate_child_client_order_id,
@@ -287,6 +288,10 @@ def execute_order(
         fees = 0.001
         spread_cost = (context or {}).get("spread", 0.0)
         tp_pct = abs(tp_val - price) / price * 100
+        requested_amount = float(amount)
+        filled_amount = float(amount)
+        remaining_amount = 0.0
+        avg_fill_price = float(price)
         min_tp = max(
             Config.MIN_TP_NET_PERCENT,
             (spread_cost + fees) * Config.MIN_TP_SPREAD_MULTIPLIER,
@@ -316,7 +321,34 @@ def execute_order(
 
             if order and order.get("status") in ["closed", "open", "filled"]:
                 bot.log(f"✅ EJECUCIÓN EXITOSA: {symbol} ID: {order['id']}")
-                filled_amount = float(order.get("filled", amount))
+                requested_amount = float(amount)
+                filled_amount = float(order.get("filled", requested_amount) or 0.0)
+                remaining_amount = max(0.0, requested_amount - filled_amount)
+                avg_fill_price = float(
+                    order.get("average") or order.get("price") or price
+                )
+                if filled_amount <= 0:
+                    bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol} sin fills confirmados")
+                    _drop_pending_intent()
+                    return "EXECUTION_NO_FILL"
+
+                append_execution_event(
+                    bot,
+                    "ENTRY_ORDER_ACK",
+                    {
+                        "symbol": symbol,
+                        "entry_client_order_id": entry_client_order_id,
+                        "exchange_order_id": order.get("id"),
+                        "requested_amount": requested_amount,
+                        "filled_amount": filled_amount,
+                        "remaining_amount": remaining_amount,
+                        "requested_price": float(price),
+                        "avg_fill_price": avg_fill_price,
+                        "slippage_simulated": avg_fill_price - float(price),
+                        "status": str(order.get("status") or ""),
+                    },
+                )
+
                 bot.log(f"🛡️ Colocando HARD SL en Binance: {symbol} @ {sl_val}")
                 sl_order = bot.execution.place_hard_sl(
                     symbol,
@@ -345,6 +377,7 @@ def execute_order(
                 bot.available_balance -= margin_used
             else:
                 bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol}")
+                _drop_pending_intent()
                 return "EXECUTION_FAILED"
         elif not is_shadow and Config.PAPER_MODE:
             bot.log(f"📝 PAPER TRADE (Simulado): {side} {symbol} (${final_usd:.2f})")
@@ -373,9 +406,13 @@ def execute_order(
             trade_state = {
                 "symbol": symbol,
                 "side": side,
-                "entry": price,
+                "entry": float(avg_fill_price if not is_shadow else price),
                 "pnl": 0.0,
-                "amount": amount,
+                "amount": float(filled_amount if not is_shadow else amount),
+                "requested_amount": float(
+                    requested_amount if not is_shadow else amount
+                ),
+                "remaining_amount": float(remaining_amount if not is_shadow else 0.0),
                 "sl": sl_val,
                 "tp": tp_val,
                 "trailing_active": False,
@@ -402,7 +439,13 @@ def execute_order(
                 if not is_shadow
                 else None,
                 "tp_exchange_order_id": None,
-                "status": "OPEN",
+                "status": "PARTIAL_FILL_PENDING"
+                if (not is_shadow and remaining_amount > 0.0)
+                else "OPEN",
+                "partial_fill_pending": (not is_shadow and remaining_amount > 0.0),
+                "partial_fill_started_at": datetime.now().isoformat()
+                if (not is_shadow and remaining_amount > 0.0)
+                else None,
                 "signal_ts": signal_ts,
             }
 

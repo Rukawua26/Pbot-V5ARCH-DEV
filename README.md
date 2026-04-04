@@ -56,6 +56,12 @@ Variables opcionales para Shadow Live:
 - `SHADOW_SIM_LATENCY_MIN_MS`, `SHADOW_SIM_LATENCY_MAX_MS`
 - `SHADOW_SIM_REJECT_RATE`, `SHADOW_SIM_PARTIAL_FILL_RATE`, `SHADOW_SIM_MIN_PARTIAL_RATIO`
 
+Telemetria estructurada de ejecucion:
+
+- Archivo `logs/execution_events.jsonl` (JSONL consultable).
+- Eventos clave: `ENTRY_ORDER_ACK`, `PARTIAL_FILL_COMPLETED`, `PARTIAL_FILL_TIMEOUT_CANCEL`, `PARTIAL_FILL_CANCEL_FAILED`, `EMERGENCY_CLOSE_EXECUTED`, `EMERGENCY_CLOSE_FAILED_HALT`.
+- Campos utiles para auditoria: slippage simulado (`requested_price` vs `avg_fill_price`), `ttr_seconds` en cierres de emergencia, y coherencia de cantidades (`requested_amount`, `filled_amount`, `remaining_amount`).
+
 ## 📦 Instalacion
 
 ```bash
