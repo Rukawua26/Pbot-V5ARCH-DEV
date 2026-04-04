@@ -227,6 +227,30 @@ class Brain:
                 "ALTER TABLE trades ADD COLUMN breakout_origin INTEGER DEFAULT 0",
                 "breakout_origin",
             ),
+            (
+                "ALTER TABLE trades ADD COLUMN entry_client_order_id TEXT",
+                "entry_client_order_id",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN sl_client_order_id TEXT",
+                "sl_client_order_id",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN tp_client_order_id TEXT",
+                "tp_client_order_id",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN entry_exchange_order_id TEXT",
+                "entry_exchange_order_id",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN sl_exchange_order_id TEXT",
+                "sl_exchange_order_id",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN tp_exchange_order_id TEXT",
+                "tp_exchange_order_id",
+            ),
         ]
 
         for sql, column_name in migration_columns:
@@ -260,7 +284,13 @@ class Brain:
                 exit_confidence REAL,
                 entry_shock_level REAL,
                 entry_atr REAL,
-                breakout_origin INTEGER DEFAULT 0
+                breakout_origin INTEGER DEFAULT 0,
+                entry_client_order_id TEXT,
+                sl_client_order_id TEXT,
+                tp_client_order_id TEXT,
+                entry_exchange_order_id TEXT,
+                sl_exchange_order_id TEXT,
+                tp_exchange_order_id TEXT
             )
         """)
 
@@ -576,8 +606,15 @@ class Brain:
             c = conn.cursor()
             c.execute(
                 """
-                INSERT INTO trades (timestamp, symbol, side, entry_price, exit_price, pnl, pnl_percent, reason, is_shadow, fees, funding_rate, vol_rel, rsi, adx, market_snapshot, open_time, entry_ob, dist_ema, z_score, bb_pos, ob_status, mae_percent, mfe_percent, market_regime, entry_confidence, exit_confidence, entry_shock_level, entry_atr, breakout_origin)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO trades (
+                    timestamp, symbol, side, entry_price, exit_price, pnl, pnl_percent, reason,
+                    is_shadow, fees, funding_rate, vol_rel, rsi, adx, market_snapshot, open_time,
+                    entry_ob, dist_ema, z_score, bb_pos, ob_status, mae_percent, mfe_percent,
+                    market_regime, entry_confidence, exit_confidence, entry_shock_level, entry_atr,
+                    breakout_origin, entry_client_order_id, sl_client_order_id, tp_client_order_id,
+                    entry_exchange_order_id, sl_exchange_order_id, tp_exchange_order_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     datetime.now().isoformat(),
@@ -609,6 +646,12 @@ class Brain:
                     trade_data.get("entry_shock_level"),
                     trade_data.get("entry_atr"),
                     1 if trade_data.get("breakout_origin", False) else 0,
+                    trade_data.get("entry_client_order_id"),
+                    trade_data.get("sl_client_order_id"),
+                    trade_data.get("tp_client_order_id"),
+                    trade_data.get("entry_exchange_order_id"),
+                    trade_data.get("sl_exchange_order_id"),
+                    trade_data.get("tp_exchange_order_id"),
                 ),
             )
             trade_id = c.lastrowid
@@ -1571,8 +1614,10 @@ class Brain:
             )
             conn.commit()
             conn.close()
+            return True
         except Exception as e:
             print(f"❌ Error guardando estado de trade activo: {e}")
+            return False
 
     def load_active_trade_states(self):
         try:

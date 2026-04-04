@@ -25,6 +25,7 @@ class ExecutionService:
         )
         self.logger = logging.getLogger("Execution")
         self.weight_tracker = None
+        self.last_hard_sl_error = ""
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker
@@ -79,6 +80,39 @@ class ExecutionService:
         positions = self.exchange.fetch_positions()
         self._track_api_weight("fetch_positions", 5, "account")
         return positions
+
+    def fetch_open_orders(self, symbol: Optional[str] = None):
+        if symbol:
+            orders = self.exchange.fetch_open_orders(symbol)
+        else:
+            orders = self.exchange.fetch_open_orders()
+        self._track_api_weight("fetch_open_orders", 5, "account")
+        return orders
+
+    def fetch_order_by_client_id(self, symbol: str, client_order_id: str):
+        if not symbol or not client_order_id:
+            return None
+        try:
+            params = {
+                "symbol": self.exchange.market_id(symbol),
+                "origClientOrderId": client_order_id,
+            }
+            order = self.exchange.fapiPrivateGetOrder(params)
+            self._track_api_weight("fapiPrivateGetOrder", 1, "account")
+            if isinstance(order, dict) and order:
+                parsed = {
+                    "id": order.get("orderId"),
+                    "symbol": symbol,
+                    "status": str(order.get("status", "")).lower(),
+                    "clientOrderId": order.get("clientOrderId"),
+                    "info": order,
+                }
+                return parsed
+        except Exception as error:
+            self.logger.warning(
+                f"⚠️ No se pudo consultar orden por clientOrderId {symbol}/{client_order_id}: {error}"
+            )
+        return None
 
     def fetch_my_trades(self, symbol: str, limit: int = 2):
         trades = self.exchange.fetch_my_trades(symbol, limit=limit)
@@ -202,7 +236,12 @@ class ExecutionService:
             return 0.0
 
     def place_hard_sl(
-        self, symbol: str, side: str, amount: float, stop_price: float
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        stop_price: float,
+        client_order_id: Optional[str] = None,
     ) -> Optional[CCXTOrder]:
         """Coloca un STOP_MARKET real en Binance para seguridad extrema."""
         try:
@@ -211,12 +250,16 @@ class ExecutionService:
                 "stopPrice": self.exchange.price_to_precision(symbol, stop_price),
                 "reduceOnly": True,
             }
+            if client_order_id:
+                params["newClientOrderId"] = client_order_id
             order = self.exchange.create_order(
                 symbol, "STOP_MARKET", sl_side, amount, None, params
             )
             self._track_api_weight("create_order", 1, "trading")
+            self.last_hard_sl_error = ""
             return order
         except Exception as e:
+            self.last_hard_sl_error = str(e)
             self.logger.error(f"⚠️ Error colocando Hard SL {symbol}: {e}")
             return None
 

@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from config import Config
-from core.reconciliation import allocate_signal_timestamp, generate_client_order_id
+from core.reconciliation import (
+    allocate_signal_timestamp,
+    generate_child_client_order_id,
+    generate_client_order_id,
+)
 from learning import shadow_logger
 from notifier import send_telegram_msg, send_telegram_photo
 
@@ -44,6 +48,8 @@ def execute_order(
     entry_client_order_id = generate_client_order_id(
         symbol, side, signal_ts, instance_id
     )
+    sl_client_order_id = generate_child_client_order_id(entry_client_order_id, "SL")
+    tp_client_order_id = generate_child_client_order_id(entry_client_order_id, "TP")
     symbol_base = symbol.split("/")[0]
     controls = bot._load_runtime_symbol_controls()
     if symbol_base in controls.get("blocked", set()):
@@ -233,13 +239,27 @@ def execute_order(
         "entry": price,
         "amount": amount,
         "is_shadow": is_shadow,
-        "status": "PENDING_SUBMIT",
+        "status": "PENDING_SEND",
         "signal_ts": signal_ts,
         "entry_client_order_id": entry_client_order_id,
+        "sl_client_order_id": sl_client_order_id,
+        "tp_client_order_id": tp_client_order_id,
+        "entry_exchange_order_id": None,
+        "sl_exchange_order_id": None,
+        "tp_exchange_order_id": None,
         "open_time": datetime.now().isoformat(),
     }
     with bot.db_lock:
-        bot.brain.save_active_trade_state(symbol, pending_state)
+        persisted = bot.brain.save_active_trade_state(symbol, pending_state)
+    if not persisted:
+        bot.log(
+            f"❌ IDPOTENCY_GUARD {symbol}: no se pudo persistir intención PENDING_SEND antes de enviar orden"
+        )
+        return "INTENT_PERSISTENCE_FAILED"
+
+    def _drop_pending_intent():
+        with bot.db_lock:
+            bot.brain.delete_active_trade_state(symbol)
 
     try:
         ticker = bot.execution.fetch_ticker(symbol)
@@ -251,10 +271,13 @@ def execute_order(
 
     try:
         final_usd = calculated_position_size
+        order = None
+        sl_order = None
         if amount <= 0 or final_usd <= 0:
             bot.log(
                 f"⚠️ ABORTO {symbol}: Tamaño inválido (amount={amount}, notional=${final_usd:.2f})"
             )
+            _drop_pending_intent()
             return "SIZE_ERROR"
 
         fees = 0.001
@@ -268,6 +291,7 @@ def execute_order(
         if tp_pct < min_tp:
             bot.log(f"🚫 TP INSUFICIENTE: {symbol} ({tp_pct:.2f}% < {min_tp:.2f}%)")
             if not is_shadow:
+                _drop_pending_intent()
                 return "TP_INSUFFICIENT"
             is_shadow = True
 
@@ -290,7 +314,13 @@ def execute_order(
                 bot.log(f"✅ EJECUCIÓN EXITOSA: {symbol} ID: {order['id']}")
                 filled_amount = float(order.get("filled", amount))
                 bot.log(f"🛡️ Colocando HARD SL en Binance: {symbol} @ {sl_val}")
-                bot.execution.place_hard_sl(symbol, side, filled_amount, sl_val)
+                sl_order = bot.execution.place_hard_sl(
+                    symbol,
+                    side,
+                    filled_amount,
+                    sl_val,
+                    client_order_id=sl_client_order_id,
+                )
 
                 send_telegram_msg(
                     f"🚀 *🔥 REAL TRADE ABIERTO*\n"
@@ -359,6 +389,16 @@ def execute_order(
                 "entry_atr": (context or {}).get("atr", 0.0),
                 "breakout_origin": bool((context or {}).get("breakout_ready", False)),
                 "entry_client_order_id": entry_client_order_id,
+                "sl_client_order_id": sl_client_order_id,
+                "tp_client_order_id": tp_client_order_id,
+                "entry_exchange_order_id": (order or {}).get("id")
+                if not is_shadow
+                else None,
+                "sl_exchange_order_id": (sl_order or {}).get("id")
+                if not is_shadow
+                else None,
+                "tp_exchange_order_id": None,
+                "status": "OPEN",
                 "signal_ts": signal_ts,
             }
 
@@ -409,8 +449,16 @@ def close_trade(
 ):
     with bot.lock:
         trade = bot.active_trades.get(symbol)
+        if trade and trade.get("closing_in_progress"):
+            return
+        if trade:
+            trade["closing_in_progress"] = True
+            trade["status"] = "CLOSING_INITIATED"
     if not trade:
         return
+
+    with bot.db_lock:
+        bot.brain.save_active_trade_state(symbol, trade)
 
     try:
         fees = 0
@@ -551,6 +599,12 @@ def close_trade(
                         "entry_shock_level": trade.get("entry_shock_level"),
                         "entry_atr": trade.get("entry_atr"),
                         "breakout_origin": trade.get("breakout_origin", False),
+                        "entry_client_order_id": trade.get("entry_client_order_id"),
+                        "sl_client_order_id": trade.get("sl_client_order_id"),
+                        "tp_client_order_id": trade.get("tp_client_order_id"),
+                        "entry_exchange_order_id": trade.get("entry_exchange_order_id"),
+                        "sl_exchange_order_id": trade.get("sl_exchange_order_id"),
+                        "tp_exchange_order_id": trade.get("tp_exchange_order_id"),
                     }
                 )
                 bot.log(
@@ -750,4 +804,13 @@ def close_trade(
 
         bot._update_dynamic_risk()
     except Exception as e:
+        with bot.lock:
+            current = bot.active_trades.get(symbol)
+            if current:
+                current["closing_in_progress"] = False
+                current["status"] = "OPEN"
+        with bot.db_lock:
+            current = bot.active_trades.get(symbol)
+            if current:
+                bot.brain.save_active_trade_state(symbol, current)
         bot.log(f"Error cerrando {symbol}: {e}")
