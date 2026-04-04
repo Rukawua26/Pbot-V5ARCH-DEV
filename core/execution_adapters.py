@@ -18,6 +18,7 @@ class ShadowExecutionAdapter:
         reject_rate: float = 0.03,
         partial_fill_rate: float = 0.25,
         partial_fill_complete_rate: float = 0.5,
+        price_out_of_range_rate: float = 0.05,
         min_partial_ratio: float = 0.3,
         random_source: Optional[random.Random] = None,
         sleep_fn=time.sleep,
@@ -27,12 +28,16 @@ class ShadowExecutionAdapter:
         self.exchange = live_execution.exchange
         self.logger = getattr(live_execution, "logger", None)
         self.last_hard_sl_error = ""
+        self.last_entry_reject_error = ""
         self._min_latency_ms = max(0, int(min_latency_ms))
         self._max_latency_ms = max(self._min_latency_ms, int(max_latency_ms))
         self._reject_rate = max(0.0, min(1.0, float(reject_rate)))
         self._partial_fill_rate = max(0.0, min(1.0, float(partial_fill_rate)))
         self._partial_fill_complete_rate = max(
             0.0, min(1.0, float(partial_fill_complete_rate))
+        )
+        self._price_out_of_range_rate = max(
+            0.0, min(1.0, float(price_out_of_range_rate))
         )
         self._min_partial_ratio = max(0.05, min(0.95, float(min_partial_ratio)))
         self._rng = random_source or random.Random()
@@ -142,12 +147,30 @@ class ShadowExecutionAdapter:
         slippage_pct: float = 0.1,
         client_order_id: Optional[str] = None,
     ):
+        self.last_entry_reject_error = ""
         if self._reject():
+            self.last_entry_reject_error = "Random reject (shadow)"
             if self.logger:
                 self.logger.warning(
                     f"⚠️ SHADOW EXEC reject {symbol} {side} clientId={client_order_id or 'N/A'}"
                 )
             return None
+
+        market_price = float(
+            (self._live.fetch_ticker(symbol) or {}).get("last") or price
+        )
+        shock = 0.0
+        if self._rng.random() < self._price_out_of_range_rate:
+            shock = self._rng.uniform(0.003, 0.01)
+            if self._rng.random() < 0.5:
+                shock = -shock
+        effective_market = market_price * (1.0 + shock)
+        allowed = abs(float(slippage_pct or 0.0))
+        if effective_market > 0:
+            diff_pct = abs((effective_market - float(price)) / effective_market) * 100.0
+            if diff_pct > allowed:
+                self.last_entry_reject_error = f"Price out of range: requested={price:.6f} market={effective_market:.6f} diff={diff_pct:.4f}% allowed={allowed:.4f}%"
+                return None
 
         latency_ms = self._sample_latency_ms()
         order = self._mock_order(
@@ -280,6 +303,9 @@ def build_execution_gateway(config, execution_service_cls):
             ),
             partial_fill_complete_rate=float(
                 getattr(config, "SHADOW_SIM_PARTIAL_COMPLETE_RATE", 0.5)
+            ),
+            price_out_of_range_rate=float(
+                getattr(config, "SHADOW_SIM_PRICE_OUT_OF_RANGE_RATE", 0.05)
             ),
             min_partial_ratio=float(
                 getattr(config, "SHADOW_SIM_MIN_PARTIAL_RATIO", 0.3)

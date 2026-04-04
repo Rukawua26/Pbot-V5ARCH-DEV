@@ -5,6 +5,7 @@ from typing import Any, Optional, Protocol, runtime_checkable
 class ExecutionPort(Protocol):
     exchange: Any
     last_hard_sl_error: str
+    last_entry_reject_error: str
 
     def set_weight_tracker(self, tracker: Any) -> None: ...
 

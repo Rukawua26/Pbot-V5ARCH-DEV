@@ -2,6 +2,7 @@ import time
 from datetime import datetime
 
 from config import Config
+from core.execution_telemetry import append_execution_event
 from strategy import Strategy
 
 
@@ -49,6 +50,46 @@ def run_guardian_loop(bot):
                         t.get("closing_in_progress")
                         or t.get("status") == "CLOSING_INITIATED"
                     ):
+                        continue
+                    if t.get("status") in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}:
+                        current_conf = t.get("current_confidence", 50.0)
+                        entry_conf = t.get("entry_confidence", 75.0)
+                        abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
+                            entry_conf, current_conf
+                        )
+                        if abort_needed:
+                            append_execution_event(
+                                bot,
+                                "GUARDIAN_PARTIAL_ABORTED",
+                                {
+                                    "symbol": s,
+                                    "status": t.get("status"),
+                                    "entry_conf": float(entry_conf),
+                                    "current_conf": float(current_conf),
+                                    "reason": abort_reason,
+                                },
+                            )
+                            bot.abort_partial_trade(
+                                s,
+                                f"PARTIAL_ABORT: {abort_reason}",
+                                t.get("last_price", 0.0),
+                            )
+                            continue
+                        append_execution_event(
+                            bot,
+                            "GUARDIAN_PARTIAL_OBSERVED",
+                            {
+                                "symbol": s,
+                                "status": t.get("status"),
+                                "amount": float(t.get("amount") or 0.0),
+                                "remaining_amount": float(
+                                    t.get("remaining_amount") or 0.0
+                                ),
+                            },
+                        )
+                        bot.log(
+                            f"🧭 GUARDIAN PARTIAL {s}: observado {t.get('status')} y omitido para evitar desincronía"
+                        )
                         continue
 
                     # --- [v118-PRO] PRIORIDAD ABSOLUTA: SMART EXIT (BAILOUT) ---
