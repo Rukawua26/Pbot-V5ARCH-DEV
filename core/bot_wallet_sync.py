@@ -1,7 +1,9 @@
 from datetime import datetime
+import time
 
 from config import Config
 from core.reconciliation import generate_child_client_order_id
+from notifier import send_telegram_msg
 
 
 def _bool_reduce_only(order: dict) -> bool:
@@ -62,8 +64,24 @@ def _emergency_market_close_unprotected(
     with bot.db_lock:
         bot.brain.save_active_trade_state(symbol, trade)
 
-    try:
-        bot.execution.close_position(symbol, str(trade.get("side") or "BUY"), amount)
+    close_ok = False
+    last_close_error = ""
+    for attempt in range(1, 4):
+        try:
+            bot.execution.close_position(
+                symbol, str(trade.get("side") or "BUY"), amount
+            )
+            close_ok = True
+            break
+        except Exception as close_error:
+            last_close_error = str(close_error)
+            bot.log(
+                f"⚠️ EMERGENCY_CLOSE intento {attempt}/3 fallido en {symbol}: {close_error}"
+            )
+            if attempt < 3:
+                time.sleep(2 ** (attempt - 1))
+
+    if close_ok:
         with bot.db_lock:
             bot.brain.save_error_snapshot(
                 symbol,
@@ -77,10 +95,25 @@ def _emergency_market_close_unprotected(
         bot.log(
             f"🧯 EMERGENCY CLOSE {symbol}: SL inválido por gap, cierre MARKET ejecutado"
         )
-    except Exception as close_error:
-        bot.log(
-            f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado: {close_error}"
+        return
+
+    bot.is_paused = True
+    bot.integrity_lock_active = True
+    setattr(bot, "halt_system_active", True)
+    bot.log(
+        f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado tras 3 intentos."
+    )
+    try:
+        send_telegram_msg(
+            "🚨 *FALLO CRÍTICO DE PROTECCIÓN*\n"
+            f"Símbolo: {symbol}\n"
+            "No fue posible adjuntar HARD SL ni ejecutar Emergency Close tras 3 intentos.\n"
+            f"Error SL: {str(sl_error)[:180]}\n"
+            f"Error Close: {last_close_error[:180]}\n"
+            "🛑 Sistema en HALT manual. No se abrirán nuevas posiciones hasta intervención humana."
         )
+    except Exception:
+        pass
 
 
 def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):

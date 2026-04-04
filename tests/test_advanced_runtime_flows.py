@@ -69,6 +69,26 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(result, "INSUFFICIENT_BALANCE_MIN_NOTIONAL")
 
+    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    def test_execute_order_blocks_real_when_halt_system_active(self, _mock_halted):
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            integrity_lock_active=False,
+            halt_system_active=True,
+        )
+
+        result = execute_order(
+            bot,
+            symbol="ETH/USDT",
+            side="BUY",
+            price=100.0,
+            atr=1.0,
+            is_shadow=False,
+            context={},
+        )
+
+        self.assertEqual(result, "HALT_SYSTEM_ACTIVE")
+
     def test_instinctive_safety_forces_shadow_on_extreme_volatility(self):
         bot = SimpleNamespace(log=MagicMock())
 

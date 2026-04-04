@@ -41,6 +41,10 @@ def execute_order(
         )
         return "INTEGRITY_LOCK_ACTIVE"
 
+    if not is_shadow and bool(getattr(bot, "halt_system_active", False)):
+        bot.log("🛑 HALT_SYSTEM activo: bloqueando nuevas posiciones reales.")
+        return "HALT_SYSTEM_ACTIVE"
+
     req_shadow = is_shadow
     degradation_reason = "UNKNOWN"
     signal_ts = allocate_signal_timestamp()

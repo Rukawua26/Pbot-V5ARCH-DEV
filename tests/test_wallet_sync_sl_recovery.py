@@ -143,6 +143,51 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         self.assertNotIn("SOL/USDT", bot.active_trades)
         bot.brain.delete_active_trade_state.assert_called_once_with("SOL/USDT")
 
+    @patch("core.bot_wallet_sync.send_telegram_msg")
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    def test_halts_system_when_emergency_close_fails_after_retries(self, mocked_tg):
+        bot = self._base_bot()
+        bot.integrity_lock_active = False
+        bot.is_paused = False
+        bot.active_trades = {
+            "ADA/USDT": {
+                "symbol": "ADA/USDT",
+                "side": "BUY",
+                "entry": 1.0,
+                "amount": 100.0,
+                "sl": 0.99,
+                "is_shadow": False,
+                "open_time": datetime.now(),
+                "entry_client_order_id": "sai-v118-ada",
+                "sl_exchange_order_id": None,
+            }
+        }
+        bot.execution = SimpleNamespace(
+            fetch_positions=lambda: [
+                {
+                    "symbol": "ADA/USDT:USDT",
+                    "contracts": 100.0,
+                    "side": "long",
+                    "entryPrice": 1.0,
+                    "unrealizedPnl": -5.0,
+                    "info": {},
+                }
+            ],
+            fetch_open_orders=lambda _symbol=None: [],
+            place_hard_sl=MagicMock(return_value=None),
+            close_position=MagicMock(side_effect=RuntimeError("rate limit")),
+            last_hard_sl_error="Order would trigger immediately. (-2021)",
+        )
+
+        sync_wallet(bot)
+
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(getattr(bot, "halt_system_active", False))
+        self.assertIn("ADA/USDT", bot.active_trades)
+        self.assertEqual(bot.execution.close_position.call_count, 3)
+        mocked_tg.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
