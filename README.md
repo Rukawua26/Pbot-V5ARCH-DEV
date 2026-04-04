@@ -4,6 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-22c55e)
+![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Strategy](https://img.shields.io/badge/Strategy-Trinity_MT%2FSR%2FG-7c3aed)
 ![Risk](https://img.shields.io/badge/Risk-SHOCK_Filter_On-ef4444)
 
@@ -16,6 +17,14 @@
 | 🛡️ Filtro SHOCK | Activo | Evita entradas sin espacio operativo |
 | 👻 Shadow Mode | Activo | Ejecuta simulacion controlada para aprendizaje |
 | 🔒 Real Mode | Activo | Solo con umbral alto de confianza |
+
+## 🆕 Novedades recientes (Abr 2026)
+
+- Refactor modular masivo: `main.py` paso de monolito a entrypoint minimalista.
+- Nueva capa de aplicacion en `core/bot_app.py` y fachada en `core/bot_facade.py`.
+- CI reforzado en GitHub Actions: compilacion, smoke imports, guardrail anti-`pass`, contratos arquitectonicos.
+- Suite de regresion runtime incorporada en `tests/`.
+- Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
 
 ## ⚙️ Requisitos
 
@@ -111,10 +120,23 @@ sudo systemctl status sniper-ai.service --no-pager
 
 | Ruta | Contenido |
 |---|---|
-| `main.py` | Orquestacion principal del bot |
+| `main.py` | Entrypoint minimalista (launcher) |
+| `core/bot_app.py` | Bootstrap y clase `Bot` principal |
+| `core/bot_facade.py` | Fachada unificada de runtime/senales/riesgo |
 | `core/` | Motor de estrategia, riesgo, ejecucion y datos |
+| `tests/` | Regresiones de runtime y contratos basicos |
 | `tools/` | Utilidades de auditoria, reportes y entrenamiento |
 | `sniper-ai.service` | Servicio systemd listo para despliegue |
+
+## ✅ Calidad automatica (CI)
+
+Pipeline en `.github/workflows/ci.yml` ejecuta en cada PR/push:
+
+1. `python -m compileall` para validar sintaxis.
+2. `scripts/smoke_modular_imports.sh` para detectar roturas de arquitectura modular.
+3. `tools/check_no_silent_pass.py` para bloquear `pass` silenciosos en `core/`.
+4. `tools/regression_contracts.py` para contratos arquitectonicos.
+5. `python -m unittest discover -s tests -p "test_*.py"` para regresion runtime.
 
 ## 🏗️ Arquitectura (alto nivel)
 
