@@ -31,6 +31,7 @@ class OperationalConfig:
     SHADOW_SIM_MIN_PARTIAL_RATIO = float(
         os.getenv("SHADOW_SIM_MIN_PARTIAL_RATIO", "0.30")
     )
+    PARTIAL_FILL_TIMEOUT_SECONDS = int(os.getenv("PARTIAL_FILL_TIMEOUT_SECONDS", "300"))
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY

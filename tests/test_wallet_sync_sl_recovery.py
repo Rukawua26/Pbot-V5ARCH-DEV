@@ -188,6 +188,64 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         self.assertEqual(bot.execution.close_position.call_count, 3)
         mocked_tg.assert_called_once()
 
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    @patch("core.bot_wallet_sync.Config.PARTIAL_FILL_TIMEOUT_SECONDS", 60)
+    def test_partial_fill_timeout_cancels_remaining_order(self):
+        bot = self._base_bot()
+        bot.active_trades = {
+            "BNB/USDT": {
+                "symbol": "BNB/USDT",
+                "side": "BUY",
+                "entry": 300.0,
+                "amount": 4.0,
+                "requested_amount": 10.0,
+                "remaining_amount": 6.0,
+                "status": "PARTIAL_FILL_PENDING",
+                "partial_fill_pending": True,
+                "partial_fill_started_at": datetime.fromtimestamp(
+                    datetime.now().timestamp() - 120
+                ).isoformat(),
+                "is_shadow": False,
+                "open_time": datetime.now(),
+                "entry_exchange_order_id": "entry-ord-1",
+                "sl_exchange_order_id": "sl-1",
+            }
+        }
+
+        bot.execution = SimpleNamespace(
+            fetch_positions=lambda: [
+                {
+                    "symbol": "BNB/USDT:USDT",
+                    "contracts": 4.0,
+                    "side": "long",
+                    "entryPrice": 301.0,
+                    "unrealizedPnl": 0.0,
+                    "info": {},
+                }
+            ],
+            fetch_open_orders=lambda _symbol=None: [
+                {
+                    "id": "entry-ord-1",
+                    "symbol": "BNB/USDT",
+                    "status": "open",
+                    "clientOrderId": "cid-entry",
+                }
+            ],
+            cancel_order=MagicMock(
+                return_value={"id": "entry-ord-1", "status": "canceled"}
+            ),
+            place_hard_sl=MagicMock(return_value={"id": "sl-1"}),
+        )
+
+        sync_wallet(bot)
+
+        trade = bot.active_trades["BNB/USDT"]
+        self.assertEqual(trade.get("status"), "OPEN")
+        self.assertFalse(trade.get("partial_fill_pending"))
+        self.assertEqual(trade.get("remaining_amount"), 0.0)
+        self.assertEqual(trade.get("unfilled_canceled_amount"), 6.0)
+        bot.execution.cancel_order.assert_called_once_with("BNB/USDT", "entry-ord-1")
+
 
 if __name__ == "__main__":
     unittest.main()

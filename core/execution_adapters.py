@@ -152,6 +152,17 @@ class ShadowExecutionAdapter:
     def close_due_to_degradation(self, symbol: str, side: str, amount: float):
         return self.close_position(symbol, side, amount)
 
+    def cancel_order(self, symbol: str, order_id: str):
+        self._inject_latency()
+        if self._reject():
+            raise RuntimeError("shadow cancel rejected")
+        return {
+            "id": order_id,
+            "symbol": symbol,
+            "status": "canceled",
+            "info": {"shadow": True},
+        }
+
 
 def build_execution_gateway(config, execution_service_cls):
     execution = execution_service_cls(config.BINANCE_API_KEY, config.BINANCE_API_SECRET)

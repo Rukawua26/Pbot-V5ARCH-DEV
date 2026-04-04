@@ -119,6 +119,13 @@ class ExecutionService:
         self._track_api_weight("fetch_my_trades", 5, "account")
         return trades
 
+    def cancel_order(self, symbol: str, order_id: str):
+        if not symbol or not order_id:
+            return None
+        canceled = self.exchange.cancel_order(order_id, symbol)
+        self._track_api_weight("cancel_order", 1, "trading")
+        return canceled
+
     def fetch_all_prices(self):
         prices = self.exchange.fapiPublicGetTickerPrice()
         self._track_api_weight("fapiPublicGetTickerPrice", 1, "market")
