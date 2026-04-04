@@ -1,0 +1,58 @@
+from typing import Any, Optional, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class ExecutionPort(Protocol):
+    exchange: Any
+    last_hard_sl_error: str
+
+    def set_weight_tracker(self, tracker: Any) -> None: ...
+
+    def fetch_ticker(self, symbol: str) -> dict: ...
+
+    def fetch_tickers(self, symbols=None, params=None): ...
+
+    def fetch_positions(self): ...
+
+    def fetch_open_orders(self, symbol: Optional[str] = None): ...
+
+    def fetch_order_by_client_id(self, symbol: str, client_order_id: str): ...
+
+    def fetch_my_trades(self, symbol: str, limit: int = 2): ...
+
+    def fetch_all_prices(self): ...
+
+    def fetch_order_book(self, symbol: str, limit: int = 20): ...
+
+    def fetch_balance(self): ...
+
+    def get_balance(self) -> float: ...
+
+    def set_leverage(self, leverage: int, symbol: str): ...
+
+    def create_precision_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        slippage_pct: float = 0.1,
+        client_order_id: Optional[str] = None,
+    ): ...
+
+    def create_reduce_only_market_order(
+        self, symbol: str, side: str, amount: float, params=None
+    ): ...
+
+    def place_hard_sl(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        stop_price: float,
+        client_order_id: Optional[str] = None,
+    ): ...
+
+    def close_position(self, symbol: str, side: str, amount: float): ...
+
+    def close_due_to_degradation(self, symbol: str, side: str, amount: float): ...

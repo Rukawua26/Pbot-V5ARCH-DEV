@@ -21,6 +21,16 @@ class OperationalConfig:
 
     PAPER_MODE = _env_bool("PAPER_MODE", True)
     USE_TESTNET = _env_bool("USE_TESTNET", False)
+    EXECUTION_BACKEND = os.getenv("EXECUTION_BACKEND", "live")
+    SHADOW_SIM_LATENCY_MIN_MS = int(os.getenv("SHADOW_SIM_LATENCY_MIN_MS", "200"))
+    SHADOW_SIM_LATENCY_MAX_MS = int(os.getenv("SHADOW_SIM_LATENCY_MAX_MS", "500"))
+    SHADOW_SIM_REJECT_RATE = float(os.getenv("SHADOW_SIM_REJECT_RATE", "0.03"))
+    SHADOW_SIM_PARTIAL_FILL_RATE = float(
+        os.getenv("SHADOW_SIM_PARTIAL_FILL_RATE", "0.25")
+    )
+    SHADOW_SIM_MIN_PARTIAL_RATIO = float(
+        os.getenv("SHADOW_SIM_MIN_PARTIAL_RATIO", "0.30")
+    )
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY
