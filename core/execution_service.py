@@ -135,6 +135,7 @@ class ExecutionService:
         amount: float,
         price: float,
         slippage_pct: float = 0.1,
+        client_order_id: Optional[str] = None,
     ) -> Optional[CCXTOrder]:
         """
         Ejecución quirúrgica: LIMIT IOC.
@@ -159,6 +160,8 @@ class ExecutionService:
                 "timeInForce": "IOC",  # Immediate or Cancel
                 "postOnly": False,
             }
+            if client_order_id:
+                params["newClientOrderId"] = client_order_id
 
             self.logger.info(
                 f"🚀 Enviando LIMIT IOC {symbol} {side} @ {limit_price_str}"

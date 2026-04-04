@@ -5,6 +5,7 @@ import time
 import pandas as pd
 
 from config import Config
+from core.reconciliation import reconcile_bootstrap_state
 
 
 def run_initial_load(bot, dashboard_module):
@@ -12,9 +13,12 @@ def run_initial_load(bot, dashboard_module):
         bot.connect()
         bot.acquire_targets()
         bot._load_ai_restrictions()
+        reconcile_bootstrap_state(bot)
 
         bot.log("🔍 Ejecutando auto-blacklist de poor performers...")
-        bot.brain.auto_blacklist_poor_performers(min_trades=5, max_loss_pct=-5.0, max_wr=40.0)
+        bot.brain.auto_blacklist_poor_performers(
+            min_trades=5, max_loss_pct=-5.0, max_wr=40.0
+        )
 
         bot.check_for_evolution()
 
@@ -74,7 +78,9 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
 
     bot.ui.start()
 
-    threading.Thread(target=bot._initial_load, args=(dashboard_module,), daemon=True).start()
+    threading.Thread(
+        target=bot._initial_load, args=(dashboard_module,), daemon=True
+    ).start()
 
     try:
         while bot.is_running:
@@ -87,15 +93,23 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
 
                 if hasattr(bot, "ml_performance") and bot.ml_performance:
                     try:
-                        ml_metrics["performance"] = bot.ml_performance.calculate_metrics()
-                        ml_metrics["top_symbols"] = bot.ml_performance.get_top_symbols(min_predictions=3)
+                        ml_metrics["performance"] = (
+                            bot.ml_performance.calculate_metrics()
+                        )
+                        ml_metrics["top_symbols"] = bot.ml_performance.get_top_symbols(
+                            min_predictions=3
+                        )
                     except Exception as error_ml:
                         logger.warning(f"⚠️ Error en métricas ML: {error_ml}")
 
                 bot.ui.update(
                     balance=bot.balance,
-                    trades=list(bot.active_trades.values()) if hasattr(bot, "active_trades") else [],
-                    scanner=bot.scanner_history[:50] if hasattr(bot, "scanner_history") else [],
+                    trades=list(bot.active_trades.values())
+                    if hasattr(bot, "active_trades")
+                    else [],
+                    scanner=bot.scanner_history[:50]
+                    if hasattr(bot, "scanner_history")
+                    else [],
                     db_stats=telemetry,
                     sentiment=getattr(bot, "current_sentiment", "NEUTRAL"),
                     ml_metrics=ml_metrics,

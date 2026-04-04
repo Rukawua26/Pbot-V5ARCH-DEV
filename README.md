@@ -25,6 +25,7 @@
 - CI reforzado en GitHub Actions: compilacion, smoke imports, guardrail anti-`pass`, contratos arquitectonicos.
 - Suite de regresion runtime incorporada en `tests/`.
 - Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
+- Reconciliacion de arranque: modulo `core/reconciliation.py` con adopcion de huerfanas, deteccion `LOST_IN_TRANSMISSION` e `Integrity Lock` por desbalance de capital.
 
 ## ⚙️ Requisitos
 
@@ -123,6 +124,7 @@ sudo systemctl status sniper-ai.service --no-pager
 | `main.py` | Entrypoint minimalista (launcher) |
 | `core/bot_app.py` | Bootstrap y clase `Bot` principal |
 | `core/bot_facade.py` | Fachada unificada de runtime/senales/riesgo |
+| `core/reconciliation.py` | Reconciliacion determinista DB/Exchange al arranque |
 | `core/` | Motor de estrategia, riesgo, ejecucion y datos |
 | `tests/` | Regresiones de runtime y contratos basicos |
 | `tools/` | Utilidades de auditoria, reportes y entrenamiento |
@@ -169,6 +171,7 @@ flowchart LR
 | `/dna <symbol>` | Estado genetico de parametros por simbolo |
 | `/explain <symbol>` | Explicacion IA de la decision |
 | `/reset` | Reinicio de PnL diario |
+| `/rebase_capital` | Reancla balance local al exchange y libera Integrity Lock |
 | `/archive` | Rotacion/archivo de historial DB |
 
 ## 🖼️ Vista sugerida del repositorio

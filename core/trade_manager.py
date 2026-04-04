@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from config import Config
+from core.reconciliation import allocate_signal_timestamp, generate_client_order_id
 from learning import shadow_logger
 from notifier import send_telegram_msg, send_telegram_photo
 
@@ -30,8 +31,19 @@ def execute_order(
         )
         return "TRADING_HALTED_DB_ERROR"
 
+    if not is_shadow and bool(getattr(bot, "integrity_lock_active", False)):
+        bot.log(
+            "🛑 INTEGRITY_LOCK activo: se bloquea apertura de nuevas posiciones reales."
+        )
+        return "INTEGRITY_LOCK_ACTIVE"
+
     req_shadow = is_shadow
     degradation_reason = "UNKNOWN"
+    signal_ts = allocate_signal_timestamp()
+    instance_id = getattr(bot, "instance_uuid", "default")
+    entry_client_order_id = generate_client_order_id(
+        symbol, side, signal_ts, instance_id
+    )
     symbol_base = symbol.split("/")[0]
     controls = bot._load_runtime_symbol_controls()
     if symbol_base in controls.get("blocked", set()):
@@ -214,6 +226,21 @@ def execute_order(
                 )
             return "MAX_SHADOW"
 
+    # Persistencia previa al cable de red (journal de intención)
+    pending_state = {
+        "symbol": symbol,
+        "side": side,
+        "entry": price,
+        "amount": amount,
+        "is_shadow": is_shadow,
+        "status": "PENDING_SUBMIT",
+        "signal_ts": signal_ts,
+        "entry_client_order_id": entry_client_order_id,
+        "open_time": datetime.now().isoformat(),
+    }
+    with bot.db_lock:
+        bot.brain.save_active_trade_state(symbol, pending_state)
+
     try:
         ticker = bot.execution.fetch_ticker(symbol)
         current_price = float(ticker["last"])
@@ -251,7 +278,12 @@ def execute_order(
             bot.execution.set_leverage(current_leverage, symbol)
             order_slippage = Config.MAX_SLIPPAGE * 100
             order = bot.execution.create_precision_order(
-                symbol, side, amount, price, order_slippage
+                symbol,
+                side,
+                amount,
+                price,
+                order_slippage,
+                client_order_id=entry_client_order_id,
             )
 
             if order and order.get("status") in ["closed", "open", "filled"]:
@@ -326,6 +358,8 @@ def execute_order(
                 "entry_shock_level": (context or {}).get("shock_level"),
                 "entry_atr": (context or {}).get("atr", 0.0),
                 "breakout_origin": bool((context or {}).get("breakout_ready", False)),
+                "entry_client_order_id": entry_client_order_id,
+                "signal_ts": signal_ts,
             }
 
             if symbol not in bot.active_trades:
