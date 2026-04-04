@@ -1,4 +1,5 @@
 import random
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -54,6 +55,7 @@ class ExecutionAdapterContractTest(unittest.TestCase):
             max_latency_ms=0,
             reject_rate=0.0,
             partial_fill_rate=1.0,
+            partial_fill_complete_rate=0.0,
             min_partial_ratio=0.5,
             random_source=random.Random(1),
             sleep_fn=lambda _s: None,
@@ -62,10 +64,60 @@ class ExecutionAdapterContractTest(unittest.TestCase):
         order = adapter.create_precision_order(
             "BTC/USDT", "BUY", amount=2.0, price=100.0, client_order_id="cid-1"
         )
+        self.assertIsInstance(order, dict)
+        order = order or {}
 
         self.assertEqual(order.get("status"), "open")
-        self.assertLess(order.get("filled"), 2.0)
+        self.assertLess(float(order.get("filled") or 0.0), 2.0)
         self.assertEqual(order.get("clientOrderId"), "cid-1")
+
+    def test_shadow_adapter_latency_is_non_blocking_for_caller(self):
+        live = _FakeExecutionService("k", "s")
+        adapter = ShadowExecutionAdapter(
+            live,
+            min_latency_ms=400,
+            max_latency_ms=400,
+            reject_rate=0.0,
+            partial_fill_rate=1.0,
+            partial_fill_complete_rate=1.0,
+            min_partial_ratio=0.6,
+            random_source=random.Random(3),
+        )
+
+        started = time.perf_counter()
+        order = adapter.create_precision_order(
+            "BTC/USDT", "BUY", amount=2.0, price=100.0, client_order_id="cid-2"
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertIsInstance(order, dict)
+        self.assertLess(elapsed, 0.1)
+
+    def test_partial_fill_can_finalize_async(self):
+        live = _FakeExecutionService("k", "s")
+        adapter = ShadowExecutionAdapter(
+            live,
+            min_latency_ms=40,
+            max_latency_ms=40,
+            reject_rate=0.0,
+            partial_fill_rate=1.0,
+            partial_fill_complete_rate=1.0,
+            min_partial_ratio=0.5,
+            random_source=random.Random(4),
+        )
+
+        order = adapter.create_precision_order(
+            "BTC/USDT", "BUY", amount=2.0, price=100.0, client_order_id="cid-3"
+        )
+        self.assertIsInstance(order, dict)
+        order = order or {}
+        self.assertEqual(order.get("status"), "open")
+        open_now = adapter.fetch_open_orders("BTC/USDT")
+        self.assertTrue(any(o.get("id") == order.get("id") for o in open_now))
+
+        time.sleep(0.08)
+        open_later = adapter.fetch_open_orders("BTC/USDT")
+        self.assertFalse(any(o.get("id") == order.get("id") for o in open_later))
 
     def test_shadow_adapter_sets_immediate_trigger_error_for_invalid_sl(self):
         live = _FakeExecutionService("k", "s")
