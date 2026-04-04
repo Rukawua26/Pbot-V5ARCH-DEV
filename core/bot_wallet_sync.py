@@ -113,7 +113,9 @@ def _emergency_market_close_unprotected(
             "🛑 Sistema en HALT manual. No se abrirán nuevas posiciones hasta intervención humana."
         )
     except Exception:
-        pass
+        bot.log(
+            f"🚨 ALERTA LOCAL: no se pudo enviar notificación Telegram de HALT para {symbol}."
+        )
 
 
 def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):
