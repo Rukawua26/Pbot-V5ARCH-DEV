@@ -26,6 +26,7 @@
 - Suite de regresion runtime incorporada en `tests/`.
 - Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
 - Reconciliacion de arranque: modulo `core/reconciliation.py` con adopcion de huerfanas, deteccion `LOST_IN_TRANSMISSION` e `Integrity Lock` por desbalance de capital.
+- Capa de ejecucion agnostica por adaptadores: `core/execution_adapters.py` permite backend `live` o `shadow_live` sin contaminar la logica de negocio.
 
 ### Contrato de estados de orden/trade (runtime)
 
@@ -48,6 +49,12 @@ Reglas de reconciliacion en arranque:
 | Python | 3.10+ |
 | Pip | Ultima estable recomendada |
 | Dependencias | `requirements.txt` |
+
+Variables opcionales para Shadow Live:
+
+- `EXECUTION_BACKEND=shadow_live` para simular ejecucion con latencia/rechazo/fill parcial.
+- `SHADOW_SIM_LATENCY_MIN_MS`, `SHADOW_SIM_LATENCY_MAX_MS`
+- `SHADOW_SIM_REJECT_RATE`, `SHADOW_SIM_PARTIAL_FILL_RATE`, `SHADOW_SIM_MIN_PARTIAL_RATIO`
 
 ## 📦 Instalacion
 

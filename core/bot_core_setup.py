@@ -1,13 +1,15 @@
 from config import Config
 from core.agents.breakout_agent import BreakoutAgent
 from core.exit_engine_v1 import ExitEngineV1
+from core.execution_adapters import build_execution_gateway
+from core.execution_port import ExecutionPort
 from core.execution_service import ExecutionService
 from core.risk_engine import RiskEngine
 from data_service import DataService
 
 
 def init_core_services_and_engines(bot):
-    bot.execution = ExecutionService(Config.BINANCE_API_KEY, Config.BINANCE_API_SECRET)
+    bot.execution: ExecutionPort = build_execution_gateway(Config, ExecutionService)
     bot.data_service = DataService(bot.execution.exchange)
     bot.risk_engine = RiskEngine(bot.brain)
     bot.crash_predictor = bot.risk_engine.crash_predictor
