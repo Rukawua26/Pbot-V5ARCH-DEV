@@ -5,6 +5,7 @@ SNIPER AI v118 - Aplicacion principal del bot.
 import traceback
 from functools import lru_cache
 import importlib.util
+import signal
 from typing import Any, Dict, Tuple
 import logging
 from logging.handlers import RotatingFileHandler
@@ -366,6 +367,22 @@ def run_entrypoint():
     try:
         if not acquire_single_instance_lock(logger):
             raise SystemExit(1)
-        Bot().run()
+        bot = Bot()
+
+        def _graceful_shutdown(signum, _frame):
+            signal_name = (
+                "SIGINT" if signum == getattr(signal, "SIGINT", -1) else "SIGTERM"
+            )
+            logger.warning(
+                f"⚠️ Señal {signal_name} recibida. Iniciando apagado ordenado..."
+            )
+            bot.stop_requested = True
+            bot.is_running = False
+
+        signal.signal(signal.SIGINT, _graceful_shutdown)
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, _graceful_shutdown)
+
+        bot.run()
     except Exception as error:
         logger.critical(f"❌ FATAL ERROR: {error}\n{traceback.format_exc()}")
