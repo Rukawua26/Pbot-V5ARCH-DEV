@@ -263,7 +263,7 @@ class UltimateMLSystem:
                 return True
             except Exception as e:
                 print(f"Error loading: {e}")
-                pass
+                return False
         return False
 
 

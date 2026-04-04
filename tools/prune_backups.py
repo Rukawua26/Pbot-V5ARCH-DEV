@@ -13,7 +13,7 @@ def parse_backup_ts(name: str) -> datetime | None:
     prefix = "backup_"
     if not name.startswith(prefix):
         return None
-    stamp = name[len(prefix):]
+    stamp = name[len(prefix) :]
     for fmt in ("%Y%m%d_%H%M%S", "%Y%m%d"):
         try:
             return datetime.strptime(stamp, fmt)
@@ -29,7 +29,7 @@ def folder_size_bytes(path: Path) -> int:
             try:
                 total += p.stat().st_size
             except OSError:
-                pass
+                continue
     return total
 
 
@@ -77,7 +77,7 @@ def main() -> int:
     for entry, ts, size in to_delete[:20]:
         print(f"  - {entry.name} | {ts.isoformat()} | {size / (1024**2):.1f} MB")
     if len(to_delete) > 20:
-        print(f"  ... +{len(to_delete)-20} more")
+        print(f"  ... +{len(to_delete) - 20} more")
 
     if not args.apply:
         print("Dry run only. Re-run with --apply to delete.")
