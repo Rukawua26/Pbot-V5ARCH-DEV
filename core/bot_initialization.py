@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import uuid
 
 from config import Config
 
@@ -67,6 +68,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.force_btc_panic = False
     bot.api_status = "🟡 PENDING"
     bot.force_chaos_mode = False
+    bot.integrity_lock_active = False
     bot.ai_status_msg = "INICIANDO..."
     bot.dynamic_offset = 0.0
     bot.peak_pnl = 0.0
@@ -74,6 +76,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.current_target = Config.DAILY_GOALS[0]
     bot.user_notes = "Escribe tus notas aquí..."
     bot.global_rag_impact = 0.0
+    bot.instance_uuid = str(uuid.uuid4())[:12]
 
 
 def init_realtime_and_monitoring(
