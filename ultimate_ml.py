@@ -1,5 +1,5 @@
 """
-SNIPER AI v113.0 - ULTIMATE ML SYSTEM
+SNIPER AI v118.0 - ULTIMATE ML SYSTEM
 ====================================
 - Regresión para predecir PnL
 - Clasificación para predecir dirección
@@ -89,7 +89,7 @@ class UltimateMLSystem:
 
     def train(self, X, y_class, y_regress):
         """Entrena sistema dual: clasificación + regresión."""
-        print("🚀 ENTRENANDO ULTIMATE ML SYSTEM v113.0")
+        print("🚀 ENTRENANDO ULTIMATE ML SYSTEM v118.0")
         print("=" * 50)
 
         self.feature_cols = list(X.columns)

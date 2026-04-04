@@ -9,7 +9,7 @@ from strategy import Strategy
 
 class RiskEngine:
     """
-    [V116-ULTIMATE] RISK ENGINE
+    [V118-ULTIMATE] RISK ENGINE
     ===========================
     Centraliza el control de riesgo, dimensionamiento de posición (Sizing)
     y detección de anomalías de mercado.
@@ -273,7 +273,7 @@ class RiskEngine:
         self, trade: dict, current_ai_score: float, elapsed_mins: float
     ) -> tuple[bool, str]:
         """
-        [V116-SMART-EXIT]
+        [V118-SMART-EXIT]
         Evalúa si la razón probabilística de la entrada sigue vigente.
         Retorna: (is_degraded, reason)
         """
@@ -307,7 +307,7 @@ class RiskEngine:
         threshold_factor: float = 0.70,
     ) -> tuple[bool, str]:
         """
-        [SMART EXIT v117] Regla universal de degradación de tesis.
+        [SMART EXIT v118] Regla universal de degradación de tesis.
         ============================================================
         Dispara una orden de cierre (Market Exit) si la confianza actual
         cae por debajo del `threshold_factor` (70% por defecto) de la

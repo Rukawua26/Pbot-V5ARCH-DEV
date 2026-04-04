@@ -1,5 +1,5 @@
 """
-SNIPER AI v113.0 - CRASH PREDICTOR MODULE
+SNIPER AI v118.0 - CRASH PREDICTOR MODULE
 ========================================
 - Módulo de detección proactiva de crashes
 - Sin necesidad de API de noticias

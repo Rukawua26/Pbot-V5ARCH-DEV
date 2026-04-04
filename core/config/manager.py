@@ -1,3 +1,5 @@
+import os
+
 from core.config.operational import OperationalConfig
 from core.config.strategy import StrategyConfig
 
@@ -8,7 +10,7 @@ class Config(OperationalConfig, StrategyConfig):
     Hereda de Operational y Strategy para mantener la compatibilidad con el resto del código.
     """
 
-    MAX_SPREAD_THRESHOLD = 0.008  # Valor específico v115
+    MAX_SPREAD_THRESHOLD = 0.008  # Valor específico v118
     MAX_SLIPPAGE = 0.001
     VIRTUAL_FEE = 0.001
 
@@ -18,9 +20,40 @@ class Config(OperationalConfig, StrategyConfig):
     SHADOW_MODE_MAX = 69.9
 
     # --- Mapa de SHOCKS (filtro de espacio operativo) ---
-    SHOCK_MIN_DIST_PCT = 1.0
+    SHOCK_MIN_DIST_PCT = float(os.getenv("SHOCK_MIN_DIST_PCT", "0.6"))
     SHOCK_PIVOT_WINDOW = 3
     SHOCK_LOOKBACK_BARS = 240
+
+    # --- Breakout Hunter (pasivo) ---
+    BREAKOUT_WATCH_ENABLED = True
+    BREAKOUT_MIN_IA_PROB = 60.0
+    BREAKOUT_SHOCK_MIN_IA_PROB = 50.0
+    BREAKOUT_WATCH_COHERENCE_ENABLED = True
+    BREAKOUT_COHERENCE_MIN_IA_PROB = 50.0
+    BREAKOUT_BUFFER_PCT = 0.5
+    BREAKOUT_VOLUME_MULT = 1.5
+    BREAKOUT_TIMEOUT_MINUTES = 60
+    BREAKOUT_SEMI_ACTIVE_SHADOW = True
+    BREAKOUT_EXTREME_IA_PROB = 75.0
+    DIRECTIONAL_COHERENCE_FILTER = True
+
+    # --- Exit Engine v118 (dinámico) ---
+    EXIT_ENGINE_V1_ENABLED = True
+    EXIT_TIME_DECAY_BARS = 4
+    EXIT_ESCAPE_VELOCITY_PCT = 0.2
+    EXIT_STRUCTURAL_ATR_BUFFER = 0.25
+    EXIT_STRUCTURAL_MIN_BUFFER_PCT = 0.05
+    EXIT_STRUCTURAL_MIN_HOLD_SECONDS = 120
+    EXIT_TRAILING_ACTIVATION_PCT = 0.9
+    EXIT_TRAILING_ATR_MULT = 3.0
+    EXIT_TRAILING_ATR_MULT_TIGHT = 1.5
+    EXIT_TRAILING_TIGHTEN_PNL_PCT = 2.0
+    EXIT_TRAILING_MIN_DISTANCE_PCT = 0.3
+    EXIT_BREAKEVEN_TRIGGER_PCT = 1.2
+    EXIT_BREAKEVEN_ATR_MULT = 1.2
+    EXIT_BREAKEVEN_LOCK_PCT = 0.1
+    EXIT_FLAT_TIME_DECAY_BARS = 3
+    EXIT_FLAT_TIME_DECAY_ATR_MULT = 0.5
 
     # Compatibilidad con rutas actuales de decisión (0-1)
     REAL_CONFIDENCE_MIN = REAL_MODE_THRESHOLD / 100.0

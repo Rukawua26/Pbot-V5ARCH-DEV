@@ -1,5 +1,5 @@
 """
-SNIPER AI v117 - ML MONITOR
+SNIPER AI v118 - ML MONITOR
 ===========================
 Monitor de métricas de Machine Learning en tiempo real.
 """

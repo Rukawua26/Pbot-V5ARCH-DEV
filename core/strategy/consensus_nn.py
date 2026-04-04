@@ -17,9 +17,9 @@ logger = logging.getLogger("SniperAI")
 
 class AgentConsensusNN:
     """
-    [RED NEURONAL DE CONSENSO v112]
-    Combina los 14 agentes usando una red neuronal real.
-    Input: 14 votos de agentes (0-100)
+    [RED NEURONAL DE CONSENSO v118]
+    Modelo de consenso neuronal con compatibilidad legacy.
+    Input: vector de votos de agentes (0-100)
     Output: Probabilidad de éxito (0-1)
     """
 
@@ -33,7 +33,7 @@ class AgentConsensusNN:
             self.scaler = None
         self.is_trained: bool = False
         self.model_path: str = model_path
-        self._debug_count = 0  # [FIX v116.1] Contador para integridad matemática
+        self._debug_count = 0  # [FIX v118.1] Contador para integridad matemática
         self.load()
 
     def load(self) -> None:
@@ -91,7 +91,7 @@ class AgentConsensusNN:
         try:
             X = self.prepare_features(votes_dict)
 
-            # [FIX v116.1] Verificación de Integridad Matemática
+            # [FIX v118.1] Verificación de Integridad Matemática
             if self._debug_count < 5:
                 self._debug_count += 1
                 X_scaled = self.scaler.transform(X)
@@ -113,11 +113,11 @@ class AgentConsensusNN:
             prob = self.model.predict_proba(X_scaled)[0][1]
             return float(prob), float(abs(prob - 0.5) * 2)
         except Exception as e:
-            # logger.error(f"⚠️ Error en predicción de consenso (V116.1): {e}")
+            # logger.error(f"⚠️ Error en predicción de consenso (V118.1): {e}")
             return 0.5, 0.0
 
     def train(self, X_train: np.ndarray, y_train: np.ndarray) -> bool:
-        """Entrena la red neuronal v116 con 8 entradas."""
+        """Entrena la red neuronal v118 con 8 entradas."""
         if not SKLEARN_AVAILABLE:
             logger.warning("⚠️ Sklearn no disponible")
             return False
@@ -148,5 +148,5 @@ class AgentConsensusNN:
             )
             return True
         except Exception as e:
-            logger.error(f"❌ Error entrenando Neural Consensus v116: {e}")
+            logger.error(f"❌ Error entrenando Neural Consensus v118: {e}")
             return False

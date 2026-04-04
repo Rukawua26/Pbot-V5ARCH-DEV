@@ -43,7 +43,7 @@ class SRAgent(BaseAgent):
         df = context.get("df")
         z_score = context.get("z_score", 0.0)
 
-        # [AUDIT FIX V116-L4] Z-Score Dinámico vía ATR para evitar Model Drift
+        # [AUDIT FIX V118-L4] Z-Score Dinámico vía ATR para evitar Model Drift
         z_score_dinamico = z_score
         if df is not None and len(df) >= 20:
             try:

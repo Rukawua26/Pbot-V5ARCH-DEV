@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-audit_correl.py — SNIPER AI v117
+audit_correl.py — SNIPER AI v118
 =================================
 Matriz de Correlación de Super-Agentes MT ↔ G.
 
@@ -183,7 +183,7 @@ def main():
     args = parser.parse_args()
 
     print(f"\n{'=' * 55}")
-    print(f"  SNIPER AI — Auditoría de Correlación v117")
+    print(f"  SNIPER AI — Auditoría de Correlación v118")
     print(f"{'=' * 55}")
     print(f"  DB       : {args.db}")
     print(f"  Muestra  : últimos {args.limit} votos")

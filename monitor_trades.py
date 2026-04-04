@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-[V115-PRO] Monitor de Alertas para Primeros 5 Trades
+[V118-PRO] Monitor de Alertas para Primeros 5 Trades
 =====================================================
 Alerta con: Régimen, RSI, MAE/MFE
 Detiene bot si >3 pérdidas en 5 trades
@@ -244,7 +244,7 @@ def check_and_alert():
 
 def main():
     print("=" * 60)
-    print("🚨 MONITOR DE ALERTAS V115-PRO")
+    print("🚨 MONITOR DE ALERTAS V118-PRO")
     print("   Regime | RSI | MAE/MFE")
     print("=" * 60)
 

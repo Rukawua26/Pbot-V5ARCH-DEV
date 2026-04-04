@@ -17,7 +17,7 @@ class LBAgent(BaseAgent):
 
     def __init__(self, weight: float = 1.0):
         super().__init__(name="LB", weight=weight)
-        self._vol_history = {} # [AUDIT FIX V116-L4] Anti-Spoofing Memoria Temporal
+        self._vol_history = {} # [AUDIT FIX V118-L4] Anti-Spoofing Memoria Temporal
 
     def vote(self, context: dict) -> float:
         order_book = context.get("order_book")
@@ -50,7 +50,7 @@ class LBAgent(BaseAgent):
         if avg_vol < 1.5 or vol_rel < 1.2:
             return 50.0
 
-        # 3. [AUDIT V117] Filtro de Order Flow: Tick Count Anti-Spoofing
+        # 3. [AUDIT V118] Filtro de Order Flow: Tick Count Anti-Spoofing
         # Si el contexto provee tick_count y tick_count_avg, verificamos que el muro
         # de ballena sea acompañado por operaciones reales y no sea un flash-wall.
         tick_count = context.get("tick_count", 0)

@@ -1,10 +1,9 @@
 """
-SNIPER AI v114 - LEARNING MODULE (KNN VECTORIAL)
-=========================================
-- Versión unificada v114.
+SNIPER AI v118 - LEARNING MODULE (KNN VECTORIAL)
+===============================================
+- Versión unificada v118.
 - Soporte para KNN Vectorial, Meta-Learning y Neural Consensus.
-- v114: RAG configurable, ML Health veto.
-- v117: Hard-path DB, AsyncShadowLogger retry+Telegram halt.
+- RAG configurable, ML health checks y telemetría asíncrona.
 """
 
 import sqlite3
@@ -25,18 +24,18 @@ import threading
 import time
 from queue import Queue
 
-# [v117] Ruta absoluta de la DB anclada al directorio del módulo.
+# [v118] Ruta absoluta de la DB anclada al directorio del módulo.
 # Garantiza que el proceso encuentre la BD sin importar el CWD desde donde se lance.
 _DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sniper_brain.db")
 
 
 class AsyncShadowLogger:
     """
-    [SHADOW LOGGING v117]
+    [SHADOW LOGGING v118]
     Buffer de telemetría asíncrono. Evita bloqueos en el hilo principal
     al escribir en la DB en bloque cada 15 segundos.
 
-    Resiliencia v117:
+    Resiliencia v118:
     - Reintentos x3 con backoff exponencial ante fallos de escritura.
     - Tras 3 fallos consecutivos: Alerta Crítica a Telegram + halt de trading real.
     - Flag público `is_trading_halted()` para que main.py lo consulte en cada ciclo.
@@ -49,8 +48,8 @@ class AsyncShadowLogger:
         self.lock = threading.Lock()
         self.FLUSH_INTERVAL = 15  # segundos
         self.stop_event = threading.Event()
-        self._trading_halted = False  # [v117] Flag de emergencia
-        self.consecutive_failures = 0  # [v117] Contador de fallos persistentes
+        self._trading_halted = False  # [v118] Flag de emergencia
+        self.consecutive_failures = 0  # [v118] Contador de fallos persistentes
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
 
@@ -59,7 +58,7 @@ class AsyncShadowLogger:
         self.queue.put(entry)
 
     def is_trading_halted(self) -> bool:
-        """[v117] Retorna True si la DB falló 3 veces: el trading real debe detenerse."""
+        """[v118] Retorna True si la DB falló 3 veces: el trading real debe detenerse."""
         return self._trading_halted
 
     def _worker(self):
@@ -83,7 +82,7 @@ class AsyncShadowLogger:
                 print(f"⚠️ Error en AsyncShadowLogger worker: {e}")
 
     def _flush(self):
-        """[v117] Flush con retry x3 + Telegram Alert + Trading Halt ante fallos persistentes."""
+        """[v118] Flush con retry x3 + Telegram Alert + Trading Halt ante fallos persistentes."""
         with self.lock:
             if not self.buffer:
                 return
@@ -262,7 +261,7 @@ class Brain:
         except Exception as e:
             print(f"⚠️ Error migrando columna 'vol_rel': {e}")
 
-        # --- FASE 1 (v114): ENRIQUECIMIENTO DE VECTORES ---
+        # --- FASE 1 (v118): ENRIQUECIMIENTO DE VECTORES ---
         try:
             c.execute("ALTER TABLE trades ADD COLUMN dist_ema REAL")
         except sqlite3.OperationalError:
@@ -296,13 +295,25 @@ class Brain:
             c.execute("ALTER TABLE trades ADD COLUMN market_regime TEXT")
         except sqlite3.OperationalError:
             pass
-        # --- NUEVAS MÉTRICAS V116 (SMART EXIT AUDIT) ---
+        # --- NUEVAS MÉTRICAS V118 (SMART EXIT AUDIT) ---
         try:
             c.execute("ALTER TABLE trades ADD COLUMN entry_confidence REAL")
         except sqlite3.OperationalError:
             pass
         try:
             c.execute("ALTER TABLE trades ADD COLUMN exit_confidence REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE trades ADD COLUMN entry_shock_level REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE trades ADD COLUMN entry_atr REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE trades ADD COLUMN breakout_origin INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         # ----------------------------------------------------
@@ -331,7 +342,10 @@ class Brain:
                 btc_correlation REAL,
                 market_regime TEXT,
                 entry_confidence REAL,
-                exit_confidence REAL
+                exit_confidence REAL,
+                entry_shock_level REAL,
+                entry_atr REAL,
+                breakout_origin INTEGER DEFAULT 0
             )
         """)
 
@@ -402,7 +416,7 @@ class Brain:
                 losses INTEGER DEFAULT 0
             )
         """)
-        # Inicializar agentes si no existen (v112: 13 Agentes)
+        # Inicializar agentes si no existen (v118: 13 Agentes)
         for agent in ["T", "V", "J", "G", "C", "L", "F", "S", "O", "R", "M", "D", "E"]:
             c.execute(
                 "INSERT OR IGNORE INTO agent_reputation (agent_id) VALUES (?)", (agent,)
@@ -547,7 +561,7 @@ class Brain:
             for r in rows:
                 try:
                     snap = json.loads(r["market_snapshot"])
-                    # --- Vector de 8 Dimensiones (v114) ---
+                    # --- Vector de 8 Dimensiones (v118) ---
                     ob_val = 0
                     ob_status = snap.get("ob_status", "NEUTRAL")
                     if "BULL" in ob_status:
@@ -599,7 +613,7 @@ class Brain:
 
             import numpy as np
 
-            # --- Vector de 8 Dimensiones (v114) ---
+            # --- Vector de 8 Dimensiones (v118) ---
             ob_val = 0
             ob_status = snap.get("ob_status", "NEUTRAL")
             if "BULL" in ob_status:
@@ -647,8 +661,8 @@ class Brain:
             c = conn.cursor()
             c.execute(
                 """
-                INSERT INTO trades (timestamp, symbol, side, entry_price, exit_price, pnl, pnl_percent, reason, is_shadow, fees, funding_rate, vol_rel, rsi, adx, market_snapshot, open_time, entry_ob, dist_ema, z_score, bb_pos, ob_status, mae_percent, mfe_percent, market_regime, entry_confidence, exit_confidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO trades (timestamp, symbol, side, entry_price, exit_price, pnl, pnl_percent, reason, is_shadow, fees, funding_rate, vol_rel, rsi, adx, market_snapshot, open_time, entry_ob, dist_ema, z_score, bb_pos, ob_status, mae_percent, mfe_percent, market_regime, entry_confidence, exit_confidence, entry_shock_level, entry_atr, breakout_origin)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     datetime.now().isoformat(),
@@ -677,6 +691,9 @@ class Brain:
                     trade_data.get("market_regime", "RANGE"),
                     trade_data.get("entry_confidence", 0.0),
                     trade_data.get("exit_confidence", 0.0),
+                    trade_data.get("entry_shock_level"),
+                    trade_data.get("entry_atr"),
+                    1 if trade_data.get("breakout_origin", False) else 0,
                 ),
             )
             trade_id = c.lastrowid
@@ -1334,7 +1351,7 @@ class Brain:
                     "M",
                     "D",
                     "E",
-                    "K",  # [v114] Whale Tracker
+                    "K",  # [v118] Whale Tracker
                 ]
             }
 
@@ -1391,7 +1408,7 @@ class Brain:
 
     def update_meta_learning(self, agent_votes, pnl_percent, context_type):
         """
-        [META-APRENDIZAJE v112]
+        [META-APRENDIZAJE v118]
         Los agentes aprenden de sus propios errores ajustando sus thresholds.
         """
         try:
@@ -1434,7 +1451,7 @@ class Brain:
 
     def get_agent_performance(self, context_type=None):
         """
-        [ROLLING REPUTATION v114.6] - Fase 3.1
+        [ROLLING REPUTATION v118.6] - Fase 3.1
         Calcula el rendimiento individual de cada agente en los últimos 50 trades.
         Implementa Meta-Learning Dinámico (Ventanilla Deslizante).
         NOTA: Incluye tanto trades REALES como SHADOW para una adaptación ultra-rápida.
@@ -1849,7 +1866,7 @@ class Brain:
         self, min_trades=5, max_loss_pct=-5.0, max_wr=40.0
     ):
         """
-        [v114] Auto-blacklist símbolos con mal rendimiento.
+        [v118] Auto-blacklist símbolos con mal rendimiento.
          - Símbolos con menos de X% de WR en los últimos Y trades
          - Símbolos con PnL promedio negativo mayor al threshold
         """
@@ -2703,12 +2720,12 @@ class Brain:
 
     def get_rag_inference(self, symbol, current_features):
         """
-        [SISTEMA RAG VECTORIAL v114]
+        [SISTEMA RAG VECTORIAL v118]
         Usa Similitud de Coseno optimizada con NumPy contra TODA la historia.
         Configurable via Config.RAG_ENABLED, RAG_SIMILARITY_THRESHOLD
         """
         try:
-            # [v114] Check if RAG is enabled
+            # [v118] Check if RAG is enabled
             if not getattr(Config, "RAG_ENABLED", True):
                 return {k: 50.0 for k in ["T", "V", "C", "L", "S"]}, ["RAG_DISABLED"]
 
@@ -2721,7 +2738,7 @@ class Brain:
             import numpy as np
 
             # 1. Construcción del Vector Actual: [RSI, ADX, Vol_Rel, BTC_Delta]
-            # --- Vector de 8 Dimensiones (v114) ---
+            # --- Vector de 8 Dimensiones (v118) ---
             ob_val = 0
             ob_status = current_features.get("ob_status", "NEUTRAL")
             if "BULL" in ob_status:
@@ -2743,7 +2760,7 @@ class Brain:
             )
             # -----------------------------------------
 
-            # [v114] Usar threshold configurable
+            # [v118] Usar threshold configurable
             similarity_threshold = getattr(Config, "RAG_SIMILARITY_THRESHOLD", 0.85)
             min_matches = getattr(Config, "RAG_MIN_MATCHES", 3)
 
@@ -2758,13 +2775,13 @@ class Brain:
 
             similarities = dot_products / denominator
 
-            # [v114] Usar threshold configurable (default 0.85, antes 0.95)
+            # [v118] Usar threshold configurable (default 0.85, antes 0.95)
             valid_indices = np.where(similarities > similarity_threshold)[0]
 
             if len(valid_indices) == 0:
                 return {k: 50.0 for k in ["T", "V", "C", "L", "S"]}, ["NO_MATCH"]
 
-            # [v114] Si hay menos matches que el mínimo, relajar threshold
+            # [v118] Si hay menos matches que el mínimo, relajar threshold
             if len(valid_indices) < min_matches:
                 # Usar los top N aunque estén bajo threshold
                 top_k = max(min_matches, len(valid_indices))

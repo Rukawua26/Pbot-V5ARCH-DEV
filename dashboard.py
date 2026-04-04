@@ -1,5 +1,5 @@
 """
-SNIPER AI v117 - DASHBOARD
+SNIPER AI v118 - DASHBOARD
 =========================
 Panel de control visual para monitoreo del bot en tiempo real.
 """

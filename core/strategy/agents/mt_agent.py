@@ -48,7 +48,7 @@ class MTAgent(BaseAgent):
         sigma: float = 6.0,
     ) -> float:
         """
-        [AUDIT FIX V116-L4] Arnaud Legoux Moving Average (ALMA).
+        [AUDIT FIX V118-L4] Arnaud Legoux Moving Average (ALMA).
         Reemplaza la SMA cruda. Usa distribución Gaussiana para dar más peso
         a precios recientes sin repintar y mitigando el lag un 80% más rápido.
         """
@@ -66,7 +66,7 @@ class MTAgent(BaseAgent):
             return 50.0
         closes = df["close"]
 
-        # [AUDIT V117] Derivada ALMA: momento en t y en t-1
+        # [AUDIT V118] Derivada ALMA: momento en t y en t-1
         # Usando .iloc[:-1] para acceder a la barra anterior sin look-ahead.
         alma_short_now = self._calculate_alma(
             closes, window=9, offset=self.alma_offset, sigma=self.alma_sigma

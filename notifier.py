@@ -1,5 +1,5 @@
 """
-SNIPER AI - NOTIFIER MODULE v113.2
+SNIPER AI - NOTIFIER MODULE v118.2
 ===================================
 Módulo de notificaciones para Telegram con reintentos y cola.
 """
