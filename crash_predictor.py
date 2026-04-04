@@ -44,7 +44,7 @@ class CrashPredictor:
                 return "BULLISH_DIVERGENCE", confidence
 
         except (KeyError, IndexError):
-            pass
+            return None, 0
 
         return None, 0
 
@@ -107,7 +107,7 @@ class CrashPredictor:
                 return "VOLUME_ANOMALY", confidence
 
         except (KeyError, IndexError, ZeroDivisionError):
-            pass
+            return None, 0
 
         return None, 0
 
@@ -141,7 +141,7 @@ class CrashPredictor:
                     return "BUY_WALL", 50
 
         except (KeyError, IndexError, ZeroDivisionError, TypeError):
-            pass
+            return None, 0
 
         return None, 0
 
@@ -174,8 +174,8 @@ class CrashPredictor:
                             signal += "_HIGH_VOL"
                         else:
                             signal = "HIGH_VOLATILITY"
-            except:
-                pass
+            except Exception:
+                return signal, min(risk_level, 100) if signal else (None, 0)
 
         return signal, min(risk_level, 100) if signal else (None, 0)
 

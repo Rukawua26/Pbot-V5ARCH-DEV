@@ -109,7 +109,8 @@ class MLMonitor:
 
     def _collect_metrics(self):
         """Recolecta métricas del bot"""
-        pass
+        # Hook intencional: las métricas se actualizan desde otros componentes.
+        return
 
     def get_all_metrics(self):
         """Retorna todas las métricas para la UI"""

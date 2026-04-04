@@ -22,7 +22,7 @@ except ImportError:
 
 import threading
 import time
-from queue import Queue
+from queue import Empty, Queue
 
 # [v118] Ruta absoluta de la DB anclada al directorio del módulo.
 # Garantiza que el proceso encuentre la BD sin importar el CWD desde donde se lance.
@@ -69,8 +69,10 @@ class AsyncShadowLogger:
                     entry = self.queue.get(timeout=1.0)
                     with self.lock:
                         self.buffer.append(entry)
-                except Exception:
-                    pass
+                except Empty:
+                    continue
+                except Exception as e:
+                    print(f"⚠️ [SHADOW] Error leyendo cola async: {e}")
 
                 if (
                     time.time() - last_flush > self.FLUSH_INTERVAL
@@ -183,139 +185,52 @@ class Brain:
         conn = self._get_conn()
         c = conn.cursor()
 
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN fees REAL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'fees': {e}")
+        def _safe_add_column(sql: str, column_name: str):
+            try:
+                c.execute(sql)
+            except sqlite3.OperationalError as e:
+                message = str(e).lower()
+                if "duplicate column name" in message or "already exists" in message:
+                    return
+                print(f"⚠️ Error migrando columna '{column_name}': {e}")
+            except Exception as e:
+                print(f"⚠️ Error migrando columna '{column_name}': {e}")
 
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN is_shadow BOOLEAN DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'is_shadow': {e}")
+        migration_columns = [
+            ("ALTER TABLE trades ADD COLUMN fees REAL DEFAULT 0", "fees"),
+            ("ALTER TABLE trades ADD COLUMN is_shadow BOOLEAN DEFAULT 0", "is_shadow"),
+            ("ALTER TABLE trades ADD COLUMN market_snapshot TEXT", "market_snapshot"),
+            ("ALTER TABLE trades ADD COLUMN market_context TEXT", "market_context"),
+            ("ALTER TABLE trades ADD COLUMN open_time TEXT", "open_time"),
+            ("ALTER TABLE trades ADD COLUMN entry_ob TEXT DEFAULT '⚪'", "entry_ob"),
+            ("ALTER TABLE trades ADD COLUMN funding_rate REAL", "funding_rate"),
+            ("ALTER TABLE trades ADD COLUMN rsi REAL", "rsi"),
+            ("ALTER TABLE trades ADD COLUMN adx REAL", "adx"),
+            ("ALTER TABLE trades ADD COLUMN post_mortem_data TEXT", "post_mortem_data"),
+            ("ALTER TABLE trades ADD COLUMN vol_rel REAL", "vol_rel"),
+            ("ALTER TABLE trades ADD COLUMN dist_ema REAL", "dist_ema"),
+            ("ALTER TABLE trades ADD COLUMN z_score REAL", "z_score"),
+            ("ALTER TABLE trades ADD COLUMN bb_pos REAL", "bb_pos"),
+            ("ALTER TABLE trades ADD COLUMN ob_status TEXT", "ob_status"),
+            ("ALTER TABLE trades ADD COLUMN mae_percent REAL", "mae_percent"),
+            ("ALTER TABLE trades ADD COLUMN mfe_percent REAL", "mfe_percent"),
+            ("ALTER TABLE trades ADD COLUMN btc_correlation REAL", "btc_correlation"),
+            ("ALTER TABLE trades ADD COLUMN market_regime TEXT", "market_regime"),
+            ("ALTER TABLE trades ADD COLUMN entry_confidence REAL", "entry_confidence"),
+            ("ALTER TABLE trades ADD COLUMN exit_confidence REAL", "exit_confidence"),
+            (
+                "ALTER TABLE trades ADD COLUMN entry_shock_level REAL",
+                "entry_shock_level",
+            ),
+            ("ALTER TABLE trades ADD COLUMN entry_atr REAL", "entry_atr"),
+            (
+                "ALTER TABLE trades ADD COLUMN breakout_origin INTEGER DEFAULT 0",
+                "breakout_origin",
+            ),
+        ]
 
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN market_snapshot TEXT")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'market_snapshot': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN market_context TEXT")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'market_context': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN open_time TEXT")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'open_time': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN entry_ob TEXT DEFAULT '⚪'")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'entry_ob': {e}")
-
-        # FASE 6: Auditoría de Datos Reales
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN funding_rate REAL")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'funding_rate': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN rsi REAL")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'rsi': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN adx REAL")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'adx': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN post_mortem_data TEXT")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'post_mortem_data': {e}")
-
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN vol_rel REAL")
-        except sqlite3.OperationalError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Error migrando columna 'vol_rel': {e}")
-
-        # --- FASE 1 (v118): ENRIQUECIMIENTO DE VECTORES ---
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN dist_ema REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN z_score REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN bb_pos REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN ob_status TEXT")
-        except sqlite3.OperationalError:
-            pass
-        # --- NUEVAS MÉTRICAS DE VALIDACIÓN ---
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN mae_percent REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN mfe_percent REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN btc_correlation REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN market_regime TEXT")
-        except sqlite3.OperationalError:
-            pass
-        # --- NUEVAS MÉTRICAS V118 (SMART EXIT AUDIT) ---
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN entry_confidence REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN exit_confidence REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN entry_shock_level REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN entry_atr REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE trades ADD COLUMN breakout_origin INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+        for sql, column_name in migration_columns:
+            _safe_add_column(sql, column_name)
         # ----------------------------------------------------
 
         c.execute("""
@@ -644,7 +559,7 @@ class Brain:
                 }
             )
         except Exception as e:
-            pass
+            print(f"⚠️ Error actualizando RAG cache: {e}")
 
     def log_trade(self, trade_data):
         try:
@@ -768,7 +683,7 @@ class Brain:
                         f"RSI:{snap.get('rsi', 0):.1f} | Trend:{snap.get('trend', '?')}"
                     )
                 except (json.JSONDecodeError, KeyError, TypeError):
-                    pass  # Datos corruptos, usar N/A
+                    ctx_summary = "N/A"  # Datos corruptos, usar N/A
                 results.append(
                     {
                         "symbol": r["symbol"],
@@ -1096,7 +1011,7 @@ class Brain:
             conn.commit()
             conn.close()
         except Exception as e:
-            pass  # Silencioso para no interrumpir el trading
+            print(f"⚠️ Error clasificando patrones: {e}")
 
     def validate_pattern_robustness(self, symbol):
         """
@@ -1964,20 +1879,19 @@ class Brain:
                 try:
                     return datetime.fromisoformat(val)
                 except (ValueError, TypeError):
-                    pass
+                    ...
 
                 # 2. Intentar parsear como entero
-                try:
-                    if val.isdigit() or (val.startswith("-") and val[1:].isdigit()):
-                        return int(val)
-                except (ValueError, AttributeError):
-                    pass
+                if isinstance(val, str) and (
+                    val.isdigit() or (val.startswith("-") and val[1:].isdigit())
+                ):
+                    return int(val)
 
                 # 3. Intentar parsear como float
                 try:
                     return float(val)
                 except (ValueError, TypeError):
-                    pass
+                    ...
 
                 return val
             return None
@@ -2545,7 +2459,7 @@ class Brain:
                         else ("🔴 BAJISTA" if trend == "DOWN" else "🟡 LATERAL")
                     )
                 except (json.JSONDecodeError, KeyError, TypeError, IndexError):
-                    pass  # Snapshot corrupto, usar default
+                    market_state = "⚪ NEUTRAL"  # Snapshot corrupto, usar default
 
             # 2. Nivel de Aprendizaje (1-10)
             c.execute("SELECT COUNT(*) FROM trades WHERE market_snapshot IS NOT NULL")
