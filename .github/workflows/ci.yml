@@ -42,3 +42,7 @@ jobs:
       - name: Regression contracts (arquitectura)
         run: |
           python tools/regression_contracts.py
+
+      - name: Regression unit tests (runtime flows)
+        run: |
+          python -m unittest discover -s tests -p "test_*.py"
