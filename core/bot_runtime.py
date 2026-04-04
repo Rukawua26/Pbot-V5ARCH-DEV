@@ -6,6 +6,7 @@ import pandas as pd
 
 from config import Config
 from core.reconciliation import reconcile_bootstrap_state
+from core.watchdog import write_watchdog_heartbeat
 
 
 def run_initial_load(bot, dashboard_module):
@@ -120,6 +121,10 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
                 logger.error(f"❌ UI ERROR: {error_ui}")
                 if bot.is_running:
                     time.sleep(5)
+            try:
+                write_watchdog_heartbeat(bot)
+            except Exception as hb_error:
+                logger.warning(f"⚠️ Heartbeat watchdog falló: {hb_error}")
             time.sleep(1)
     except KeyboardInterrupt:
         bot.is_running = False

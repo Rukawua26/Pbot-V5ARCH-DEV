@@ -1,0 +1,9 @@
+[Unit]
+Description=Sniper AI External Watchdog Check
+After=network.target sniper-ai.service
+
+[Service]
+Type=oneshot
+User=maos
+WorkingDirectory=/home/maos/Documentos/Pbot - V5ARCH - DEV-2026/Pbot - V5ARCH - DEV
+ExecStart=/usr/bin/python3 tools/watchdog_supervisor.py --heartbeat /dev/shm/sniper_ai_heartbeat.json --service sniper-ai.service --stale-seconds 45
