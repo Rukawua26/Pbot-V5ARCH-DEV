@@ -230,8 +230,12 @@ def run_guardian_loop(bot):
                                     t["ghost_checked"] = (
                                         True  # Solo chequear una vez para no saturar
                                     )
-                        except (AttributeError, KeyError, IndexError):
-                            pass  # Modelo no disponible o datos insuficientes
+                        except (AttributeError, KeyError, IndexError) as error:
+                            if not t.get("ghost_error_logged", False):
+                                bot.log(
+                                    f"⚠️ GHOST CHECK omitido en {s}: datos/modelo incompleto ({error})"
+                                )
+                                t["ghost_error_logged"] = True
 
                     # HARD STOP LOSS: Límite absoluto de pérdida
                     max_loss = (

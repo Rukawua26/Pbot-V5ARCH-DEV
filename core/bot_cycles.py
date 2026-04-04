@@ -29,10 +29,14 @@ def run_triage_cycle(bot):
 
 
 def run_market_context_cycle(bot, tickers):
-    base_bal = bot.daily_initial_balance if bot.daily_initial_balance > 0 else bot.balance
+    base_bal = (
+        bot.daily_initial_balance if bot.daily_initial_balance > 0 else bot.balance
+    )
     pnl_real_hoy, _ = bot.brain.get_daily_real_pnl(base_bal)
 
-    btc_ticker = tickers.get("BTC/USDT:USDT", tickers.get("BTC/USDT", {"last": bot.market_btc_price}))
+    btc_ticker = tickers.get(
+        "BTC/USDT:USDT", tickers.get("BTC/USDT", {"last": bot.market_btc_price})
+    )
     bot.market_btc_price = float(btc_ticker.get("last", bot.market_btc_price))
 
     if bot.market_btc_price == 0:
@@ -40,8 +44,8 @@ def run_market_context_cycle(bot, tickers):
             bot.log("📡 Recatando precio de BTC manualmente...")
             btc_t = bot.execution.fetch_ticker("BTC/USDT")
             bot.market_btc_price = float(btc_t["last"])
-        except (ccxt.NetworkError, ccxt.ExchangeError, KeyError, ValueError):
-            pass
+        except (ccxt.NetworkError, ccxt.ExchangeError, KeyError, ValueError) as error:
+            bot.log(f"⚠️ No se pudo rescatar BTC manualmente: {error}")
 
     try:
         btc_1h = bot._get_cached_btc_data()
@@ -54,7 +58,9 @@ def run_market_context_cycle(bot, tickers):
             if not has_valid_data:
                 raise ValueError("Datos de BTC no válidos")
 
-            ema_200 = btc_1h["EMA_200"].iloc[-1] if "EMA_200" in btc_1h.columns else None
+            ema_200 = (
+                btc_1h["EMA_200"].iloc[-1] if "EMA_200" in btc_1h.columns else None
+            )
             adx_14 = btc_1h["ADX_14"].iloc[-1] if "ADX_14" in btc_1h.columns else None
 
             if ema_200 is None or pd.isna(ema_200):
@@ -64,29 +70,56 @@ def run_market_context_cycle(bot, tickers):
 
                         close_vals = btc_1h["close"].dropna()
                         if len(close_vals) >= 200:
-                            ema_200 = ta_trend.EMAIndicator(close_vals, window=200).ema_indicator().iloc[-1]
-                except Exception:
-                    pass
+                            ema_200 = (
+                                ta_trend.EMAIndicator(close_vals, window=200)
+                                .ema_indicator()
+                                .iloc[-1]
+                            )
+                except Exception as error:
+                    if (
+                        time.time()
+                        - float(getattr(bot, "_sentiment_fallback_log_ts", 0.0))
+                        > 300
+                    ):
+                        bot._sentiment_fallback_log_ts = time.time()
+                        bot.log(f"⚠️ Fallback EMA_200 falló: {error}")
 
             if adx_14 is None or pd.isna(adx_14):
                 try:
                     high_vals = btc_1h["high"].dropna()
                     low_vals = btc_1h["low"].dropna()
                     close_vals = btc_1h["close"].dropna()
-                    if len(high_vals) >= 14 and len(low_vals) >= 14 and len(close_vals) >= 14:
+                    if (
+                        len(high_vals) >= 14
+                        and len(low_vals) >= 14
+                        and len(close_vals) >= 14
+                    ):
                         import ta.trend as ta_trend
 
                         min_len = min(len(high_vals), len(low_vals), len(close_vals))
-                        adx_14 = ta_trend.ADXIndicator(
-                            high_vals.iloc[-min_len:],
-                            low_vals.iloc[-min_len:],
-                            close_vals.iloc[-min_len:],
-                            window=14,
-                        ).adx().iloc[-1]
-                except Exception:
-                    pass
+                        adx_14 = (
+                            ta_trend.ADXIndicator(
+                                high_vals.iloc[-min_len:],
+                                low_vals.iloc[-min_len:],
+                                close_vals.iloc[-min_len:],
+                                window=14,
+                            )
+                            .adx()
+                            .iloc[-1]
+                        )
+                except Exception as error:
+                    if (
+                        time.time()
+                        - float(getattr(bot, "_sentiment_fallback_log_ts", 0.0))
+                        > 300
+                    ):
+                        bot._sentiment_fallback_log_ts = time.time()
+                        bot.log(f"⚠️ Fallback ADX_14 falló: {error}")
 
-            if not isinstance(bot.market_btc_price, (int, float)) or bot.market_btc_price <= 0:
+            if (
+                not isinstance(bot.market_btc_price, (int, float))
+                or bot.market_btc_price <= 0
+            ):
                 raise ValueError(f"market_btc_price inválido: {bot.market_btc_price}")
             if not isinstance(ema_200, (int, float)) or pd.isna(ema_200):
                 raise ValueError(f"ema_200 inválido: {ema_200}")
@@ -147,7 +180,9 @@ def prepare_top_triage(bot, triage_snapshot):
             {"tier": "IRON"},
         )
 
-    bot.log(f"⚡ TRIAJE PARALELO: Disparando {len(top_triage)} hilos para datos frescos...")
+    bot.log(
+        f"⚡ TRIAJE PARALELO: Disparando {len(top_triage)} hilos para datos frescos..."
+    )
     return top_triage
 
 
@@ -156,7 +191,9 @@ def fetch_triage_data_parallel(bot, top_triage):
     max_workers = max(3, min(8, len(top_triage)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_sym = {
-            executor.submit(bot._fetch_pair_data, item.get("symbol_raw", item["symbol"])): item["symbol"]
+            executor.submit(
+                bot._fetch_pair_data, item.get("symbol_raw", item["symbol"])
+            ): item["symbol"]
             for item in top_triage
         }
 
@@ -185,7 +222,9 @@ def fetch_triage_data_parallel(bot, top_triage):
                 )
 
         if not_done:
-            bot.log(f"⏱️ TRIAJE TIMEOUT: {len(not_done)} (of {len(future_to_sym)}) hilos no terminaron a tiempo.")
+            bot.log(
+                f"⏱️ TRIAJE TIMEOUT: {len(not_done)} (of {len(future_to_sym)}) hilos no terminaron a tiempo."
+            )
             for future in not_done:
                 sym_map = future_to_sym[future]
                 future.cancel()
@@ -224,7 +263,9 @@ def finalize_scan_cycle(bot, signal_stats):
 
     suffix = bot.self_adjust_exigency()
     valid_signals = [
-        item for item in bot.scanner_history if "OK" in item["result"] or "SHADOW" in item["result"]
+        item
+        for item in bot.scanner_history
+        if "OK" in item["result"] or "SHADOW" in item["result"]
     ]
     if not valid_signals:
         if bot.current_sentiment[0] == "🔴 TENDENCIA BAJISTA":

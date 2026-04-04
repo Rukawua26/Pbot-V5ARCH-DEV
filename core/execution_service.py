@@ -229,8 +229,10 @@ class ExecutionService:
             try:
                 self.exchange.cancel_all_orders(symbol)
                 self._track_api_weight("cancel_all_orders", 1, "trading")
-            except Exception:
-                pass
+            except Exception as error:
+                self.logger.warning(
+                    f"⚠️ No se pudieron cancelar órdenes previas en {symbol}: {error}"
+                )
 
             order = self.exchange.create_order(
                 symbol, "market", exit_side, amount, None, params
