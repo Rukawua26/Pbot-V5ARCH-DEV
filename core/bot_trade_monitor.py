@@ -19,6 +19,11 @@ def monitor_open_trades(bot):
             trade = bot.active_trades.get(symbol)
             if not trade:
                 continue
+            if (
+                trade.get("closing_in_progress")
+                or trade.get("status") == "CLOSING_INITIATED"
+            ):
+                continue
 
             open_time = trade.get("open_time")
             if isinstance(open_time, str):

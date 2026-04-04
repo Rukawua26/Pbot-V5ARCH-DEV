@@ -8,7 +8,9 @@ from notifier import send_telegram_msg
 CLIENT_ORDER_PREFIX = "sai-v118"
 
 
-def generate_client_order_id(symbol: str, side: str, signal_ts: float, instance_id: str) -> str:
+def generate_client_order_id(
+    symbol: str, side: str, signal_ts: float, instance_id: str
+) -> str:
     """Genera un client_order_id determinista y trazable."""
     raw = f"{signal_ts:.6f}|{symbol}|{side}|{instance_id}"
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
@@ -24,6 +26,52 @@ def _normalize_position_symbol(pos_symbol: str) -> str:
     return raw
 
 
+def _extract_client_order_id(order: dict) -> str:
+    if not isinstance(order, dict):
+        return ""
+    direct = order.get("clientOrderId")
+    if direct:
+        return str(direct)
+    info = order.get("info") or {}
+    if not isinstance(info, dict):
+        return ""
+    return str(info.get("clientOrderId") or info.get("origClientOrderId") or "")
+
+
+def _build_open_order_index(open_orders):
+    by_client_order_id = {}
+    by_symbol = {}
+    for order in open_orders or []:
+        if not isinstance(order, dict):
+            continue
+        symbol = _normalize_position_symbol(order.get("symbol", ""))
+        if symbol:
+            by_symbol.setdefault(symbol, []).append(order)
+        coid = _extract_client_order_id(order)
+        if coid:
+            by_client_order_id[coid] = order
+    return by_client_order_id, by_symbol
+
+
+def _normalize_order_status(raw_status: str) -> str:
+    status = str(raw_status or "").upper()
+    if status in {"NEW", "OPEN", "PARTIALLY_FILLED"}:
+        return "OPEN"
+    if status in {"FILLED", "CLOSED"}:
+        return "FILLED"
+    if status in {"CANCELED", "CANCELLED", "REJECTED", "EXPIRED"}:
+        return "CANCELED"
+    return status or "UNKNOWN"
+
+
+def generate_child_client_order_id(entry_client_order_id: str, leg: str) -> str:
+    leg_safe = str(leg or "LEG").upper()[:6]
+    digest = hashlib.sha256(
+        f"{entry_client_order_id}|{leg_safe}".encode("utf-8")
+    ).hexdigest()[:10]
+    return f"{entry_client_order_id}-{leg_safe}-{digest}"
+
+
 def reconcile_bootstrap_state(bot):
     """Sincroniza estado DB <-> Exchange al arrancar para evitar huérfanos/ghosts."""
     try:
@@ -31,6 +79,15 @@ def reconcile_bootstrap_state(bot):
             db_snapshot = dict(bot.active_trades)
 
         positions = bot.execution.fetch_positions() or []
+        open_orders = []
+        fetch_open_orders = getattr(bot.execution, "fetch_open_orders", None)
+        if callable(fetch_open_orders):
+            try:
+                open_orders = fetch_open_orders() or []
+            except Exception as error:
+                bot.log(
+                    f"⚠️ No se pudieron consultar open orders en reconciliación: {error}"
+                )
         exchange_positions = {}
         for pos in positions:
             amount = float(pos.get("contracts") or 0)
@@ -52,16 +109,23 @@ def reconcile_bootstrap_state(bot):
                 "amount": abs(amount),
             }
 
+        open_orders_by_coid, open_orders_by_symbol = _build_open_order_index(
+            open_orders
+        )
+
         db_symbols = {
             s for s, t in db_snapshot.items() if not (t or {}).get("is_shadow", False)
         }
-        ex_symbols = set(exchange_positions.keys())
+        position_symbols = set(exchange_positions.keys())
+        order_symbols = set(open_orders_by_symbol.keys())
+        ex_symbols = position_symbols | order_symbols
 
         adopted = 0
         lost = 0
+        pending_open = 0
 
         # Caso 1: posición en Exchange pero no en DB -> adopción forzosa
-        missing_in_db = sorted(ex_symbols - db_symbols)
+        missing_in_db = sorted(position_symbols - db_symbols)
         for symbol in missing_in_db:
             info = exchange_positions[symbol]
             sl = info["entry"] * (0.995 if info["side"] == "BUY" else 1.005)
@@ -91,7 +155,18 @@ def reconcile_bootstrap_state(bot):
                 bot.brain.save_active_trade_state(symbol, adopted_trade)
 
             try:
-                bot.execution.place_hard_sl(symbol, info["side"], info["amount"], sl)
+                sl_order = bot.execution.place_hard_sl(
+                    symbol, info["side"], info["amount"], sl
+                )
+                if sl_order:
+                    with bot.lock:
+                        bot.active_trades[symbol]["sl_exchange_order_id"] = (
+                            sl_order.get("id")
+                        )
+                    with bot.db_lock:
+                        bot.brain.save_active_trade_state(
+                            symbol, bot.active_trades[symbol]
+                        )
             except Exception as e:
                 bot.log(f"⚠️ No se pudo adjuntar SL para huérfana {symbol}: {e}")
 
@@ -105,7 +180,58 @@ def reconcile_bootstrap_state(bot):
             adopted += 1
 
         # Caso 2: en DB abierta pero no en Exchange -> LOST_IN_TRANSMISSION
-        missing_in_exchange = sorted(db_symbols - ex_symbols)
+        safe_pending_symbols = set()
+        for symbol in sorted(db_symbols - position_symbols):
+            state = db_snapshot.get(symbol) or {}
+            if not isinstance(state, dict):
+                continue
+            entry_coid = str(state.get("entry_client_order_id") or "")
+            if not entry_coid:
+                continue
+
+            exchange_order = None
+            fetch_by_coid = getattr(bot.execution, "fetch_order_by_client_id", None)
+            if callable(fetch_by_coid):
+                try:
+                    exchange_order = fetch_by_coid(symbol, entry_coid)
+                except Exception as error:
+                    bot.log(
+                        f"⚠️ Consulta order-by-client-id falló {symbol}/{entry_coid}: {error}"
+                    )
+
+            if exchange_order is None and entry_coid in open_orders_by_coid:
+                exchange_order = open_orders_by_coid[entry_coid]
+
+            if exchange_order is None:
+                continue
+            if not isinstance(exchange_order, dict):
+                continue
+
+            status_raw = str(exchange_order.get("status") or "")
+            normalized_status = _normalize_order_status(status_raw)
+            if normalized_status == "OPEN":
+                state["status"] = "PENDING_EXCHANGE_OPEN"
+                state["exchange_open_order_id"] = exchange_order.get("id")
+                state["exchange_open_order_status"] = exchange_order.get("status")
+                state["reconciled_at"] = datetime.now().isoformat()
+                with bot.lock:
+                    bot.active_trades[symbol] = state
+                with bot.db_lock:
+                    bot.brain.save_active_trade_state(symbol, state)
+                safe_pending_symbols.add(symbol)
+                pending_open += 1
+            elif normalized_status == "FILLED":
+                state["status"] = "ENTRY_FILLED_AWAITING_POSITION_SYNC"
+                state["exchange_entry_order_id"] = exchange_order.get("id")
+                state["exchange_open_order_status"] = exchange_order.get("status")
+                state["reconciled_at"] = datetime.now().isoformat()
+                with bot.lock:
+                    bot.active_trades[symbol] = state
+                with bot.db_lock:
+                    bot.brain.save_active_trade_state(symbol, state)
+                safe_pending_symbols.add(symbol)
+
+        missing_in_exchange = sorted((db_symbols - ex_symbols) - safe_pending_symbols)
         for symbol in missing_in_exchange:
             with bot.db_lock:
                 bot.brain.save_error_snapshot(
@@ -138,9 +264,10 @@ def reconcile_bootstrap_state(bot):
                 f"🛑 INTEGRITY_LOCK activado: diff={diff_pct:.3f}% local={local_balance:.2f} ex={exchange_balance:.2f}"
             )
 
-        if adopted or lost:
+        if adopted or lost or pending_open:
             bot.log(
-                f"🔁 Reconciliación bootstrap: adoptadas={adopted} | lost_in_tx={lost}"
+                "🔁 Reconciliación bootstrap: "
+                f"adoptadas={adopted} | pending_open={pending_open} | lost_in_tx={lost}"
             )
 
     except Exception as e:

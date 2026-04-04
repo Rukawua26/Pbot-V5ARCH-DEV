@@ -27,6 +27,20 @@
 - Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
 - Reconciliacion de arranque: modulo `core/reconciliation.py` con adopcion de huerfanas, deteccion `LOST_IN_TRANSMISSION` e `Integrity Lock` por desbalance de capital.
 
+### Contrato de estados de orden/trade (runtime)
+
+- `PENDING_SEND`: intencion persistida en SQLite antes de enviar orden al exchange.
+- `PENDING_EXCHANGE_OPEN`: orden detectada abierta en exchange por `client_order_id`.
+- `ENTRY_FILLED_AWAITING_POSITION_SYNC`: entrada detectada como `FILLED`, esperando que la posicion aparezca en `fetch_positions`.
+- `OPEN`: posicion activa y gestionada por bucles de riesgo/guardian.
+- `CLOSING_INITIATED`: cierre en progreso; el Guardian y monitor de trades no deben mutar ni re-gestionar este trade.
+
+Reglas de reconciliacion en arranque:
+
+- `LOST_IN_TRANSMISSION` solo se declara si el simbolo no aparece ni en posiciones activas ni en ordenes abiertas, y tampoco se recupera por consulta explicita `origClientOrderId`.
+- Si existe posicion real sin `HARD SL` en exchange, el bot intenta re-adjuntar SL.
+- Si el exchange rechaza el SL por gap de precio (p.ej. `would trigger immediately`, `-2021`), se ejecuta `Emergency Market Close` inmediato para evitar posicion desnuda.
+
 ## ⚙️ Requisitos
 
 | Requisito | Version |

@@ -45,6 +45,11 @@ def run_guardian_loop(bot):
                     t = snapshot.get(s)
                     if not t:
                         continue
+                    if (
+                        t.get("closing_in_progress")
+                        or t.get("status") == "CLOSING_INITIATED"
+                    ):
+                        continue
 
                     # --- [v118-PRO] PRIORIDAD ABSOLUTA: SMART EXIT (BAILOUT) ---
                     # Si la confianza actual < 70% de la inicial, cerrar de inmediato.
