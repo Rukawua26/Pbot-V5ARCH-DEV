@@ -72,6 +72,17 @@ sudo systemctl restart sniper-ai.service
 sudo systemctl status sniper-ai.service --no-pager
 ```
 
+### Watchdog externo (recomendado)
+
+```bash
+sudo cp sniper-ai-watchdog.service /etc/systemd/system/sniper-ai-watchdog.service
+sudo cp sniper-ai-watchdog.timer /etc/systemd/system/sniper-ai-watchdog.timer
+sudo systemctl daemon-reload
+sudo systemctl enable sniper-ai-watchdog.timer
+sudo systemctl restart sniper-ai-watchdog.timer
+sudo systemctl status sniper-ai-watchdog.timer --no-pager
+```
+
 ## 🖥️ Operacion diaria
 
 | Tarea | Comando |
@@ -81,6 +92,8 @@ sudo systemctl status sniper-ai.service --no-pager
 | Detener bot | `sudo systemctl stop sniper-ai.service` |
 | Logs systemd en vivo | `journalctl -u sniper-ai.service -f` |
 | Logs del bot en vivo | `tail -f sniper.log` |
+| Estado timer watchdog | `sudo systemctl status sniper-ai-watchdog.timer --no-pager` |
+| Últimos eventos watchdog | `journalctl -u sniper-ai-watchdog.service -n 50 --no-pager` |
 
 ## 📊 Lectura rapida del radar
 
