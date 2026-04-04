@@ -28,6 +28,9 @@ class OperationalConfig:
     SHADOW_SIM_PARTIAL_FILL_RATE = float(
         os.getenv("SHADOW_SIM_PARTIAL_FILL_RATE", "0.25")
     )
+    SHADOW_SIM_PARTIAL_COMPLETE_RATE = float(
+        os.getenv("SHADOW_SIM_PARTIAL_COMPLETE_RATE", "0.50")
+    )
     SHADOW_SIM_MIN_PARTIAL_RATIO = float(
         os.getenv("SHADOW_SIM_MIN_PARTIAL_RATIO", "0.30")
     )
