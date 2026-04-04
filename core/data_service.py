@@ -8,7 +8,7 @@ from config import Config
 
 logger = logging.getLogger("SniperAI")
 
-# [v117] Directorio base del módulo para rutas absolutas de caché
+# [v118] Directorio base del módulo para rutas absolutas de caché
 _BASE_DIR = os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
 )  # raíz del proyecto
@@ -25,16 +25,24 @@ except ImportError:
 class DataService:
     def __init__(self, exchange):
         self.exchange = exchange
+        self.weight_tracker = None
         self.data_cache = {}
         self.last_ohlcv_fetch = {}
         self.maturity_cache = {}
-        # [v117] Rutas absolutas ancladas al directorio raíz del proyecto
+        # [v118] Rutas absolutas ancladas al directorio raíz del proyecto
         self.maturity_file = os.path.join(
             _BASE_DIR, "data_storage", "maturity_cache.json"
         )
         self.cache_dir = os.path.join(_BASE_DIR, "data_storage", "candles")
         os.makedirs(self.cache_dir, exist_ok=True)
         self.load_maturity_cache()
+
+    def set_weight_tracker(self, tracker):
+        self.weight_tracker = tracker
+
+    def _track_api_weight(self, endpoint: str, weight: int, category: str):
+        if self.weight_tracker:
+            self.weight_tracker.track(endpoint, weight, category)
 
     def _clean_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
@@ -83,7 +91,7 @@ class DataService:
                 # Guardar solo las últimas N velas para ahorrar espacio
                 df_to_save = df.tail(Config.CANDLE_FETCH_LIMIT)
 
-                # [v117] Sanitizar nombre de archivo (reemplazar / para evitar error de subdirectorio)
+                # [v118] Sanitizar nombre de archivo (reemplazar / para evitar error de subdirectorio)
                 safe_key = key.replace("/", "_").replace(":", "_")
                 if HAS_PARQUET:
                     path = os.path.join(self.cache_dir, f"{safe_key}.parquet")
@@ -139,6 +147,7 @@ class DataService:
             batch = self.exchange.fetch_ohlcv(
                 symbol, timeframe=timeframe, since=cursor, limit=limit_per_call
             )
+            self._track_api_weight("fetch_ohlcv", 1, "market")
             if not batch:
                 break
 
@@ -218,6 +227,7 @@ class DataService:
         try:
             # Para la auditoría usamos 4h para ver historial largo
             ohlcv = self.exchange.fetch_ohlcv(symbol, "4h", limit=200)
+            self._track_api_weight("fetch_ohlcv", 1, "market")
             is_mature = len(ohlcv) >= 200
             self.maturity_cache[symbol] = is_mature
             self.save_maturity_cache()
@@ -269,6 +279,7 @@ class DataService:
                     ohlcv = self.exchange.fetch_ohlcv(
                         symbol, timeframe, since=since, limit=limit
                     )
+                    self._track_api_weight("fetch_ohlcv", 1, "market")
                     break
                 except Exception as e:
                     if i == retries - 1:

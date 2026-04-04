@@ -1,5 +1,5 @@
 """
-SNIPER AI v117-PRO - STRATEGY ENGINE (MODULAR ARCHITECTURE)
+SNIPER AI v118-PRO - STRATEGY ENGINE (MODULAR ARCHITECTURE)
 ==========================================================
 - Orquestación TRINITY: Tendencia (MT), Estructura (SR), IA (G)
 - Sistema Decoupled: Agentes en core/strategy/agents/
@@ -38,7 +38,7 @@ logger = logging.getLogger("SniperAI")
 
 class Strategy:
     """
-    [PUNTO DE ENTRADA ESTRATEGIA v117]
+    [PUNTO DE ENTRADA ESTRATEGIA v118]
     Actúa como interfaz de alto nivel, delegando la complejidad
     al StrategyOrchestrator y StrategyUtils.
     """
@@ -217,7 +217,7 @@ class Strategy:
     ):
         """
         Cálculo dinámico de Take Profit con '3x Rule' (Cobertura de spread/fees).
-        Implementación requerida por el Commander (v117-PRO).
+        Implementación requerida por el Commander (v118-PRO).
         """
         # Usar VIRTUAL_FEE si no se provee fees
         actual_fees = fees if fees is not None else Config.VIRTUAL_FEE
@@ -280,7 +280,7 @@ class Strategy:
 
     @classmethod
     def detect_order_block(cls, df, symbol):
-        """Retro-compatibilidad para main.py v117."""
+        """Retro-compatibilidad para main.py v118."""
         return StrategyUtils.detect_order_block(df, symbol)
 
     @classmethod

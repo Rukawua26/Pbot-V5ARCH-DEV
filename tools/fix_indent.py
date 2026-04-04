@@ -5,7 +5,7 @@ with open("main.py", "r") as f:
     lines = f.readlines()
 
 for i, line in enumerate(lines):
-    if "# [V115-PRO FIX] Filtrado estricto y validación pesimista" in line and not line.startswith("                "):
+    if "# [V118-PRO FIX] Filtrado estricto y validación pesimista" in line and not line.startswith("                "):
         print("Found target block at line", i+1)
         # Indent everything until "intruso_count += 1"
         for j in range(i, i+60):

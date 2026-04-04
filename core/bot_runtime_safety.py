@@ -1,0 +1,50 @@
+from config import Config
+from notifier import send_telegram_msg
+
+
+def check_safety_and_goals(bot, current_pnl=None):
+    base_bal = (
+        bot.daily_initial_balance if bot.daily_initial_balance > 0 else bot.balance
+    )
+    _ = base_bal
+
+    if current_pnl is None:
+        current_pnl = 0.0
+
+    if current_pnl > bot.peak_pnl:
+        bot.peak_pnl = current_pnl
+
+    # 1. Trailing Stop de Cuenta: Si perdemos 3% desde el punto más alto del día
+    if bot.peak_pnl > 0 and (bot.peak_pnl - current_pnl) >= Config.DAILY_TRAILING_STOP:
+        bot.circuit_breaker_active = True
+        bot.log(
+            f"⚠️ Trailing Stop: Protegiendo {current_pnl:.2f}% (Caída del 3% desde el pico)"
+        )
+        return False
+
+    # 2. Límite de Pérdida Diaria: -3% desde el inicio
+    if current_pnl <= -Config.DAILY_LOSS_LIMIT:
+        bot.circuit_breaker_active = True
+        bot.mandatory_train_pending = True
+        bot.is_paused = True
+        bot.log(
+            f"💀 Límite diario alcanzado: {current_pnl:.2f}%. MODO DEFENSIVO ACTIVADO."
+        )
+        send_telegram_msg(
+            "🛡️ *MODO DEFENSIVO ACTIVADO*\nPérdida diaria límite alcanzada. El bot requiere re-entrenamiento para continuar."
+        )
+        return False
+
+    # 3. Gestión de Metas (5% -> 10% -> 15%)
+    for goal in Config.DAILY_GOALS:
+        if current_pnl >= goal and bot.current_target == goal:
+            bot.log(f"🚀 Meta de {goal}% alcanzada.")
+            try:
+                next_idx = Config.DAILY_GOALS.index(goal) + 1
+                if next_idx < len(Config.DAILY_GOALS):
+                    bot.current_target = Config.DAILY_GOALS[next_idx]
+                else:
+                    bot.circuit_breaker_active = True  # Meta final 15% alcanzada
+            except Exception as error:
+                bot.log(f"⚠️ No se pudo avanzar meta diaria {goal}: {error}")
+    return True

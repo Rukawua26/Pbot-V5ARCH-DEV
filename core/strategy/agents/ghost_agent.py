@@ -35,7 +35,7 @@ except ImportError:
 class GhostAgent(BaseAgent):
     """
     [AGENTE GHOST (G)]
-    Predicción Híbrida (Soporta LSTM, Sklearn y Advanced Ensemble v114).
+    Predicción híbrida (LSTM, Sklearn y Advanced Ensemble v118).
     """
 
     def __init__(self, weight: float = 1.0):
@@ -207,12 +207,10 @@ class GhostAgent(BaseAgent):
         )
 
         try:
-            # --- [Advanced Ensemble v114] ---
-            if isinstance(model, dict) and model.get("version") in [
-                "v114",
-                "v113.1",
-                "v113",
-            ]:
+            # --- [Advanced Ensemble v118/compat] ---
+            if isinstance(model, dict) and str(model.get("version", "")).startswith(
+                "v"
+            ):
                 return self._predict_advanced_ensemble(model, context, ai_boost)
 
             # --- [LSTM / Legacy Models] ---

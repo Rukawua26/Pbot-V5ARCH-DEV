@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-[V115-PRO] Monitor de Alertas para Primeros 5 Trades
+[V118-PRO] Monitor de Alertas para Primeros 5 Trades
 =====================================================
 Alerta con: Régimen, RSI, MAE/MFE
 Detiene bot si >3 pérdidas en 5 trades
@@ -132,8 +132,8 @@ def stop_bot():
         try:
             os.kill(pid, 9)
             print(f"✅ Bot PID {pid} detenido")
-        except:
-            pass
+        except Exception as error:
+            print(f"⚠️ No se pudo detener PID {pid}: {error}")
 
     # Método 2: Buscar proceso main.py
     import subprocess
@@ -146,12 +146,13 @@ def stop_bot():
             if pid:
                 try:
                     import signal
+
                     os.kill(int(pid), signal.SIGINT)
                     print(f"✅ Solicitado cierre gracioso a Bot PID {pid}")
-                except:
-                    pass
-    except:
-        pass
+                except Exception as error:
+                    print(f"⚠️ No se pudo enviar SIGINT a PID {pid}: {error}")
+    except Exception as error:
+        print(f"⚠️ Error buscando procesos de main.py: {error}")
 
     # Crear flag de parada
     with open(".STOP_BOT", "w") as f:
@@ -244,7 +245,7 @@ def check_and_alert():
 
 def main():
     print("=" * 60)
-    print("🚨 MONITOR DE ALERTAS V115-PRO")
+    print("🚨 MONITOR DE ALERTAS V118-PRO")
     print("   Regime | RSI | MAE/MFE")
     print("=" * 60)
 

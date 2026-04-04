@@ -1,5 +1,5 @@
 """
-SNIPER AI v117-PRO - CONSOLE UI
+SNIPER AI v118-PRO - CONSOLE UI
 =================================
 Sin Rich, prints simples con progreso de scan
 """
@@ -16,7 +16,7 @@ class UI:
 
     def start(self):
         print("=" * 60)
-        print("  SNIPER AI v117-PRO - CONSOLE MODE")
+        print("  SNIPER AI v118-PRO - CONSOLE MODE")
         print("  Paper: " + ("YES" if Config.PAPER_MODE else "NO"))
         print("=" * 60)
 
@@ -73,7 +73,7 @@ class UI:
 
         # Header
         print("=" * 70)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] SNIPER v117-PRO")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] SNIPER v118-PRO")
         print("=" * 70)
 
         # Balance y stats
@@ -161,7 +161,7 @@ class UI:
         sentiment_text = sentiment[0] if isinstance(sentiment, tuple) else sentiment
         print(f"\n🌐 BTC SENTIMENT: {sentiment_text}")
 
-        # ML Metrics (v117-PRO)
+        # ML Metrics (v118-PRO)
         ml = st.get("ml_metrics", {})
         if ml:
             print(f"\n🧠 MACHINE LEARNING")

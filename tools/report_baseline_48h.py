@@ -65,7 +65,7 @@ def parse_dt(value: object) -> Optional[datetime]:
         try:
             return datetime.strptime(text, fmt)
         except Exception:
-            pass
+            continue
 
     try:
         return datetime.fromisoformat(text)
@@ -186,8 +186,12 @@ def fmt_float(v: Optional[float], digits: int = 2) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reporte baseline 48h (solo lectura)")
     parser.add_argument("--hours", type=int, default=48, help="Ventana en horas")
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="Ruta a sniper_brain.db")
-    parser.add_argument("--log", type=Path, default=DEFAULT_LOG, help="Ruta a sniper.log")
+    parser.add_argument(
+        "--db", type=Path, default=DEFAULT_DB, help="Ruta a sniper_brain.db"
+    )
+    parser.add_argument(
+        "--log", type=Path, default=DEFAULT_LOG, help="Ruta a sniper.log"
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -227,7 +231,9 @@ def main() -> int:
     print("=" * 72)
     print("BASELINE 48H - RESUMEN EJECUTIVO (SOLO LECTURA)")
     print("=" * 72)
-    print(f"Ventana: {start.strftime('%Y-%m-%d %H:%M:%S')} -> {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(
+        f"Ventana: {start.strftime('%Y-%m-%d %H:%M:%S')} -> {now.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
     print(f"DB: {args.db}")
     print(f"Log: {args.log}")
     print("-" * 72)
@@ -244,9 +250,7 @@ def main() -> int:
     print(
         f"  DEGRADED (Smart Exit): {degraded_n} ({pct(degraded_n, len(closed)):.2f}%)"
     )
-    print(
-        f"  SL/TP duro: {hard_sltp_n} ({pct(hard_sltp_n, len(closed)):.2f}%)"
-    )
+    print(f"  SL/TP duro: {hard_sltp_n} ({pct(hard_sltp_n, len(closed)):.2f}%)")
     print(f"  Otros: {other_n} ({pct(other_n, len(closed)):.2f}%)")
 
     print("-" * 72)

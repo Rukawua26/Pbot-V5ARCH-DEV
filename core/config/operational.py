@@ -15,7 +15,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class OperationalConfig:
     """Configuración de infraestructura, conectividad y sistema."""
 
-    VERSION = "v117-PRO"
+    VERSION = "v118-PRO"
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
@@ -60,6 +60,14 @@ class OperationalConfig:
     TRIAGE_RVOL_EMA_ALPHA = 0.02
     LATENCY_VETO_MS = 4500
     LATENCY_QUARANTINE_SECONDS = 300
+
+    # --- CONTROLES TÁCTICOS POR SÍMBOLO (Decision Matrix) ---
+    SYMBOL_CONTROLS_REFRESH_SECONDS = int(
+        os.getenv("SYMBOL_CONTROLS_REFRESH_SECONDS", "1800")
+    )
+    SYMBOL_REDUCED_SIZE_MULTIPLIER = float(
+        os.getenv("SYMBOL_REDUCED_SIZE_MULTIPLIER", "0.5")
+    )
 
     # --- LÍMITES DE FETCHING ---
     CANDLE_FETCH_LIMIT = 500

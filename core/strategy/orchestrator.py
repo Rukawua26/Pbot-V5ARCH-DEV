@@ -35,7 +35,7 @@ class StrategyOrchestrator:
         }
         self.consensus_nn = AgentConsensusNN()
         self._base_weights = self._initialize_base_weights()
-        # Historial para cálculo de correlación de Pearson (Ventana dinámica: 7 votos v116.1)
+        # Historial para cálculo de correlación de Pearson (Ventana dinámica: 7 votos v118.1)
         self.vote_history = {name: deque(maxlen=7) for name in self.agents}
 
     def _initialize_base_weights(self) -> Dict[str, Dict[str, float]]:
@@ -65,14 +65,14 @@ class StrategyOrchestrator:
         agent_performances: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
         """
-        Hard-Veto de Correlación v116.1: Si la correlación entre dos agentes
+        Hard-Veto de Correlación v118.1: Si la correlación entre dos agentes
         supera 0.90 en una ventana de 7 votos, el de menor WR histórico queda en peso 0.
         """
         # Actualizar historial
         for name, vote in votes.items():
             self.vote_history[name].append(vote)
 
-        # Si no hay suficiente historial, no aplicar veto (v116.1: ventana 7)
+        # Si no hay suficiente historial, no aplicar veto (v118.1: ventana 7)
         if len(list(self.vote_history.values())[0]) < 7:
             return weights
 
@@ -89,7 +89,7 @@ class StrategyOrchestrator:
                     if len(h1) >= 7 and len(h2) >= 7:
                         corr = np.corrcoef(h1, h2)[0, 1]
                         if not np.isnan(corr) and abs(corr) > 0.90:
-                            # [FIX v116.1] EXCLUSIÓN: Peso 0 al de menor rendimiento
+                            # [FIX v118.1] EXCLUSIÓN: Peso 0 al de menor rendimiento
                             perf1 = (
                                 agent_performances.get(a1, 100.0)
                                 if agent_performances
@@ -195,7 +195,7 @@ class StrategyOrchestrator:
         adx = context.get("adx")
         weights = self.get_adaptive_weights(regime, agent_performances, adx)
 
-        # Telemetría Asíncrona (Shadow Logging v116)
+        # Telemetría Asíncrona (Shadow Logging v118)
         shadow_logger.log(
             {
                 "type": "AGENT_VOTES",
@@ -216,7 +216,7 @@ class StrategyOrchestrator:
                     "data": {"agent": agent_name, "vote": vote_value, "ts": ts_now},
                 }
             )
-        # APLICAR VETO DE CORRELACIÓN (v116.1)
+        # APLICAR VETO DE CORRELACIÓN (v118.1)
         final_weights = self._apply_correlation_veto(weights, votes, agent_performances)
 
         # Media pesada con pesos de veto

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-[V115-PRO] Script de Reseteo para Test de 5 Trades
+[V118-PRO] Script de Reseteo para Test de 5 Trades
 ==================================================
 1. Realiza backup de la base de datos.
 2. Limpia tablas de trades para iniciar de cero.
