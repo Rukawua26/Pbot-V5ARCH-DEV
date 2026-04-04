@@ -38,3 +38,7 @@ jobs:
       - name: Guardrail pass silenciosos en core
         run: |
           python tools/check_no_silent_pass.py
+
+      - name: Regression contracts (arquitectura)
+        run: |
+          python tools/regression_contracts.py
