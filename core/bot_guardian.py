@@ -52,6 +52,29 @@ def run_guardian_loop(bot):
                     ):
                         continue
                     if t.get("status") in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}:
+                        current_conf = t.get("current_confidence", 50.0)
+                        entry_conf = t.get("entry_confidence", 75.0)
+                        abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
+                            entry_conf, current_conf
+                        )
+                        if abort_needed:
+                            append_execution_event(
+                                bot,
+                                "GUARDIAN_PARTIAL_ABORTED",
+                                {
+                                    "symbol": s,
+                                    "status": t.get("status"),
+                                    "entry_conf": float(entry_conf),
+                                    "current_conf": float(current_conf),
+                                    "reason": abort_reason,
+                                },
+                            )
+                            bot.abort_partial_trade(
+                                s,
+                                f"PARTIAL_ABORT: {abort_reason}",
+                                t.get("last_price", 0.0),
+                            )
+                            continue
                         append_execution_event(
                             bot,
                             "GUARDIAN_PARTIAL_OBSERVED",

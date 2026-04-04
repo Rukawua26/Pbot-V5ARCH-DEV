@@ -894,3 +894,22 @@ def close_trade(
             if current:
                 bot.brain.save_active_trade_state(symbol, current)
         bot.log(f"Error cerrando {symbol}: {e}")
+
+
+def abort_partial_trade(bot, symbol: str, reason: str, exit_price: float):
+    append_execution_event(
+        bot,
+        "PARTIAL_TRADE_ABORT_REQUESTED",
+        {
+            "symbol": symbol,
+            "reason": reason,
+            "exit_price": float(exit_price or 0.0),
+        },
+    )
+    close_trade(
+        bot,
+        symbol=symbol,
+        reason=reason,
+        exit_price=exit_price,
+        latency_context={"trigger": "GUARDIAN_PARTIAL_ABORT"},
+    )

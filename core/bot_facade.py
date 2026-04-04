@@ -16,6 +16,7 @@ from core.market_intelligence import acquire_targets, get_active_market_snapshot
 from core.bot_risk_cycles import run_btc_panic_cycle, run_crash_predictor_cycle
 from core.bot_runtime import run_bot_runtime_loop, run_initial_load
 from core.bot_trade_entry import execute_order as run_execute_order
+from core.trade_manager import abort_partial_trade as tm_abort_partial_trade
 from core.trade_manager import close_trade as tm_close_trade
 from core.strategy.shocks import next_shock_distance_pct
 from core.bot_signals import run_signal_scan_cycle
@@ -310,6 +311,14 @@ class BotFacade:
             exit_price=exit_price,
             exit_confidence=exit_confidence,
             latency_context=latency_context,
+        )
+
+    def abort_partial_trade(self, symbol, reason, exit_price):
+        tm_abort_partial_trade(
+            self,
+            symbol=symbol,
+            reason=reason,
+            exit_price=exit_price,
         )
 
     def _safe_div(self, a, b):

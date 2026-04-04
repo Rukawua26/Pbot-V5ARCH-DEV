@@ -53,6 +53,8 @@ class SqliteStressBrain:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.sqlite_locked_errors = 0
+        self.db_write_over_100ms = 0
+        self.db_write_max_ms = 0.0
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -83,6 +85,13 @@ class SqliteStressBrain:
     def _conn(self):
         return sqlite3.connect(self.db_path, timeout=1.0)
 
+    def _track_write_duration(self, started: float):
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if elapsed_ms > 100.0:
+            self.db_write_over_100ms += 1
+        if elapsed_ms > self.db_write_max_ms:
+            self.db_write_max_ms = elapsed_ms
+
     def get_genetic_params(self, _symbol):
         return {}
 
@@ -90,6 +99,7 @@ class SqliteStressBrain:
         return {}
 
     def save_active_trade_state(self, symbol, state):
+        started = time.perf_counter()
         try:
             conn = self._conn()
             conn.execute(
@@ -102,6 +112,7 @@ class SqliteStressBrain:
             )
             conn.commit()
             conn.close()
+            self._track_write_duration(started)
             return True
         except sqlite3.OperationalError as error:
             if "locked" in str(error).lower():
@@ -109,16 +120,19 @@ class SqliteStressBrain:
             return False
 
     def delete_active_trade_state(self, symbol):
+        started = time.perf_counter()
         try:
             conn = self._conn()
             conn.execute("DELETE FROM active_trades_state WHERE symbol=?", (symbol,))
             conn.commit()
             conn.close()
+            self._track_write_duration(started)
         except sqlite3.OperationalError as error:
             if "locked" in str(error).lower():
                 self.sqlite_locked_errors += 1
 
     def save_error_snapshot(self, symbol, reason, ctx):
+        started = time.perf_counter()
         try:
             conn = self._conn()
             conn.execute(
@@ -127,6 +141,7 @@ class SqliteStressBrain:
             )
             conn.commit()
             conn.close()
+            self._track_write_duration(started)
         except sqlite3.OperationalError as error:
             if "locked" in str(error).lower():
                 self.sqlite_locked_errors += 1
@@ -192,6 +207,7 @@ def _build_bot(execution, brain):
     bot.monitor_open_trades = lambda: None
     bot.sync_wallet = lambda: None
     bot.close_trade = lambda *_a, **_k: None
+    bot.abort_partial_trade = lambda *_a, **_k: None
     bot.is_hedge_mode = False
     bot.ghost_model = None
     bot.ghost_model_type = None
@@ -414,6 +430,8 @@ def main():
     print("=== METRIC 1: DB LOCK CONTENTION ===")
     print(f"db_lock_wait_over_100ms={bot.db_lock.wait_over_100ms}")
     print(f"db_lock_max_wait_ms={bot.db_lock.max_wait_ms:.3f}")
+    print(f"db_write_commit_over_100ms={brain.db_write_over_100ms}")
+    print(f"db_write_commit_max_ms={brain.db_write_max_ms:.3f}")
     print(f"sqlite_database_locked_errors={brain.sqlite_locked_errors}")
 
     print("=== METRIC 2: TIMELINE FOCUS ===")
