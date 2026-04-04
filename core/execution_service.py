@@ -26,6 +26,7 @@ class ExecutionService:
         self.logger = logging.getLogger("Execution")
         self.weight_tracker = None
         self.last_hard_sl_error = ""
+        self.last_entry_reject_error = ""
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker

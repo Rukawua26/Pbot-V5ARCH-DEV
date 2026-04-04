@@ -256,6 +256,15 @@ def execute_order(
     }
     with bot.db_lock:
         persisted = bot.brain.save_active_trade_state(symbol, pending_state)
+    append_execution_event(
+        bot,
+        "PENDING_SEND_PERSISTED",
+        {
+            "symbol": symbol,
+            "entry_client_order_id": entry_client_order_id,
+            "status": "PENDING_SEND",
+        },
+    )
     if not persisted:
         bot.log(
             f"❌ IDPOTENCY_GUARD {symbol}: no se pudo persistir intención PENDING_SEND antes de enviar orden"
@@ -348,6 +357,18 @@ def execute_order(
                         "status": str(order.get("status") or ""),
                     },
                 )
+                if remaining_amount > 0.0:
+                    append_execution_event(
+                        bot,
+                        "PARTIAL_FILL_DETECTED",
+                        {
+                            "symbol": symbol,
+                            "entry_client_order_id": entry_client_order_id,
+                            "requested_amount": requested_amount,
+                            "filled_amount": filled_amount,
+                            "remaining_amount": remaining_amount,
+                        },
+                    )
 
                 bot.log(f"🛡️ Colocando HARD SL en Binance: {symbol} @ {sl_val}")
                 sl_order = bot.execution.place_hard_sl(
@@ -377,6 +398,18 @@ def execute_order(
                 bot.available_balance -= margin_used
             else:
                 bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol}")
+                append_execution_event(
+                    bot,
+                    "ENTRY_ORDER_REJECTED",
+                    {
+                        "symbol": symbol,
+                        "entry_client_order_id": entry_client_order_id,
+                        "reason": str(
+                            getattr(bot.execution, "last_entry_reject_error", "")
+                            or "EXECUTION_FAILED"
+                        )[:220],
+                    },
+                )
                 _drop_pending_intent()
                 return "EXECUTION_FAILED"
         elif not is_shadow and Config.PAPER_MODE:

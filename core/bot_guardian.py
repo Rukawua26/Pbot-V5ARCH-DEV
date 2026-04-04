@@ -2,6 +2,7 @@ import time
 from datetime import datetime
 
 from config import Config
+from core.execution_telemetry import append_execution_event
 from strategy import Strategy
 
 
@@ -49,6 +50,23 @@ def run_guardian_loop(bot):
                         t.get("closing_in_progress")
                         or t.get("status") == "CLOSING_INITIATED"
                     ):
+                        continue
+                    if t.get("status") in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}:
+                        append_execution_event(
+                            bot,
+                            "GUARDIAN_PARTIAL_OBSERVED",
+                            {
+                                "symbol": s,
+                                "status": t.get("status"),
+                                "amount": float(t.get("amount") or 0.0),
+                                "remaining_amount": float(
+                                    t.get("remaining_amount") or 0.0
+                                ),
+                            },
+                        )
+                        bot.log(
+                            f"🧭 GUARDIAN PARTIAL {s}: observado {t.get('status')} y omitido para evitar desincronía"
+                        )
                         continue
 
                     # --- [v118-PRO] PRIORIDAD ABSOLUTA: SMART EXIT (BAILOUT) ---

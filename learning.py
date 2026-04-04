@@ -669,41 +669,49 @@ class Brain:
 
     def save_error_snapshot(self, symbol, error_msg, snapshot):
         """Registra una lección negativa cuando una oportunidad real falla o es vetada."""
-        try:
-            # [FIX] Sanitizar snapshot para evitar error de serialización JSON (DataFrames)
-            clean_snap = {}
-            if isinstance(snapshot, dict):
-                clean_snap = {
-                    k: v for k, v in snapshot.items() if not isinstance(v, pd.DataFrame)
-                }
-            else:
-                clean_snap = snapshot
+        # [FIX] Sanitizar snapshot para evitar error de serialización JSON (DataFrames)
+        clean_snap = {}
+        if isinstance(snapshot, dict):
+            clean_snap = {
+                k: v for k, v in snapshot.items() if not isinstance(v, pd.DataFrame)
+            }
+        else:
+            clean_snap = snapshot
 
-            conn = self._get_conn()
-            c = conn.cursor()
-            # Marcamos con PnL -99 para que la IA identifique el escenario como EVITAR
-            # Usamos 'side' en lugar de 'type' para mantener compatibilidad con el esquema actual
-            c.execute(
-                """
-                INSERT INTO trades (timestamp, symbol, side, pnl_percent, is_shadow, market_snapshot, entry_ob)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    datetime.now().isoformat(),
-                    symbol,
-                    "VETO_ERROR",
-                    -99.0,
-                    1,
-                    json.dumps(clean_snap),
-                    error_msg[:20],
-                ),
-            )
-            conn.commit()
-            conn.close()
-        except sqlite3.Error as e:
-            print(f"⚠️ Error de BD al guardar snapshot de error: {e}")
-        except Exception as e:
-            print(f"❌ Error inesperado en save_error_snapshot: {e}")
+        for attempt in range(3):
+            try:
+                conn = self._get_conn()
+                c = conn.cursor()
+                c.execute(
+                    """
+                    INSERT INTO trades (timestamp, symbol, side, pnl_percent, is_shadow, market_snapshot, entry_ob)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        datetime.now().isoformat(),
+                        symbol,
+                        "VETO_ERROR",
+                        -99.0,
+                        1,
+                        json.dumps(clean_snap),
+                        error_msg[:20],
+                    ),
+                )
+                conn.commit()
+                conn.close()
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.05 * (2**attempt))
+                    continue
+                print(f"⚠️ Error de BD al guardar snapshot de error: {e}")
+                return
+            except sqlite3.Error as e:
+                print(f"⚠️ Error de BD al guardar snapshot de error: {e}")
+                return
+            except Exception as e:
+                print(f"❌ Error inesperado en save_error_snapshot: {e}")
+                return
 
     def get_recent_vetos(self, limit=3):
         """Recupera los últimos rechazos de la IA para el comando /thinking."""
@@ -1597,27 +1605,35 @@ class Brain:
             return []
 
     def save_active_trade_state(self, symbol, state_data):
-        try:
-            conn = self._get_conn()
-            c = conn.cursor()
-            data_to_save = state_data.copy()
-            if "open_time" in data_to_save and isinstance(
-                data_to_save["open_time"], datetime
-            ):
-                data_to_save["open_time"] = data_to_save["open_time"].isoformat()
-            c.execute(
-                """
-                INSERT OR REPLACE INTO active_trades_state (symbol, state_data)
-                VALUES (?, ?)
-            """,
-                (symbol, json.dumps(data_to_save)),
-            )
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"❌ Error guardando estado de trade activo: {e}")
-            return False
+        data_to_save = state_data.copy()
+        if "open_time" in data_to_save and isinstance(
+            data_to_save["open_time"], datetime
+        ):
+            data_to_save["open_time"] = data_to_save["open_time"].isoformat()
+
+        for attempt in range(3):
+            try:
+                conn = self._get_conn()
+                c = conn.cursor()
+                c.execute(
+                    """
+                    INSERT OR REPLACE INTO active_trades_state (symbol, state_data)
+                    VALUES (?, ?)
+                """,
+                    (symbol, json.dumps(data_to_save)),
+                )
+                conn.commit()
+                conn.close()
+                return True
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.05 * (2**attempt))
+                    continue
+                print(f"❌ Error guardando estado de trade activo: {e}")
+                return False
+            except Exception as e:
+                print(f"❌ Error guardando estado de trade activo: {e}")
+                return False
 
     def load_active_trade_states(self):
         try:
@@ -1643,14 +1659,23 @@ class Brain:
             return {}
 
     def delete_active_trade_state(self, symbol):
-        try:
-            conn = self._get_conn()
-            c = conn.cursor()
-            c.execute("DELETE FROM active_trades_state WHERE symbol = ?", (symbol,))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"❌ Error eliminando estado de trade activo: {e}")
+        for attempt in range(3):
+            try:
+                conn = self._get_conn()
+                c = conn.cursor()
+                c.execute("DELETE FROM active_trades_state WHERE symbol = ?", (symbol,))
+                conn.commit()
+                conn.close()
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.05 * (2**attempt))
+                    continue
+                print(f"❌ Error eliminando estado de trade activo: {e}")
+                return
+            except Exception as e:
+                print(f"❌ Error eliminando estado de trade activo: {e}")
+                return
 
     def get_recent_performance(self, last_n=5):
         try:
