@@ -1,0 +1,260 @@
+from datetime import datetime
+import time
+
+import pandas as pd
+
+from config import Config
+from core.signals.analyze import _analyze_symbol_candidate
+from core.signals.context import _build_symbol_context, _update_signal_diagnostics
+from core.signals.execution import _execute_and_update_symbol
+from core.signals.filters import (
+    _apply_entry_filters_and_adjust_prob,
+    _plan_execution_mode,
+    _resolve_audit_verdict_and_stats,
+)
+
+
+def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
+    # FASE B: Análisis Secuencial (IA)
+    for triage_entry in top_triage:
+        symbol_raw = triage_entry["symbol"]
+        symbol = symbol_raw.split(":")[0]
+
+        res_data = results.get(symbol_raw)
+        if not res_data or not res_data.get("data"):
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "⏱️ TIMEOUT",
+                {"tier": "IRON"},
+            )
+            continue
+
+        df_main, df_4h = res_data["data"]
+        elapsed = res_data["elapsed"]
+
+        # [V118-PRO] CIRCUIT BREAKER DE LATENCIA (Veto Activo)
+        latency_veto_ms = int(getattr(Config, "LATENCY_VETO_MS", 4500))
+        latency_quarantine_seconds = int(
+            getattr(Config, "LATENCY_QUARANTINE_SECONDS", 300)
+        )
+        if elapsed > latency_veto_ms or elapsed == -1:
+            bot.log(
+                f"🔌 VETO LATENCIA: {symbol} tardó {elapsed}ms. "
+                f"Cuarentena de {int(latency_quarantine_seconds / 60)} min."
+            )
+            bot.latency_quarantine[symbol] = (
+                time.time() + latency_quarantine_seconds
+            )
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "🔌 LATENCIA",
+                {"tier": "IRON"},
+                response_ms=elapsed,
+            )
+            continue
+
+        analysis = bot._analyze_symbol_candidate(symbol_raw, symbol, df_main, df_4h, elapsed)
+        if analysis is None:
+            continue
+
+        audit_signal, mode, price, prob_final, ind, votos = analysis
+
+        try:
+            # [v118.5] Abortar si la estrategia detectó problemas de integridad
+            if "error" in ind:
+                # bot.log(f"⏭️ {symbol} descartado por estrategia: {ind['error']}")
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    f"⏭️ {ind['error']}",
+                    ind,
+                )
+                continue
+
+            bot._update_signal_diagnostics(
+                symbol,
+                audit_signal,
+                prob_final,
+                mode,
+                votos,
+                ind,
+                signal_stats,
+            )
+
+            (
+                decision,
+                ctx,
+                ob_status,
+                vol_rel,
+            ) = bot._build_symbol_context(
+                symbol_raw,
+                symbol,
+                df_main,
+                price,
+                ind,
+                audit_signal,
+            )
+
+            prob_final, filter_passed, filter_reason, ctx = bot._apply_entry_filters_and_adjust_prob(
+                symbol=symbol,
+                symbol_raw=symbol_raw,
+                df_main=df_main,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                ctx=ctx,
+                vol_rel=vol_rel,
+            )
+
+            # --- Telemetría ML UI ---
+            bot.last_ml_confidence = prob_final
+            ml_pure_prob = votos.get("G", 50.0)
+            bot.last_ghost_weight = getattr(
+                bot, "ghost_weight_override", 35.0
+            )
+
+            audit_verdict = bot._resolve_audit_verdict_and_stats(
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                ob_status=ob_status,
+                pnl_real_hoy=pnl_real_hoy,
+                mode=mode,
+                ctx=ctx,
+                filter_passed=filter_passed,
+                filter_reason=filter_reason,
+                ml_pure_prob=ml_pure_prob,
+                signal_stats=signal_stats,
+            )
+
+            if (
+                not ind
+                or ind.get("rsi", {}).get("val") == "--"
+                or pd.isna(ind.get("rsi", {}).get("val"))
+            ):
+                bot.log(
+                    f"⚠️ SKIP {symbol}: RSI={ind.get('rsi', {}).get('val')} ind={bool(ind)}"
+                )
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    "⏳ RSI N/A",
+                    ind,
+                )
+                continue
+
+            # DEBUG: Show signal and prob values
+            bot.log(
+                f"🔎 {symbol}: signal={audit_signal} prob={prob_final} verdict={audit_verdict[:30] if audit_verdict else 'None'}"
+            )
+
+            # [CIRUGÍA LÁSER] Actualizar scanner_history para Dashboard
+            # FIX: Usar update_radar unificado para evitar duplicados y errores de matching
+            # [V118-PRO] Usar tiempo de respuesta medido en la fase paralela
+            bot.update_radar(
+                symbol_raw,
+                decision,
+                prob_final / 100.0,
+                ob_status,
+                audit_verdict,
+                ctx,
+                votos,
+                response_ms=elapsed,
+            )
+
+            is_shadow_exec = True
+            should_execute = False
+
+            # --- BLOQUEO DE CONCURRENCIA POR SÍMBOLO (INSTRUCCIÓN 1) ---
+            # Verificar que no haya operaciones activas en este símbolo ANTES de evaluar señales
+            with bot.lock:
+                if symbol in bot.active_trades:
+                    bot.log(
+                        f"🔒 BLOQUEADO {symbol}: Ya existe operación activa en este símbolo"
+                    )
+                    bot.update_radar(
+                        symbol_raw,
+                        {"signal": "WAIT", "mode": "NONE"},
+                        0.0,
+                        "⚪",
+                        "🔒 OPERACIÓN ACTIVA",
+                        ind,
+                    )
+                    continue
+
+            # --- COOLDOWN UNIVERSAL (INSTRUCCIÓN 2) ---
+            # Verificar cooldown sin importar si es Shadow o Real
+            if (
+                symbol in bot.cooldown_pairs
+                and datetime.now() < bot.cooldown_pairs[symbol]
+            ):
+                remaining = (
+                    int(
+                        (
+                            bot.cooldown_pairs[symbol] - datetime.now()
+                        ).total_seconds()
+                        / 60
+                    )
+                    + 1
+                )
+                bot.log(f"❄️ COOLDOWN {symbol}: {remaining}m restantes")
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    f"❄️ COOLDOWN ({remaining}m)",
+                    ind,
+                )
+                continue
+
+            should_execute, is_shadow_exec, audit_verdict, filter_passed, filter_reason = bot._plan_execution_mode(
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                audit_verdict=audit_verdict,
+                filter_passed=filter_passed,
+                filter_reason=filter_reason,
+                ctx=ctx,
+            )
+
+            # EJECUCIÓN FINAL + REFRESCO DE RADAR
+            bot._execute_and_update_symbol(
+                symbol_raw=symbol_raw,
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                audit_verdict=audit_verdict,
+                should_execute=should_execute,
+                is_shadow_exec=is_shadow_exec,
+                df_main=df_main,
+                ctx=ctx,
+                ob_status=ob_status,
+                votos=votos,
+                decision=decision,
+                elapsed=elapsed,
+            )
+
+        except Exception as e:
+            # Solo loggear errores críticos, no todos
+            import traceback
+
+            error_str = str(e)
+            bot.log(
+                f"❌ ERROR en {symbol}: {error_str} | {traceback.format_exc(limit=3)}"
+            )
+
+            # [CIRUGÍA LÁSER] Reportar el crash en el Radar
+            for item in bot.scanner_history:
+                if item["symbol"] == symbol:
+                    item["result"] = f"❌ CRASH: {str(e)[:15]}"
+                    break
