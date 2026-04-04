@@ -34,3 +34,7 @@ jobs:
       - name: Smoke modular imports
         run: |
           bash scripts/smoke_modular_imports.sh
+
+      - name: Guardrail pass silenciosos en core
+        run: |
+          python tools/check_no_silent_pass.py
