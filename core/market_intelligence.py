@@ -11,9 +11,7 @@ def acquire_targets(bot):
         now = datetime.now()
         # Limpieza de blacklists expiradas
         bot.blacklist = {s: e for s, e in bot.blacklist.items() if now < e}
-        bot.cooldown_pairs = {
-            s: e for s, e in bot.cooldown_pairs.items() if now < e
-        }
+        bot.cooldown_pairs = {s: e for s, e in bot.cooldown_pairs.items() if now < e}
 
         tickers = bot.execution.fetch_tickers(params={"type": "future"})
         # [CIRUGÍA LÁSER] Ampliar filtro para capturar todos los pares USDT (ej: BTC/USDT)
@@ -58,9 +56,7 @@ def acquire_targets(bot):
 
             # --- PUMP & DUMP PROTECTION (Anti-Burbuja) ---
             valid_pool = [
-                t
-                for t in valid_pool
-                if abs(float(t.get("percentage", 0) or 0)) < 40.0
+                t for t in valid_pool if abs(float(t.get("percentage", 0) or 0)) < 40.0
             ]
 
             # 3. PRIORIZACIÓN INTELIGENTE (v110.3)
@@ -141,9 +137,7 @@ def acquire_targets(bot):
                 clean_blacklist = [s.split("/")[0] for s in symbol_blacklist]
                 if clean_blacklist:
                     new_list = [
-                        p
-                        for p in new_list
-                        if p.split("/")[0] not in clean_blacklist
+                        p for p in new_list if p.split("/")[0] not in clean_blacklist
                     ]
                     bot.log(f"   - 🚫 Símbolos vetados: {clean_blacklist}")
 
@@ -160,9 +154,7 @@ def acquire_targets(bot):
                     )
 
             if preferred:
-                preferred_pairs = [
-                    p for p in new_list if p.split("/")[0] in preferred
-                ]
+                preferred_pairs = [p for p in new_list if p.split("/")[0] in preferred]
                 others = [p for p in new_list if p.split("/")[0] not in preferred]
                 new_list = preferred_pairs + others
                 if preferred_pairs:
@@ -236,9 +228,7 @@ def acquire_targets(bot):
                     if tickers:
                         clean_p = p.split(":")[0]
                         if clean_p in tickers:
-                            vol_24h = float(
-                                tickers[clean_p].get("quoteVolume", 0) or 0
-                            )
+                            vol_24h = float(tickers[clean_p].get("quoteVolume", 0) or 0)
                         else:
                             for key, val in tickers.items():
                                 if key.split("/")[0] == base:
@@ -274,8 +264,8 @@ def acquire_targets(bot):
             try:
                 btc_t = bot.execution.fetch_ticker("BTC/USDT")
                 bot.market_btc_price = float(btc_t["last"])
-            except:
-                pass
+            except Exception as error:
+                bot.log(f"⚠️ No se pudo rescatar BTC ticker en acquire_targets: {error}")
 
         bot.log(
             f"✅ Radar {Config.VERSION}: {len(bot.pairs_to_scan)} monedas en mira. BTC: ${bot.market_btc_price}"
@@ -297,18 +287,19 @@ def acquire_targets(bot):
                     f"♻️ Fallback acquire_targets: {len(bot.pairs_to_scan)} pares desde snapshot dinámico."
                 )
                 return {item["symbol"]: item.get("ticker", {}) for item in ranked}
-        except Exception:
-            pass
+        except Exception as error:
+            bot.log(f"⚠️ Fallback snapshot dinámico falló en acquire_targets: {error}")
         # Intento de rescate de BTC si todo lo demás falla
         try:
             btc_t = bot.execution.fetch_ticker("BTC/USDT")
             bot.market_btc_price = float(btc_t["last"])
-        except Exception:
-            pass
+        except Exception as error:
+            bot.log(f"⚠️ No se pudo rescatar BTC ticker en fallback final: {error}")
         # No vaciar radar si ya hay lista previa válida.
         if not bot.pairs_to_scan:
             bot.pairs_to_scan = []
         return {}
+
 
 def get_active_market_snapshot(bot):
     """
@@ -368,24 +359,18 @@ def get_active_market_snapshot(bot):
                 if not bot.execution.has_markets_loaded():
                     bot.execution.load_markets()
 
-                if bot.weight_tracker and bot.weight_tracker.should_block(
-                    "market"
-                ):
+                if bot.weight_tracker and bot.weight_tracker.should_block("market"):
                     bot.log(
                         "🛑 [TRIAJE] Saltando refresh mercado por presión de API Weight"
                     )
                     raw_tickers = {}
                 else:
-                    raw_tickers = bot.execution.fetch_tickers(
-                        params={"type": "future"}
-                    )
+                    raw_tickers = bot.execution.fetch_tickers(params={"type": "future"})
 
                 # Construir pool de candidatos
                 all_candidates = []
                 for symbol, ticker in raw_tickers.items():
-                    if not (
-                        symbol.endswith("/USDT") or symbol.endswith("/USDT:USDT")
-                    ):
+                    if not (symbol.endswith("/USDT") or symbol.endswith("/USDT:USDT")):
                         continue
                     if any(
                         x in symbol
@@ -503,15 +488,11 @@ def get_active_market_snapshot(bot):
                 raw_key = sym.replace("/", "").replace(":USDT", "")
                 book_data = bid_ask_map.get(raw_key)
                 if book_data:
-                    spread = (book_data["ask"] - book_data["bid"]) / book_data[
-                        "ask"
-                    ]
+                    spread = (book_data["ask"] - book_data["bid"]) / book_data["ask"]
                 else:
                     ask = float(ticker.get("ask", 0) or 0)
                     bid = float(ticker.get("bid", 0) or 0)
-                    spread = (
-                        (ask - bid) / last if (last > 0 and ask > bid) else None
-                    )
+                    spread = (ask - bid) / last if (last > 0 and ask > bid) else None
 
                 if spread is None or spread > MAX_SPREAD:
                     continue
@@ -532,9 +513,7 @@ def get_active_market_snapshot(bot):
                 if len(bot._dynamic_pair_list) >= MAX_PAIRS:
                     break
 
-            bot._market_scan_offset = (offset + scanned) % max(
-                len(all_candidates), 1
-            )
+            bot._market_scan_offset = (offset + scanned) % max(len(all_candidates), 1)
             bot.log(
                 f"🔄 [DINÁMICO] Escaneados {scanned} candidatos, encontrados {found} reemplazos"
             )

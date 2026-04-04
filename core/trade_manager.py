@@ -90,8 +90,8 @@ def execute_order(
             stats = bot.brain.get_stats_by_trend()
             if trend in stats and stats[trend].get("winrate", 50.0) < 45.0:
                 sl_modifier = 0.80
-        except Exception:
-            pass
+        except Exception as error:
+            bot.log(f"⚠️ No se pudo ajustar SL por tendencia en {symbol}: {error}")
 
     sl_val, tp_val, exit_mode = bot.risk_engine.get_exit_levels(
         entry_price=price,
@@ -219,8 +219,8 @@ def execute_order(
         current_price = float(ticker["last"])
         if current_price > 0:
             price = current_price
-    except Exception:
-        pass
+    except Exception as error:
+        bot.log(f"⚠️ No se pudo refrescar precio para {symbol}: {error}")
 
     try:
         final_usd = calculated_position_size
@@ -441,8 +441,10 @@ def close_trade(
                     for t in my_trades
                     if t["fee"]["currency"] == "USDT"
                 )
-            except Exception:
-                pass
+            except Exception as error:
+                bot.log(
+                    f"⚠️ No se pudo calcular fees reales de cierre para {symbol}: {error}"
+                )
         else:
             fees = (trade["entry"] * float(trade["amount"]) * Config.VIRTUAL_FEE) + (
                 exit_price * float(trade["amount"]) * Config.VIRTUAL_FEE
