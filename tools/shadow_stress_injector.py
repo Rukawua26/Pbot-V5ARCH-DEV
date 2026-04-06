@@ -375,6 +375,12 @@ def main():
         next_tick = time.perf_counter()
         for i in range(total_orders):
             futures.append(pool.submit(_fire_once, i))
+            if i > 0 and i % max(1, args.orders_per_minute) == 0:
+                elapsed_progress = time.time() - start
+                print(
+                    f"[progress] sent={i}/{total_orders} elapsed_s={elapsed_progress:.1f}",
+                    flush=True,
+                )
             next_tick += interval
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
