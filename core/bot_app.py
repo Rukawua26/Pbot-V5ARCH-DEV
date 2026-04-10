@@ -157,6 +157,7 @@ class Bot(BotFacade):
     def __init__(self):
         self.ui = UI()
         self.brain = Brain()
+        self.main_loop = None  # [SRE] Referencia al Global Event Loop
         self._backup_database_fn = backup_database
         self._ml_monitor_available = ML_MONITOR_AVAILABLE
         self._dashboard_module = dashboard
@@ -369,7 +370,11 @@ def run_entrypoint():
     try:
         if not acquire_single_instance_lock(logger):
             raise SystemExit(1)
+
+        # [SRE] Captura del Global Event Loop antes de lanzar hilos
+        loop = asyncio.get_event_loop()
         bot = Bot()
+        bot.main_loop = loop
 
         def _graceful_shutdown(signum, _frame):
             signal_name = (

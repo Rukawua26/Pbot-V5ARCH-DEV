@@ -170,6 +170,7 @@ shadow_logger = AsyncShadowLogger()
 class Brain:
     def __init__(self, db_name: str = _DB_PATH):
         self.db_name = db_name
+        self.pending_model_update = False  # [SRE] Flag para recarga oportunista
         self._init_db()
         self._init_rag_cache()
 
@@ -774,6 +775,25 @@ class Brain:
         except Exception as e:
             print(f"⚠️ Error calculando madurez IA: {e}")
             return {"xp_percent": 0, "rank": "Error", "total": 0}
+
+    def reload_ghost_model(self, bot):
+        """
+        Realiza el Hot-Swap del modelo Ghost en la RAM del bot.
+        Llamado únicamente por el Guardian en ventana segura (0 trades).
+        """
+        model_path = "ghost_brain.pkl"
+        if os.path.exists(model_path):
+            try:
+                with open(model_path, "rb") as handle:
+                    bot.ghost_model = pickle.load(handle)
+                self.pending_model_update = False
+                bot.log(
+                    "✅ [HOT-SWAP] Modelo Ghost recargado exitosamente en ventana segura."
+                )
+                return True
+            except Exception as e:
+                bot.log(f"❌ Error en Hot-Swap de modelo: {e}")
+        return False
 
     def get_dynamic_settings(self, symbol):
         try:

@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import os
@@ -232,19 +233,12 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
                 stdout, stderr = await process.communicate()
 
                 if process.returncode == 0:
-                    # 3. Hot-Swap: Recarga del modelo en RAM
-                    if os.path.exists("ghost_brain.pkl"):
-                        with open("ghost_brain.pkl", "rb") as handle:
-                            bot.ghost_model = pickle.load(handle)
-                        bot.brain.set_metadata("last_ghost_train", datetime.now())
-                        bot.mandatory_train_pending = False
-                        send_telegram_msg(
-                            "✅ *ÉXITO:* Nuevo cerebro cargado en RAM sin interrupciones."
-                        )
-                    else:
-                        send_telegram_msg(
-                            "⚠️ Entrenamiento terminó pero no se encontró ghost_brain.pkl"
-                        )
+                    # 3. Notificación de Disponibilidad (No recarga inmediata)
+                    bot.brain.pending_model_update = True
+                    send_telegram_msg(
+                        "✅ *Entrenamiento completo.* El nuevo modelo está listo.\n"
+                        "Esperando ventana segura (0 trades activos) para recarga automática."
+                    )
                 else:
                     error_msg = stderr.decode().strip()
                     send_telegram_msg(
@@ -255,9 +249,11 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
                 send_telegram_msg(f"❌ Error crítico en subproceso: {e}")
 
         try:
-            asyncio.run(run_training())
+            # [SRE] Puente Threadsafe: Inyección de la corrutina en el loop principal
+            asyncio.run_coroutine_threadsafe(run_training(), bot.main_loop)
+            send_telegram_msg("⚙️ Solicitud de entrenamiento enviada al Loop Principal.")
         except Exception as e:
-            send_telegram_msg(f"❌ Error ejecutando loop de entrenamiento: {e}")
+            send_telegram_msg(f"❌ Error al delegar entrenamiento: {e}")
 
         return True
 

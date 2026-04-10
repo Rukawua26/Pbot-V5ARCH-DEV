@@ -8,11 +8,13 @@ from config import Config
 
 logger = logging.getLogger("SniperAI")
 
+
 class StrategyUtils:
     """
     Utilidades estáticas para el motor de estrategia.
     Maneja indicadores, preprocesamiento y detección de estructuras.
     """
+
     _ob_cache: Dict[str, str] = {}
 
     @staticmethod
@@ -24,13 +26,13 @@ class StrategyUtils:
             returns = df["close"].pct_change().dropna()
             if len(returns) < window:
                 return 0.0
-                
+
             rolling_mean = returns.rolling(window=window).mean()
             rolling_std = returns.rolling(window=window).std()
-            
+
             if rolling_std.iloc[-1] == 0:
                 return 0.0
-                
+
             z = (returns.iloc[-1] - rolling_mean.iloc[-1]) / rolling_std.iloc[-1]
             return float(z)
         except Exception:
@@ -46,7 +48,9 @@ class StrategyUtils:
         return "CALM"
 
     @staticmethod
-    def detect_market_regime(atr_pct: float, adx: float, trend_direction: str = "UP") -> str:
+    def detect_market_regime(
+        atr_pct: float, adx: float, trend_direction: str = "UP"
+    ) -> str:
         """Detecta el régimen actual del mercado (BULL_TREND, BEAR_TREND, CHAOS, CALM)."""
         if adx > 25:
             return "BULL_TREND" if trend_direction == "UP" else "BEAR_TREND"
@@ -75,7 +79,9 @@ class StrategyUtils:
             body = abs(candle["close"] - candle["open"])
             vol = candle["volume"] if "volume" in df.columns else 1.0
 
-            if float(body) > (float(avg_body) * 1.6) and float(vol) > (float(avg_volume) * 1.2):
+            if float(body) > (float(avg_body) * 1.6) and float(vol) > (
+                float(avg_volume) * 1.2
+            ):
                 is_bullish_ob = candle["close"] < candle["open"]
                 is_bearish_ob = candle["close"] > candle["open"]
                 current_price = df["close"].iloc[-1]
@@ -104,28 +110,46 @@ class StrategyUtils:
 
     @staticmethod
     def preprocess_data(df: pd.DataFrame, mode: str = "full") -> Optional[pd.DataFrame]:
-        """Punto único de cálculo de indicadores con Data Gate."""
-        if df is None or len(df) < 50:
+        """Punto único de cálculo de indicadores y normalización dinámica Z-Score."""
+        if (
+            df is None or len(df) < 100
+        ):  # Aumentado a 100 para soportar la ventana de normalización
             return None
 
         try:
             if mode == "full":
-                if "ema" not in df.columns: df.ta.ema(length=50, append=True)
-                if "rsi" not in df.columns: df.ta.rsi(length=14, append=True)
-                if "atr" not in df.columns: df.ta.atr(length=14, append=True)
-                if "adx" not in df.columns: df.ta.adx(length=14, append=True)
-                if "bb_lower" not in df.columns: df.ta.bbands(length=20, append=True)
-                if "stoch_k" not in df.columns: df.ta.stoch(k=14, d=3, append=True)
+                if "ema" not in df.columns:
+                    df.ta.ema(length=50, append=True)
+                if "rsi" not in df.columns:
+                    df.ta.rsi(length=14, append=True)
+                if "atr" not in df.columns:
+                    df.ta.atr(length=14, append=True)
+                if "adx" not in df.columns:
+                    df.ta.adx(length=14, append=True)
+                if "bb_lower" not in df.columns:
+                    df.ta.bbands(length=20, append=True)
+                if "stoch_k" not in df.columns:
+                    df.ta.stoch(k=14, d=3, append=True)
                 if "volume_ma" not in df.columns and "volume" in df.columns:
                     df["volume_ma"] = df["volume"].rolling(window=20).mean()
-                if "ema_200" not in df.columns: df.ta.ema(length=200, append=True)
+                if "ema_200" not in df.columns:
+                    df.ta.ema(length=200, append=True)
 
                 rename_map = {
-                    "EMA_50": "ema", "RSI_14": "rsi", "ATRr_14": "atr",
-                    "ADX_14": "adx", "BBL_20_2.0": "bb_lower", "BBU_20_2.0": "bb_upper",
-                    "STOCHk_14_3_3": "stoch_k", "STOCHd_14_3_3": "stoch_d", "EMA_200": "ema_200",
+                    "EMA_50": "ema",
+                    "RSI_14": "rsi",
+                    "ATRr_14": "atr",
+                    "ADX_14": "adx",
+                    "BBL_20_2.0": "bb_lower",
+                    "BBU_20_2.0": "bb_upper",
+                    "STOCHk_14_3_3": "stoch_k",
+                    "STOCHd_14_3_3": "stoch_d",
+                    "EMA_200": "ema_200",
                 }
-                df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+                df.rename(
+                    columns={k: v for k, v in rename_map.items() if k in df.columns},
+                    inplace=True,
+                )
             else:
                 if "ema" not in df.columns:
                     df.ta.ema(length=50, append=True)
@@ -135,12 +159,73 @@ class StrategyUtils:
                     df.rename(columns={"EMA_200": "ema_200"}, inplace=True)
 
             if mode == "full":
-                if "rsi" not in df.columns or len(df) == 0: return None
+                if "rsi" not in df.columns or len(df) == 0:
+                    return None
                 last_rsi = df["rsi"].iloc[-1]
-                if last_rsi == 0 or pd.isna(last_rsi): return None
-            
+                if last_rsi == 0 or pd.isna(last_rsi):
+                    return None
+
             df.fillna(0, inplace=True)
+
+            # --- [SRE] NORMALIZACIÓN DINÁMICA Z-SCORE (Anti-Feature Drift) ---
+            # Definimos las features que la IA consume (basado en GhostAgent)
+            features_to_scale = [
+                "rsi",
+                "adx",
+                "volume",
+                "atr",
+                "funding_rate",
+                "z_score",
+                "dist_ema",
+                "bb_pos",
+                "bb_width",
+            ]
+
+            # 1. Generación de Features Sintéticas ANTES de normalizar
+            # Esto evita que el Z-Score destruya la lógica matemática (ej: rsi**2)
+            if "rsi" in df.columns:
+                df["rsi_sq"] = df["rsi"] ** 2
+                df["rsi_log"] = np.log1p(df["rsi"].abs())
+                df["rsi_inv"] = 100 - df["rsi"]
+            if "adx" in df.columns:
+                df["adx_sq"] = df["adx"] ** 2
+                df["adx_log"] = np.log1p(df["adx"].abs())
+            if "rsi" in df.columns and "adx" in df.columns:
+                df["rsi_adx"] = (df["rsi"] - 50) * df["adx"]
+            if "volume" in df.columns and "adx" in df.columns:
+                df["vol_adx"] = df["volume"] * df["adx"]
+
+            # Actualizamos la lista para incluir las sintéticas en el escalado
+            all_scaled_cols = features_to_scale + [
+                "rsi_sq",
+                "rsi_log",
+                "rsi_inv",
+                "adx_sq",
+                "adx_log",
+                "rsi_adx",
+                "vol_adx",
+            ]
+
+            window_size = 100
+            for col in all_scaled_cols:
+                if col in df.columns:
+                    rolling_mean = (
+                        df[col].rolling(window=window_size, min_periods=10).mean()
+                    )
+                    rolling_std = (
+                        df[col]
+                        .rolling(window=window_size, min_periods=10)
+                        .std()
+                        .replace(0, 1e-10)
+                    )
+                    df[col] = (df[col] - rolling_mean) / rolling_std
+
+            # Limpieza de NaNs resultantes de la ventana móvil
+            df.dropna(subset=features_to_scale, inplace=True)
+
             return df
         except Exception as e:
-            logger.error(f"❌ Error en preprocess_data (mode={mode}): {e}", exc_info=True)
+            logger.error(
+                f"❌ Error en preprocess_data (mode={mode}): {e}", exc_info=True
+            )
             return None

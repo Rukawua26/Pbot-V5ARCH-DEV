@@ -37,7 +37,6 @@ class UltimateMLSystem:
         self.model_path = model_path
         self.clf_models = {}
         self.reg_models = {}
-        self.scaler = RobustScaler()
         self.feature_cols = []
         self.is_trained = False
 
@@ -88,13 +87,13 @@ class UltimateMLSystem:
         return f
 
     def train(self, X, y_class, y_regress):
-        """Entrena sistema dual: clasificación + regresión."""
+        """Entrena sistema dual: clasificación + regresión.
+        Recibe X ya normalizado (Z-Score dinámico).
+        """
         print("🚀 ENTRENANDO ULTIMATE ML SYSTEM v118.0")
         print("=" * 50)
 
         self.feature_cols = list(X.columns)
-
-        X_scaled = self.scaler.fit_transform(X)
 
         print(f"📊 Dataset: {len(X)} samples")
         print(f"   Win Rate: {y_class.mean() * 100:.1f}%")
@@ -112,9 +111,9 @@ class UltimateMLSystem:
             use_label_encoder=False,
             eval_metric="logloss",
         )
-        scores = cross_val_score(xgb_c, X_scaled, y_class, cv=cv, scoring="f1")
+        scores = cross_val_score(xgb_c, X, y_class, cv=cv, scoring="f1")
         print(f"   XGBoost F1: {scores.mean():.3f}")
-        xgb_c.fit(X_scaled, y_class)
+        xgb_c.fit(X, y_class)
         self.clf_models["xgb"] = xgb_c
 
         lgb_c = LGBMClassifier(
@@ -124,9 +123,9 @@ class UltimateMLSystem:
             random_state=42,
             verbose=-1,
         )
-        scores = cross_val_score(lgb_c, X_scaled, y_class, cv=cv, scoring="f1")
+        scores = cross_val_score(lgb_c, X, y_class, cv=cv, scoring="f1")
         print(f"   LightGBM F1: {scores.mean():.3f}")
-        lgb_c.fit(X_scaled, y_class)
+        lgb_c.fit(X, y_class)
         self.clf_models["lgb"] = lgb_c
 
         rf_c = RandomForestClassifier(
@@ -136,9 +135,9 @@ class UltimateMLSystem:
             random_state=42,
             n_jobs=-1,
         )
-        scores = cross_val_score(rf_c, X_scaled, y_class, cv=cv, scoring="f1")
+        scores = cross_val_score(rf_c, X, y_class, cv=cv, scoring="f1")
         print(f"   RandomForest F1: {scores.mean():.3f}")
-        rf_c.fit(X_scaled, y_class)
+        rf_c.fit(X, y_class)
         self.clf_models["rf"] = rf_c
 
         print("\n📉 REGRESORES (PnL esperado):")
@@ -148,11 +147,11 @@ class UltimateMLSystem:
         xgb_r = XGBRegressor(
             n_estimators=200, max_depth=6, learning_rate=0.05, random_state=42
         )
-        preds = cross_val_predict(xgb_r, X_scaled, y_regress, cv=cv_reg)
+        preds = cross_val_predict(xgb_r, X, y_regress, cv=cv_reg)
         r2 = r2_score(y_regress, preds)
         rmse = np.sqrt(mean_squared_error(y_regress, preds))
         print(f"   XGBoost R2: {r2:.3f}, RMSE: {rmse:.2f}")
-        xgb_r.fit(X_scaled, y_regress)
+        xgb_r.fit(X, y_regress)
         self.reg_models["xgb"] = xgb_r
 
         lgb_r = LGBMRegressor(
@@ -162,39 +161,40 @@ class UltimateMLSystem:
             random_state=42,
             verbose=-1,
         )
-        preds = cross_val_predict(lgb_r, X_scaled, y_regress, cv=cv_reg)
+        preds = cross_val_predict(lgb_r, X, y_regress, cv=cv_reg)
         r2 = r2_score(y_regress, preds)
         rmse = np.sqrt(mean_squared_error(y_regress, preds))
         print(f"   LightGBM R2: {r2:.3f}, RMSE: {rmse:.2f}")
-        lgb_r.fit(X_scaled, y_regress)
+        lgb_r.fit(X, y_regress)
         self.reg_models["lgb"] = lgb_r
 
         rf_r = RandomForestRegressor(
             n_estimators=200, max_depth=10, random_state=42, n_jobs=-1
         )
-        preds = cross_val_predict(rf_r, X_scaled, y_regress, cv=cv_reg)
+        preds = cross_val_predict(rf_r, X, y_regress, cv=cv_reg)
         r2 = r2_score(y_regress, preds)
         rmse = np.sqrt(mean_squared_error(y_regress, preds))
         print(f"   RandomForest R2: {r2:.3f}, RMSE: {rmse:.2f}")
-        rf_r.fit(X_scaled, y_regress)
+        rf_r.fit(X, y_regress)
         self.reg_models["rf"] = rf_r
 
         self.models = {
             "clf": self.clf_models,
             "reg": self.reg_models,
             "feature_cols": self.feature_cols,
-            "scaler": self.scaler,
-            "version": "v111_ultimate",
+            "version": "v111_ultimate_zscore",
         }
 
         self.save()
         self.is_trained = True
 
-        print(f"\n✅ ULTIMATE ML TRAINED")
+        print(f"\n✅ ULTIMATE ML TRAINED (Dynamic Z-Score)")
         return self.models
 
     def predict(self, features_dict):
-        """Predice con sistema dual."""
+        """Predice con sistema dual.
+        Asume que features_dict ya contiene los datos normalizados (Z-Score dinámico).
+        """
         if not self.models:
             return 0.5, 0.0, 0.0
 
@@ -203,15 +203,14 @@ class UltimateMLSystem:
             feat_vec.append(features_dict.get(col, 0))
 
         X = np.array([feat_vec])
-        X_scaled = self.scaler.transform(X)
 
         clf_probs = []
         for name, model in self.clf_models.items():
-            clf_probs.append(model.predict_proba(X_scaled)[0][1])
+            clf_probs.append(model.predict_proba(X)[0][1])
 
         reg_preds = []
         for name, model in self.reg_models.items():
-            reg_preds.append(model.predict(X_scaled)[0])
+            reg_preds.append(model.predict(X)[0])
 
         clf_avg = np.mean(clf_probs)
         reg_avg = np.mean(reg_preds)
@@ -258,7 +257,6 @@ class UltimateMLSystem:
                 self.clf_models = self.models.get("clf", {})
                 self.reg_models = self.models.get("reg", {})
                 self.feature_cols = self.models.get("feature_cols", [])
-                self.scaler = self.models.get("scaler", RobustScaler())
                 self.is_trained = True
                 return True
             except Exception as e:

@@ -16,6 +16,14 @@ def run_guardian_loop(bot):
             with bot.lock:
                 snapshot = bot.active_trades.copy()
 
+            # --- [SRE] VENTANA SEGURA DE RECARGA (Hot-Swap) ---
+            # Si hay un modelo pendiente y NO tenemos trades abiertos, recargamos ahora.
+            if bot.brain.pending_model_update and not snapshot:
+                bot.log(
+                    "🛡️ Guardián detecta ventana segura (0 trades). Iniciando Hot-Swap de modelo..."
+                )
+                bot.brain.reload_ghost_model(bot)
+
             # [v118] BAILOUT PRIORITARIO: Monitoreo de integridad de señales (Smart Exit)
             bot.monitor_open_trades()
 

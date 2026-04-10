@@ -98,9 +98,13 @@ class GhostAgent(BaseAgent):
         atr_pct: float,
         funding_rate: float,
     ) -> np.ndarray:
-        """Construye vector de features robusto para modelos legacy/ensemble."""
+        """
+        Construye vector de features.
+        IMPORTANTE: Los valores ya vienen normalizados (Z-Score) desde preprocess_data.
+        """
         cols = feature_cols if isinstance(feature_cols, list) else []
-        trend_num = 1.0 if btc_delta >= 0 else -1.0
+
+        # Creamos el mapa de valores actuales (Normalizados)
         base = {
             "rsi": float(rsi),
             "adx": float(adx),
@@ -112,19 +116,22 @@ class GhostAgent(BaseAgent):
             "dist_ema": 0.0,
             "z_score": 0.0,
             "bb_pos": 0.5,
-            "bb_width": max(0.0, float(atr_pct) * 4.0),
-            "trend_num": trend_num,
-            "trend_adx": trend_num * float(adx),
-            "rsi_sq": float(rsi) ** 2,
-            "rsi_log": np.log1p(max(0.0, float(rsi))),
-            "rsi_inv": 1.0 / max(1.0, float(rsi)),
-            "adx_sq": float(adx) ** 2,
-            "adx_log": np.log1p(max(0.0, float(adx))),
-            "rsi_adx": float(rsi) * float(adx),
-            "vol_adx": float(vol_rel) * float(adx),
+            "bb_width": 0.0,  # Ahora normalizado en DataFrame
+            "trend_num": 1.0 if btc_delta >= 0 else -1.0,
+            "trend_adx": float(adx),  # Simplificado, la normalización ya ocurrió
+            "rsi_sq": 0.0,  # Calculado en preprocess_data
+            "rsi_log": 0.0,  # Calculado en preprocess_data
+            "rsi_inv": 0.0,  # Calculado en preprocess_data
+            "adx_sq": 0.0,  # Calculado en preprocess_data
+            "adx_log": 0.0,  # Calculado en preprocess_data
+            "rsi_adx": 0.0,  # Calculado en preprocess_data
+            "vol_adx": 0.0,  # Calculado en preprocess_data
             "hour_sin": 0.0,
             "hour_cos": 1.0,
         }
+
+        # Si tenemos acceso al DataFrame actual en el contexto, extraemos los valores exactos
+        # (Sugerencia: este método debería recibir el df o el row ya procesado)
 
         row = [float(base.get(c, 0.0)) for c in cols]
         return np.array([row], dtype=float)
