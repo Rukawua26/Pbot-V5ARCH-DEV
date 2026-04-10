@@ -1,11 +1,11 @@
 from config import Config
-from core.agents.breakout_agent import BreakoutAgent
-from core.exit_engine_v1 import ExitEngineV1
+from core.risk.exit_engine_v1 import ExitEngineV1
+from core.strategy.agents.breakout_agent import BreakoutAgent
 from core.execution_adapters import build_execution_gateway
 from core.execution_port import ExecutionPort
 from core.execution_service import ExecutionService
 from core.risk_engine import RiskEngine
-from data_service import DataService
+from core.data_service import DataService
 
 
 def init_core_services_and_engines(bot):

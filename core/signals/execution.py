@@ -1,3 +1,6 @@
+import time
+
+
 def _execute_and_update_symbol(
     bot,
     symbol_raw,
@@ -14,6 +17,21 @@ def _execute_and_update_symbol(
     decision,
     elapsed,
 ):
+    veto_codes = {
+        "SYMBOL_BLOCKED_MATRIX": "SÍMBOLO BLOQUEADO (MATRIX)",
+        "INSUFFICIENT_BALANCE_MIN_NOTIONAL": "SALDO INSUFICIENTE (MIN_NOTIONAL)",
+        "MAX_REAL_TRADES": "LÍMITE MÁXIMO REAL",
+        "MAX_DIRECTIONAL": "LÍMITE DIRECCIONAL",
+        "MAX_SHADOW": "LÍMITE MÁXIMO SHADOW",
+        "DUPLICATE_REAL_COIN": "POSICIÓN REAL YA EXISTE",
+        "BOT_PAUSED": "BOT EN PAUSA",
+        "INTEGRITY_LOCK_ACTIVE": "INTEGRITY LOCK ACTIVO",
+        "HALT_SYSTEM_ACTIVE": "HALT SYSTEM ACTIVO",
+        "TRADING_HALTED_DB_ERROR": "BLOQUEO SEGURIDAD DB",
+        "CIRCUIT_BREAKER_PANIC": "CIRCUIT BREAKER",
+        "TP_INSUFFICIENT": "TP INSUFICIENTE",
+    }
+
     final_verdict_for_ui = audit_verdict
     if should_execute:
         if ctx:
@@ -34,7 +52,9 @@ def _execute_and_update_symbol(
 
         if exec_result.startswith("OK"):
             modo_str = "REAL" if not is_shadow_exec else "SHADOW"
-            bot.log(f"✅ GATILLO {modo_str}: {symbol} [{audit_signal}] -> {audit_verdict}")
+            bot.log(
+                f"✅ GATILLO {modo_str}: {symbol} [{audit_signal}] -> {audit_verdict}"
+            )
             with bot.lock:
                 if symbol in bot.active_trades:
                     final_verdict_for_ui = "⚡ OPEN | 🔒 OPERACIÓN ACTIVA"
@@ -42,19 +62,26 @@ def _execute_and_update_symbol(
                     final_verdict_for_ui = audit_verdict
 
             if "DEGRADED" in exec_result:
-                deg_msg = exec_result.split(": ")[1] if ": " in exec_result else "PROTECTION"
+                deg_msg = (
+                    exec_result.split(": ")[1] if ": " in exec_result else "PROTECTION"
+                )
                 audit_verdict = f"🧪 SHADOW (PROT: {deg_msg})"
                 for item in bot.scanner_history:
                     if item["symbol"] == symbol:
                         item["result"] = audit_verdict
                         break
         elif exec_result not in ["COOLDOWN", "ALREADY_ACTIVE"]:
-            error_msg = exec_result.split(": ")[0] if ": " in exec_result else exec_result
+            error_msg = (
+                exec_result.split(": ")[0] if ": " in exec_result else exec_result
+            )
             bot.log(f"❌ FALLO EJECUCIÓN {symbol}: {exec_result}")
-            final_verdict_for_ui = f"❌ ERR: {error_msg}"
+            if error_msg in veto_codes:
+                final_verdict_for_ui = f"⛔ VETO: {veto_codes[error_msg]}"
+            else:
+                final_verdict_for_ui = f"❌ ERR: {error_msg}"
             for item in bot.scanner_history:
                 if item["symbol"] == symbol:
-                    item["result"] = f"❌ ERR: {error_msg}"
+                    item["result"] = final_verdict_for_ui
                     item["ia_real"] = "❌"
                     item["ia_shadow"] = "❌"
                     break

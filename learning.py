@@ -1569,19 +1569,35 @@ class Brain:
             )
             shadow_rows = c.fetchall()
 
+            c.execute(
+                "SELECT pnl_percent FROM trades WHERE is_shadow = 0 AND pnl_percent != -99.0 ORDER BY id DESC LIMIT 50"
+            )
+            real_rows = c.fetchall()
+
             swr = 50.0  # Default neutral
             if shadow_rows:
                 wins = sum(1 for r in shadow_rows if r["pnl_percent"] > 0)
                 swr = (wins / len(shadow_rows)) * 100
+
+            rwr = None
+            if real_rows:
+                real_wins = sum(1 for r in real_rows if r["pnl_percent"] > 0)
+                rwr = (real_wins / len(real_rows)) * 100
 
             conn.close()
             return {
                 "total_trades": row_real[0] or 0,
                 "shadow_trades": row_shadow[0] or 0,
                 "shadow_win_rate": swr,
+                "real_win_rate": rwr,
             }
         except Exception as e:
-            return {"total_trades": 0, "shadow_trades": 0, "shadow_win_rate": 50.0}
+            return {
+                "total_trades": 0,
+                "shadow_trades": 0,
+                "shadow_win_rate": 50.0,
+                "real_win_rate": None,
+            }
 
     def get_last_n_trades(self, limit=100):
         """Recupera los últimos N trades cerrados para auditoría."""
@@ -1984,6 +2000,35 @@ class Brain:
             conn.close()
         except Exception as e:
             print(f"❌ Error actualizando metadata {key}: {e}")
+
+    def get_metadata_json(self, key, default=None):
+        try:
+            conn = self._get_conn()
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_meta WHERE key = ?", (key,))
+            row = c.fetchone()
+            conn.close()
+            if not row or not row["value"]:
+                return default
+            return json.loads(row["value"])
+        except Exception:
+            return default
+
+    def set_metadata_json(self, key, value):
+        try:
+            conn = self._get_conn()
+            c = conn.cursor()
+            c.execute(
+                """
+                INSERT OR REPLACE INTO system_meta (key, value)
+                VALUES (?, ?)
+            """,
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"❌ Error actualizando metadata JSON {key}: {e}")
 
     def get_daily_real_pnl(self, current_balance=1.0):
         """Calcula el rendimiento real en base al capital total ($)"""

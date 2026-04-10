@@ -4,18 +4,28 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from config import Config
+from core.cooldown_state import is_symbol_in_cooldown, set_symbol_cooldown
 from core.execution_telemetry import append_execution_event
 from core.reconciliation import (
     allocate_signal_timestamp,
     generate_child_client_order_id,
     generate_client_order_id,
 )
+from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 from learning import shadow_logger
 from notifier import send_telegram_msg, send_telegram_photo
 
 
 def _module_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
+
+
+def _clamp_leverage_1_to_10(raw_leverage) -> int:
+    try:
+        lev = int(float(raw_leverage))
+    except (TypeError, ValueError):
+        lev = 10
+    return max(1, min(lev, 10))
 
 
 def execute_order(
@@ -30,6 +40,27 @@ def execute_order(
     ob_status: str = "⚪",
     override_usd_size: float = 0.0,
 ) -> str:
+    if bool(getattr(bot, "stop_requested", False)) or bool(
+        getattr(bot, "shutdown_in_progress", False)
+    ):
+        bot.log("🛑 SHUTDOWN_SEQUENCE: nueva entrada rechazada.")
+        return "SHUTDOWN_IN_PROGRESS"
+
+    existing_state = (getattr(bot, "active_trades", {}) or {}).get(symbol)
+    if isinstance(existing_state, dict):
+        existing_status = str(existing_state.get("status") or "").upper()
+        if existing_status in {
+            "PENDING_SEND",
+            "PENDING_EXCHANGE_OPEN",
+            "ENTRY_FILLED_AWAITING_POSITION_SYNC",
+            "PARTIAL_FILL_PENDING",
+            "PARTIAL_FILL",
+        }:
+            bot.log(
+                f"🧷 RECOVERY_GUARD {symbol}: estado pendiente detectado ({existing_status}). Se bloquea nueva apertura para evitar duplicado tras reinicio."
+            )
+            return "RECOVERY_PENDING_STATE"
+
     if not is_shadow and shadow_logger.is_trading_halted():
         bot.log(
             "🛑 BLOQUEO DE SEGURIDAD: Trading real detenido por fallo persistente de persistencia (DB)."
@@ -64,7 +95,7 @@ def execute_order(
     atr_pct = context.get("atr_pct", 0) if context else 0.02
     min_notional = Config.MIN_NOTIONAL_VALUE
     confidence_score = context.get("prob_final", 0.0) if context else 0.0
-    current_leverage = max(1, min(Config.LEVERAGE, 10))
+    current_leverage = _clamp_leverage_1_to_10(getattr(Config, "LEVERAGE", 10))
 
     max_notional_possible = bot.balance * current_leverage
     if max_notional_possible < min_notional:
@@ -198,8 +229,9 @@ def execute_order(
 
         if symbol in bot.active_trades:
             return "ALREADY_ACTIVE"
-        if not is_shadow and symbol in bot.cooldown_pairs:
-            if datetime.now() < bot.cooldown_pairs[symbol]:
+        if not is_shadow:
+            in_cd, _remaining = is_symbol_in_cooldown(bot, symbol)
+            if in_cd:
                 return "COOLDOWN"
 
         actives = bot.active_trades.values()
@@ -252,7 +284,10 @@ def execute_order(
         "entry_exchange_order_id": None,
         "sl_exchange_order_id": None,
         "tp_exchange_order_id": None,
-        "open_time": datetime.now().isoformat(),
+        "open_time": utc_now_iso(),
+        "intent_created_at_utc": utc_now_iso(),
+        "intent_last_check_at_utc": None,
+        "intent_check_attempts": 0,
     }
     with bot.db_lock:
         persisted = bot.brain.save_active_trade_state(symbol, pending_state)
@@ -280,6 +315,35 @@ def execute_order(
         current_price = float(ticker["last"])
         if current_price > 0:
             price = current_price
+
+        # [FASE 2: GATILLO SEGURO] Verificación de spread en tiempo real
+        spread_veto_pct = getattr(Config, "ENTRY_SPREAD_VETO_THRESHOLD", 0.0015)
+        try:
+            book_ticker = bot.execution.fetch_book_ticker(symbol)
+            bid = float(book_ticker.get("bidPrice", 0) or 0)
+            ask = float(book_ticker.get("askPrice", 0) or 0)
+            if bid > 0 and ask > 0:
+                current_spread = (ask - bid) / ask
+                if current_spread > spread_veto_pct:
+                    bot.log(
+                        f"🚫 VETO_SPREAD {symbol}: spread {current_spread * 100:.3f}% > {spread_veto_pct * 100:.3f}%"
+                    )
+                    append_execution_event(
+                        bot,
+                        "ENTRY_ABORTED_HIGH_SPREAD",
+                        {
+                            "symbol": symbol,
+                            "spread_pct": current_spread * 100,
+                            "threshold_pct": spread_veto_pct * 100,
+                            "bid": bid,
+                            "ask": ask,
+                        },
+                    )
+                    _drop_pending_intent()
+                    return f"HIGH_SPREAD_VETO ({current_spread * 100:.3f}%)"
+        except Exception as spread_err:
+            bot.log(f"⚠️ No se pudo verificar spread para {symbol}: {spread_err}")
+
     except Exception as error:
         bot.log(f"⚠️ No se pudo refrescar precio para {symbol}: {error}")
 
@@ -451,7 +515,7 @@ def execute_order(
                 "trailing_active": False,
                 "early_be_armed": False,
                 "peak_pnl": 0.0,
-                "open_time": datetime.now(),
+                "open_time": utc_now_iso(),
                 "is_shadow": is_shadow,
                 "simulated_real": Config.PAPER_MODE and not is_shadow,
                 "sector": "OTHE",
@@ -476,7 +540,7 @@ def execute_order(
                 if (not is_shadow and remaining_amount > 0.0)
                 else "OPEN",
                 "partial_fill_pending": (not is_shadow and remaining_amount > 0.0),
-                "partial_fill_started_at": datetime.now().isoformat()
+                "partial_fill_started_at": utc_now_iso()
                 if (not is_shadow and remaining_amount > 0.0)
                 else None,
                 "signal_ts": signal_ts,
@@ -497,8 +561,8 @@ def execute_order(
                 if is_shadow
                 else Config.TRADE_COOLDOWN_MINUTES
             )
-            bot.cooldown_pairs[symbol] = datetime.now() + timedelta(
-                minutes=cooldown_minutes
+            set_symbol_cooldown(
+                bot, symbol, utc_now() + timedelta(minutes=cooldown_minutes)
             )
 
             if not req_shadow and is_shadow:
@@ -808,10 +872,10 @@ def close_trade(
         if entry_time:
             try:
                 if isinstance(entry_time, str):
-                    entry_dt = datetime.fromisoformat(entry_time)
+                    entry_dt = parse_datetime_utc(entry_time)
                 else:
-                    entry_dt = entry_time
-                duration = datetime.now() - entry_dt
+                    entry_dt = parse_datetime_utc(entry_time)
+                duration = utc_now() - entry_dt
                 duration_mins = int(duration.total_seconds() / 60)
                 duration = f"{duration_mins}m"
             except Exception:
@@ -838,9 +902,9 @@ def close_trade(
         send_telegram_msg(msg_telegram)
         bot._check_recent_mfe_health()
 
-        now = datetime.now()
+        now = utc_now()
         default_cd_until = now + timedelta(minutes=Config.TRADE_COOLDOWN_MINUTES)
-        bot.cooldown_pairs[symbol] = default_cd_until
+        set_symbol_cooldown(bot, symbol, default_cd_until)
         bot.log(
             f"❄️ COOLDOWN UNIVERSAL: {symbol} bloqueado por {Config.TRADE_COOLDOWN_MINUTES}m tras cierre."
         )
@@ -856,8 +920,15 @@ def close_trade(
         if smart_exit_abort:
             freeze_hours = float(getattr(Config, "SMART_EXIT_COOLDOWN_HOURS", 4))
             freeze_until = now + timedelta(hours=freeze_hours)
-            if freeze_until > bot.cooldown_pairs.get(symbol, now):
-                bot.cooldown_pairs[symbol] = freeze_until
+            current_until = now
+            current_raw = (getattr(bot, "cooldown_pairs", {}) or {}).get(symbol)
+            if current_raw is not None:
+                try:
+                    current_until = parse_datetime_utc(current_raw)
+                except Exception:
+                    current_until = now
+            if freeze_until > current_until:
+                set_symbol_cooldown(bot, symbol, freeze_until)
             bot.log(
                 f"🧊 SMART EXIT FREEZE: {symbol} bloqueado por {freeze_hours:.0f}h (razón={reason_txt[:60]})."
             )
@@ -866,15 +937,22 @@ def close_trade(
 
         if pnl_neto_percent < 0 and not trade.get("is_shadow", False):
             anti_revenge_until = now + timedelta(hours=1)
-            if anti_revenge_until > bot.cooldown_pairs.get(symbol, now):
-                bot.cooldown_pairs[symbol] = anti_revenge_until
+            current_until = now
+            current_raw = (getattr(bot, "cooldown_pairs", {}) or {}).get(symbol)
+            if current_raw is not None:
+                try:
+                    current_until = parse_datetime_utc(current_raw)
+                except Exception:
+                    current_until = now
+            if anti_revenge_until > current_until:
+                set_symbol_cooldown(bot, symbol, anti_revenge_until)
             bot.log(
                 f"🛡️ ANTI-REBOTE: {symbol} vetado por 1h adicional (pérdida en {'LONG' if trade['side'] == 'BUY' else 'SHORT'})."
             )
 
         if pnl_neto_percent < -15.0 and not trade.get("is_shadow"):
             bot.is_paused = True
-            bot.pause_time = datetime.now() + timedelta(hours=1)
+            bot.pause_time = utc_now() + timedelta(hours=1)
             bot.log(
                 f"☢️ CIRCUIT BREAKER: GAP masivo ({pnl_neto_percent:.2f}%). Pausando 1h."
             )

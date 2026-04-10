@@ -1,9 +1,11 @@
 import unittest
+from datetime import timedelta
 from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.reconciliation import reconcile_bootstrap_state
+from core.time_utils import parse_datetime_utc
 from core.bot_runtime_ops import check_instinctive_safety
 from core.trade_manager import execute_order
 
@@ -104,6 +106,30 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(decision, "OK")
 
+    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    def test_execute_order_blocks_duplicate_when_recovery_pending(self, _mock_halted):
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            active_trades={
+                "BTC/USDT": {
+                    "symbol": "BTC/USDT",
+                    "status": "PENDING_EXCHANGE_OPEN",
+                }
+            },
+        )
+
+        result = execute_order(
+            bot,
+            symbol="BTC/USDT",
+            side="BUY",
+            price=100.0,
+            atr=1.0,
+            is_shadow=False,
+            context={},
+        )
+
+        self.assertEqual(result, "RECOVERY_PENDING_STATE")
+
     @patch("core.trade_manager.Config.PAPER_MODE", False)
     @patch("core.trade_manager.send_telegram_msg")
     @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
@@ -184,6 +210,11 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertIn("BTC/USDT", saved_states)
         self.assertEqual(saved_states["BTC/USDT"].get("status"), "PENDING_SEND")
 
+        stale = parse_datetime_utc(
+            saved_states["BTC/USDT"]["intent_created_at_utc"]
+        ) - timedelta(seconds=180)
+        saved_states["BTC/USDT"]["intent_created_at_utc"] = stale.isoformat()
+
         bot.active_trades = {"BTC/USDT": dict(saved_states["BTC/USDT"])}
         reconcile_bootstrap_state(bot)
 
@@ -192,7 +223,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertGreaterEqual(bot.brain.save_error_snapshot.call_count, 1)
         self.assertEqual(
             bot.brain.save_error_snapshot.call_args_list[-1][0][1],
-            "LOST_IN_TRANSMISSION",
+            "INTENT_EXPIRED",
         )
 
     @patch("core.trade_manager.Config.PAPER_MODE", False)

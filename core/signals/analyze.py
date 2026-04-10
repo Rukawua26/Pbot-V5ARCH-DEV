@@ -2,6 +2,34 @@ from config import Config
 from strategy import Strategy
 
 
+def _get_fast_coherence_veto_reason(bot, df_main):
+    if not bool(getattr(Config, "DIRECTIONAL_COHERENCE_FILTER", True)):
+        return None
+    if df_main is None or df_main.empty or "close" not in df_main.columns:
+        return None
+    if "ema" not in df_main.columns:
+        return None
+
+    sentiment = str(getattr(bot, "current_sentiment", ("",))[0])
+    is_bull = "ALCISTA" in sentiment
+    is_bear = "BAJISTA" in sentiment
+    if not is_bull and not is_bear:
+        return None
+
+    try:
+        close_val = float(df_main["close"].iloc[-1])
+        ema_val = float(df_main["ema"].iloc[-1])
+    except Exception:
+        return None
+
+    tentative_signal = "BUY" if close_val > ema_val else "SELL"
+    if tentative_signal == "SELL" and is_bull:
+        return "COHERENCIA (FAST PATH): SELL bloqueado en regimen ALCISTA"
+    if tentative_signal == "BUY" and is_bear:
+        return "COHERENCIA (FAST PATH): BUY bloqueado en regimen BAJISTA"
+    return None
+
+
 def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
     try:
         if df_main is None or df_4h is None or df_main.empty:
@@ -35,11 +63,29 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
             )
             return None
 
+        fast_veto_reason = _get_fast_coherence_veto_reason(bot, df_main)
+        if fast_veto_reason:
+            bot.log(f"⛔ FAST_VETO {symbol}: {fast_veto_reason}")
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                f"⛔ VETO: {fast_veto_reason}",
+                {"tier": "IRON"},
+                response_ms=elapsed,
+            )
+            return None
+
         with bot.db_lock:
             dynamic_params = bot.brain.get_dynamic_settings(symbol)
 
         default_min = Config.SHADOW_MIN_PROBABILITY_RANGE / 10.0
-        min_score = dynamic_params.get("min_score", default_min) if dynamic_params else default_min
+        min_score = (
+            dynamic_params.get("min_score", default_min)
+            if dynamic_params
+            else default_min
+        )
         if bot.global_rag_impact > 10.0:
             min_score = max(min_score, 8.8)
 
@@ -87,7 +133,9 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
         return res
 
     except KeyError as e_key:
-        bot.log(f"⚠️ {symbol} descartado: Datos insuficientes para indicador clave ({e_key}).")
+        bot.log(
+            f"⚠️ {symbol} descartado: Datos insuficientes para indicador clave ({e_key})."
+        )
         bot.update_radar(
             symbol_raw,
             {"signal": "WAIT", "mode": "NONE"},

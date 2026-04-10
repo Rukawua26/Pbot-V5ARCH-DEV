@@ -1,14 +1,15 @@
 import time
-from datetime import datetime
 
 from config import Config
 from core.execution_telemetry import append_execution_event
+from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 from strategy import Strategy
 
 
 def run_guardian_loop(bot):
     bot.log("🛡️ Guardián OK.")
-    last_heavy = 0
+    last_heavy = 0.0
+    last_wallet_sync = 0.0
     while bot.is_running:
         loop_started = time.perf_counter()
         try:
@@ -177,7 +178,7 @@ def run_guardian_loop(bot):
                             current_price=curr,
                             current_atr=current_atr,
                         )
-                        now_ts = time.time()
+                        now_ts = monotonic_now()
                         last_log_ts = float(bot._exit_eval_last_log.get(s, 0.0))
                         if now_ts - last_log_ts >= 120:
                             bot._exit_eval_last_log[s] = now_ts
@@ -212,17 +213,40 @@ def run_guardian_loop(bot):
                             f"SL ajustado a break-even con fees ({be_sl:.6f})."
                         )
 
-                    # PARÁMETROS UNIFICADOS: Trailing temprano para real y shadow
-                    if t["pnl"] > Config.TRAILING_ACTIVATION_PNL:
+                    # PARÁMETROS UNIFICADOS: Trailing basado en ATR dinámico
+                    # [v119] Trailing activo cuando PnL >= 2.0x ATR (antes 0.8% fijo)
+                    trailing_activation_atr = Config.ATR_TP1_MULTIPLIER  # 2.0x ATR
+                    if trailing_activation_atr > 0:
+                        entry_atr = float(t.get("entry_atr", 0) or 0)
+                        entry_price = float(t.get("entry", 0) or 0)
+                        if entry_atr > 0 and entry_price > 0:
+                            trailing_pnl_pct = (
+                                entry_atr * trailing_activation_atr / entry_price
+                            ) * 100
+                        else:
+                            trailing_pnl_pct = Config.TRAILING_ACTIVATION_PNL
+                    else:
+                        trailing_pnl_pct = Config.TRAILING_ACTIVATION_PNL
+
+                    if t["pnl"] >= trailing_pnl_pct:
                         t["trailing_active"] = True
+                        if not t.get("trailing_activated_logged"):
+                            bot.log(
+                                f"🎯 TRAILING ARMED {s}: PnL {t['pnl']:.2f}% >= {trailing_pnl_pct:.2f}% (2.0x ATR)"
+                            )
+                            t["trailing_activated_logged"] = True
 
                     # Time Limit
                     ot = t.get("open_time")
                     if isinstance(ot, str):
-                        ot = datetime.fromisoformat(ot)
+                        ot = parse_datetime_utc(ot)
+                    elif ot is not None:
+                        ot = parse_datetime_utc(ot)
+                    else:
+                        ot = utc_now()
                     # Time limit controlado por Config
                     # [SMART TIME LIMIT v118] No cerrar si va ganando (PnL > 0)
-                    duration_mins = (datetime.now() - ot).total_seconds() / 60
+                    duration_mins = (utc_now() - ot).total_seconds() / 60
                     if duration_mins >= Config.MAX_TRADE_DURATION_MINUTES:
                         if (
                             t["pnl"] <= 0
@@ -354,10 +378,20 @@ def run_guardian_loop(bot):
                 except Exception as e:
                     bot.log(f"Guardian error en {s}: {e}")
 
-            # 15s: Sincronización y Trailing pesado
-            if time.time() - last_heavy > 15:
+            # Sync wallet más reactivo para parciales (shadow/paper): 1s con parciales, 15s normal
+            now_mono = monotonic_now()
+            has_partial_pending = any(
+                str((t or {}).get("status") or "")
+                in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}
+                for t in snapshot.values()
+            )
+            wallet_sync_interval = 1.0 if has_partial_pending else 15.0
+            if now_mono - last_wallet_sync > wallet_sync_interval:
                 bot.sync_wallet()
+                last_wallet_sync = now_mono
 
+            # 15s: Trailing pesado
+            if now_mono - last_heavy > 15:
                 # --- OPTIMIZACIÓN VIP: Primero REALES, luego SHADOW ---
                 # Esto evita que el procesamiento de 30 trades shadow bloquee la protección de tu dinero real.
                 sorted_trades = sorted(
@@ -411,7 +445,7 @@ def run_guardian_loop(bot):
                             "Trailing (Breakeven Protection)",
                             t["last_price"],
                         )
-                last_heavy = time.time()
+                last_heavy = now_mono
 
         except Exception as e:
             bot.log(f"Err Guardián: {e}")

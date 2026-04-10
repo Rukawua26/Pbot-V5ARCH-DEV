@@ -1,17 +1,27 @@
-from datetime import datetime
 import time
 
 from config import Config
+from core.cooldown_state import cleanup_expired_cooldowns
+from core.time_utils import parse_datetime_utc, utc_now
+
+
+def _is_not_expired_until(value, now_utc):
+    try:
+        return parse_datetime_utc(value) > now_utc
+    except Exception:
+        return False
 
 
 def acquire_targets(bot):
     """Fase 2: Selección Dinámica de Líderes con Prioridad Inteligente (v110.3)"""
     bot.log("🎯 Buscando pares líderes...")
     try:
-        now = datetime.now()
+        now = utc_now()
         # Limpieza de blacklists expiradas
-        bot.blacklist = {s: e for s, e in bot.blacklist.items() if now < e}
-        bot.cooldown_pairs = {s: e for s, e in bot.cooldown_pairs.items() if now < e}
+        bot.blacklist = {
+            s: e for s, e in bot.blacklist.items() if _is_not_expired_until(e, now)
+        }
+        cleanup_expired_cooldowns(bot)
 
         tickers = bot.execution.fetch_tickers(params={"type": "future"})
         # [CIRUGÍA LÁSER] Ampliar filtro para capturar todos los pares USDT (ej: BTC/USDT)
@@ -38,7 +48,7 @@ def acquire_targets(bot):
                     continue
 
                 # Filtrar por volumen mínimo primero (más rápido)
-                if t.get("quoteVolume", 0) < Config.MIN_VOLUME_24H:
+                if t.get("quoteVolume", 0) < Config.TRIAGE_MIN_VOL_24H:
                     continue
 
                 # [v118.5] AUDITORÍA DE MADUREZ (Source Filtering)
@@ -334,8 +344,8 @@ def get_active_market_snapshot(bot):
             bot._vol_ema = {}
 
         MAX_PAIRS = 50  # 50 pares — máximo cobertura del mercado
-        MIN_VOL = Config.TRIAGE_MIN_VOL_24H  # 10M
-        MAX_SPREAD = Config.TRIAGE_SPREAD_MAX  # 0.5%
+        MIN_VOL = Config.TRIAGE_MIN_VOL_24H  # $15M mínimo
+        MAX_SPREAD = Config.TRIAGE_SPREAD_MAX  # 0.15% max
         MARKET_REFRESH = 300  # refresh mercado cada 5 min (suficiente para 1h)
 
         # --- CAPA 0: BookTicker para spreads reales (peso ~1) ---

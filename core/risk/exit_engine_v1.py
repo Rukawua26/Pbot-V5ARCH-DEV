@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from core.time_utils import parse_datetime_utc, utc_now
+
 
 class ExitEngineV1:
     """Motor de salida dinámico v1.2: BE guard, trailing multi-etapa y time decay por volatilidad."""
@@ -42,11 +44,11 @@ class ExitEngineV1:
         self.flat_time_decay_atr_mult = float(flat_time_decay_atr_mult)
 
     def _bars_elapsed(self, open_time: Any, timeframe_minutes: int = 60) -> int:
-        if isinstance(open_time, str):
-            open_time = datetime.fromisoformat(open_time)
-        if not isinstance(open_time, datetime):
+        try:
+            open_time = parse_datetime_utc(open_time)
+        except Exception:
             return 0
-        mins = max(0.0, (datetime.now() - open_time).total_seconds() / 60.0)
+        mins = max(0.0, (utc_now() - open_time).total_seconds() / 60.0)
         return int(mins // max(1, timeframe_minutes))
 
     def check_time_decay_exit(self, trade: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -75,13 +77,12 @@ class ExitEngineV1:
 
         # Evitar cierres instantáneos por ruido/spread justo tras abrir.
         open_time = trade.get("open_time")
-        if isinstance(open_time, str):
-            try:
-                open_time = datetime.fromisoformat(open_time)
-            except Exception:
-                open_time = None
+        try:
+            open_time = parse_datetime_utc(open_time)
+        except Exception:
+            open_time = None
         if isinstance(open_time, datetime):
-            elapsed = (datetime.now() - open_time).total_seconds()
+            elapsed = (utc_now() - open_time).total_seconds()
             if elapsed < self.structural_min_hold_seconds:
                 return None
 

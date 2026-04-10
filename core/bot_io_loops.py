@@ -1,10 +1,11 @@
 import json
+import random
 import time
-from datetime import datetime
 
 import requests
 
 from config import Config
+from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 
 
 def websocket_monitor(bot):
@@ -28,6 +29,7 @@ def websocket_monitor(bot):
             bot.log(f"⚠️ Error procesando mensaje WS: {error}")
 
     is_reconnecting = False
+    reconnect_delay = 5.0
     while bot.is_running:
         try:
             if is_reconnecting:
@@ -35,19 +37,29 @@ def websocket_monitor(bot):
                     "⚡ WEBSOCKET: Reconectado exitosamente. Precios en tiempo real restaurados."
                 )
                 is_reconnecting = False
+                reconnect_delay = 5.0
 
             websocket.enableTrace(False)
             ws = websocket.WebSocketApp(
                 "wss://fstream.binance.com/ws/!ticker@arr", on_message=on_message
             )
             ws.run_forever()
+            if bot.is_running:
+                is_reconnecting = True
+                wait_s = reconnect_delay + random.uniform(0.0, 1.0)
+                if reconnect_delay <= 5.1:
+                    bot.log(
+                        f"🔌 WEBSOCKET: Conexión cerrada. Reintentando en {wait_s:.1f}s..."
+                    )
+                time.sleep(wait_s)
+                reconnect_delay = min(reconnect_delay * 1.8, 60.0)
         except Exception as error:
             if not is_reconnecting:
-                bot.log(
-                    f"🔌 WEBSOCKET: Desconectado. Reintentando en 5s... (Error: {error})"
-                )
+                bot.log(f"🔌 WEBSOCKET: Desconectado. Reintentando... (Error: {error})")
             is_reconnecting = True
-            time.sleep(5)  # Reintento
+            wait_s = reconnect_delay + random.uniform(0.0, 1.0)
+            time.sleep(wait_s)
+            reconnect_delay = min(reconnect_delay * 1.8, 60.0)
 
 
 def telegram_listener(bot):
@@ -73,7 +85,7 @@ def telegram_listener(bot):
             backoff_seconds = 5
 
         except Exception as error:
-            now_ts = time.time()
+            now_ts = monotonic_now()
             if now_ts - float(getattr(bot, "_telegram_last_err_log", 0.0)) > 120:
                 bot._telegram_last_err_log = now_ts
                 bot.log(f"Telegram Error: {error}")
@@ -88,10 +100,10 @@ def perform_post_mortem(bot):
     try:
         with bot.db_lock:
             pending = bot.brain.get_trades_pending_post_mortem()
-        now = datetime.now()
+        now = utc_now()
         for trade in pending:
             try:
-                close_time = datetime.fromisoformat(trade["timestamp"])
+                close_time = parse_datetime_utc(trade["timestamp"])
                 if (now - close_time).total_seconds() < 900:
                     continue  # Esperar 15 min
 

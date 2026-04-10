@@ -33,11 +33,15 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
             reverse=True,
         )
         source_counts = bot.breakout_agent.summary_by_source()
-        source_txt = " | ".join([f"{key}:{int(value)}" for key, value in sorted(source_counts.items())])
+        source_txt = " | ".join(
+            [f"{key}:{int(value)}" for key, value in sorted(source_counts.items())]
+        )
         if not source_txt:
             source_txt = "N/A"
 
-        msg = f"👁️ *WATCHLIST BREAKOUT*\n• Total: {len(rows)}\n• Fuentes: {source_txt}\n\n"
+        msg = (
+            f"👁️ *WATCHLIST BREAKOUT*\n• Total: {len(rows)}\n• Fuentes: {source_txt}\n\n"
+        )
         for row in rows[:10]:
             meta = row.get("meta") or {}
             source = str(meta.get("source", "UNK"))
@@ -78,7 +82,9 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
             "G": "👻 IA (G)",
             "R": "🧠 RAG Vectorial",
         }
-        for agent_id, score in sorted(reps.items(), key=lambda item: item[1], reverse=True):
+        for agent_id, score in sorted(
+            reps.items(), key=lambda item: item[1], reverse=True
+        ):
             name = agent_names.get(agent_id, agent_id)
             icon = "🟢" if score >= 100 else ("🟡" if score >= 90 else "🔴")
             msg += f"{icon} *{name}:* {score:.1f}\n"
@@ -116,6 +122,7 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
             requests.post(
                 f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendPhoto?chat_id={Config.TELEGRAM_CHAT_ID}",
                 files=files,
+                timeout=(5, 20),
             )
         except Exception as error:
             send_telegram_msg(f"❌ Error generando XAI: {error}")

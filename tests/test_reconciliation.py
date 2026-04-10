@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -122,6 +122,7 @@ class ReconciliationTest(unittest.TestCase):
         bot.brain.delete_active_trade_state.assert_not_called()
 
     def test_marks_lost_when_no_position_and_no_open_order(self):
+        stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
         bot = SimpleNamespace()
         bot.lock = RLock()
         bot.db_lock = RLock()
@@ -132,6 +133,7 @@ class ReconciliationTest(unittest.TestCase):
                 "is_shadow": False,
                 "status": "PENDING_SEND",
                 "entry_client_order_id": "sai-v118-missing",
+                "intent_created_at_utc": stale_ts,
             }
         }
         bot.balance = 100.0
@@ -156,6 +158,49 @@ class ReconciliationTest(unittest.TestCase):
         self.assertNotIn("BTC/USDT", bot.active_trades)
         bot.brain.save_error_snapshot.assert_called_once()
         bot.brain.delete_active_trade_state.assert_called_once_with("BTC/USDT")
+        self.assertEqual(
+            bot.brain.save_error_snapshot.call_args[0][1], "INTENT_EXPIRED"
+        )
+
+    def test_keeps_recent_pending_send_when_exchange_still_has_no_order(self):
+        fresh_ts = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+        bot = SimpleNamespace()
+        bot.lock = RLock()
+        bot.db_lock = RLock()
+        bot.active_trades = {
+            "BTC/USDT": {
+                "symbol": "BTC/USDT",
+                "side": "BUY",
+                "is_shadow": False,
+                "status": "PENDING_SEND",
+                "entry_client_order_id": "sai-v118-fresh",
+                "intent_created_at_utc": fresh_ts,
+            }
+        }
+        bot.balance = 100.0
+        bot.is_paused = False
+        bot.integrity_lock_active = False
+        bot.pending_send_stale_seconds = 90
+        bot.log = MagicMock()
+        bot.execution = SimpleNamespace(
+            fetch_positions=lambda: [],
+            fetch_open_orders=lambda: [],
+            fetch_order_by_client_id=lambda _symbol, _coid: None,
+            place_hard_sl=MagicMock(),
+        )
+        bot.get_current_balance = lambda: 100.0
+        bot.brain = SimpleNamespace(
+            save_active_trade_state=MagicMock(),
+            save_error_snapshot=MagicMock(),
+            delete_active_trade_state=MagicMock(),
+        )
+
+        reconcile_bootstrap_state(bot)
+
+        self.assertIn("BTC/USDT", bot.active_trades)
+        self.assertEqual(bot.active_trades["BTC/USDT"].get("status"), "PENDING_SEND")
+        bot.brain.delete_active_trade_state.assert_not_called()
+        bot.brain.save_error_snapshot.assert_not_called()
 
     def test_recovers_pending_trade_using_explicit_order_lookup(self):
         bot = SimpleNamespace()

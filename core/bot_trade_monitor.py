@@ -1,6 +1,7 @@
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from core.time_utils import parse_datetime_utc, utc_now
 from strategy import Strategy
 
 
@@ -25,11 +26,9 @@ def monitor_open_trades(bot):
             ):
                 continue
 
-            open_time = trade.get("open_time")
-            if isinstance(open_time, str):
-                open_time = datetime.fromisoformat(open_time)
+            open_time = parse_datetime_utc(trade.get("open_time") or utc_now())
 
-            if datetime.now() - open_time < timedelta(minutes=15):
+            if utc_now() - open_time < timedelta(minutes=15):
                 # bot.log(f"⏳ COOLDOWN ({symbol}): Ignorando bailout por juventud del trade.")
                 continue
             # 1. Obtener datos frescos (Sello Institucional: solo 1H + 4H)
@@ -59,7 +58,7 @@ def monitor_open_trades(bot):
 
             # res return: (signal, mode, exit_price, prob_final, indicators, votos)
             prob_final = res[3]
-            duration = datetime.now() - open_time
+            duration = utc_now() - open_time
             elapsed_mins = duration.total_seconds() / 60
 
             # --- [V118] SMART EXIT: SALIDA POR DEGRADACIÓN ---

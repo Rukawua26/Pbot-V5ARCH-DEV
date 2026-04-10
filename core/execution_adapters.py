@@ -68,14 +68,28 @@ class ShadowExecutionAdapter:
         force_partial: bool = False,
         latency_ms: int = 0,
     ):
+        ack_mono = time.monotonic()
+        fill_after_mono = ack_mono + (max(0, int(latency_ms)) / 1000.0)
         partial = force_partial or (self._rng.random() < self._partial_fill_rate)
         if partial:
             ratio = self._rng.uniform(self._min_partial_ratio, 0.95)
-            filled = round(max(0.0, amount * ratio), 12)
+            partial_qty = round(max(0.0, amount * ratio), 12)
+            filled = partial_qty
             status = "open"
+            fill_plan = (
+                "partial_then_full"
+                if self._rng.random() < self._partial_fill_complete_rate
+                else "partial_stuck"
+            )
+            partial_after_mono = ack_mono
+            partial_mono = ack_mono
         else:
             filled = round(max(0.0, amount), 12)
             status = "closed"
+            fill_plan = "filled_on_ack"
+            partial_qty = 0.0
+            partial_after_mono = ack_mono
+            partial_mono = None
         return {
             "id": f"shadow-{uuid.uuid4().hex[:16]}",
             "symbol": symbol,
@@ -92,51 +106,63 @@ class ShadowExecutionAdapter:
                 "shadow": True,
                 "latency_profile": [self._min_latency_ms, self._max_latency_ms],
                 "simulated_latency_ms": latency_ms,
+                "shadow_ack_mono": ack_mono,
+                "shadow_fill_after_mono": fill_after_mono,
+                "shadow_fill_plan": fill_plan,
+                "shadow_partial_qty": partial_qty,
+                "shadow_partial_after_mono": partial_after_mono,
+                "shadow_partial_mono": partial_mono,
+                "shadow_full_mono": ack_mono if fill_plan == "filled_on_ack" else None,
             },
         }
 
-    def _finalize_partial_fill(self, order_id: str):
-        with self._lock:
-            order = self._orders_by_id.get(order_id)
-            if not isinstance(order, dict):
-                return
-            if str(order.get("status") or "").lower() != "open":
-                return
-            remaining = float(order.get("remaining") or 0.0)
-            if remaining <= 0.0:
-                return
+    def _advance_order_state(self, order: dict, now_mono: float):
+        if str(order.get("status") or "").lower() != "open":
+            return
 
-        latency_ms = int((order.get("info") or {}).get("simulated_latency_ms") or 0)
-        if latency_ms > 0:
-            self._sleep(latency_ms / 1000.0)
+        remaining = float(order.get("remaining") or 0.0)
+        if remaining <= 0.0:
+            return
 
-        with self._lock:
-            order = self._orders_by_id.get(order_id)
-            if not isinstance(order, dict):
-                return
-            if str(order.get("status") or "").lower() != "open":
-                return
-            remaining = float(order.get("remaining") or 0.0)
-            if remaining <= 0.0:
-                return
+        info = order.get("info") or {}
 
-            should_complete = self._rng.random() < self._partial_fill_complete_rate
-            if not should_complete:
-                return
+        fill_plan = str(info.get("shadow_fill_plan") or "")
+        if fill_plan == "filled_on_ack":
+            return
 
-            current_filled = float(order.get("filled") or 0.0)
-            current_avg = float(order.get("average") or order.get("price") or 0.0)
-            base_price = float(order.get("price") or current_avg or 0.0)
-            drift = self._rng.uniform(-0.0008, 0.0012)
-            fill_price = base_price * (1.0 + drift)
-            total_filled = current_filled + remaining
-            if total_filled > 0:
-                order["average"] = (
-                    (current_avg * current_filled) + (fill_price * remaining)
-                ) / total_filled
-            order["filled"] = total_filled
-            order["remaining"] = 0.0
-            order["status"] = "closed"
+        partial_mono = info.get("shadow_partial_mono")
+
+        if fill_plan != "partial_then_full":
+            return
+
+        if partial_mono is None:
+            return
+
+        full_after = float(info.get("shadow_fill_after_mono") or 0.0)
+        if now_mono < full_after:
+            return
+
+        current_filled = float(order.get("filled") or 0.0)
+        current_avg = float(order.get("average") or order.get("price") or 0.0)
+        base_price = float(order.get("price") or current_avg or 0.0)
+        drift = self._rng.uniform(-0.0008, 0.0012)
+        fill_price = base_price * (1.0 + drift)
+        total_filled = current_filled + remaining
+        if total_filled > 0:
+            order["average"] = (
+                (current_avg * current_filled) + (fill_price * remaining)
+            ) / total_filled
+        order["filled"] = total_filled
+        order["remaining"] = 0.0
+        order["status"] = "closed"
+        info["shadow_full_mono"] = now_mono
+        order["info"] = info
+
+    def _advance_orders_locked(self):
+        now_mono = time.monotonic()
+        for order in self._orders_by_id.values():
+            if isinstance(order, dict):
+                self._advance_order_state(order, now_mono)
 
     def create_precision_order(
         self,
@@ -184,13 +210,11 @@ class ShadowExecutionAdapter:
         with self._lock:
             self._orders_by_id[order["id"]] = order
 
-        if str(order.get("status") or "").lower() == "open":
-            self._executor.submit(self._finalize_partial_fill, order["id"])
-
         return dict(order)
 
     def fetch_open_orders(self, symbol: Optional[str] = None):
         with self._lock:
+            self._advance_orders_locked()
             orders = []
             for order in self._orders_by_id.values():
                 if str(order.get("status") or "").lower() != "open":
@@ -207,6 +231,7 @@ class ShadowExecutionAdapter:
 
     def fetch_order_by_client_id(self, symbol: str, client_order_id: str):
         with self._lock:
+            self._advance_orders_locked()
             for order in self._orders_by_id.values():
                 if str(order.get("symbol") or "") != symbol:
                     continue

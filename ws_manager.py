@@ -1,8 +1,10 @@
 import asyncio
-import websockets
 import json
+import random
 import threading
 import time
+
+import websockets
 
 
 class BinanceWebSocket:
@@ -49,11 +51,13 @@ class BinanceWebSocket:
     async def start(self):
         """Starts the WebSocket connection and maintains an infinite listening loop."""
         self._reconnect_flag = False
+        reconnect_delay = 2.0
         while self.is_running:
             try:
                 # Use \n to avoid mixing with the carriage return updates
                 async with websockets.connect(self.url) as ws:
                     self._reconnect_flag = False
+                    reconnect_delay = 2.0
                     while self.is_running and not self._reconnect_flag:
                         try:
                             message = await asyncio.wait_for(ws.recv(), timeout=10)
@@ -65,7 +69,9 @@ class BinanceWebSocket:
                 print(f"⚠️ WS reconnect loop error: {e}")
 
             if self.is_running:
-                await asyncio.sleep(2)
+                wait_s = reconnect_delay + random.uniform(0.0, 0.8)
+                await asyncio.sleep(wait_s)
+                reconnect_delay = min(reconnect_delay * 1.7, 30.0)
 
     def _process_data(self, data):
         """Extracts best bid/ask, calculates spread, and updates state."""

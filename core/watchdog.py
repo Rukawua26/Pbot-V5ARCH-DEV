@@ -1,27 +1,41 @@
 import json
 import os
-import time
+
+from core.time_utils import monotonic_now, utc_now
+
+
+DEFAULT_WATCHDOG_HEARTBEAT_PATH = "/dev/shm/sniper_ai_heartbeat.json"
+FALLBACK_WATCHDOG_HEARTBEAT_PATH = "/tmp/sniper_ai_heartbeat.json"
+
+
+def resolve_watchdog_heartbeat_path(path: str | None = None) -> str:
+    preferred = (
+        path or os.getenv("WATCHDOG_HEARTBEAT_PATH") or DEFAULT_WATCHDOG_HEARTBEAT_PATH
+    )
+    target_dir = os.path.dirname(preferred) or "."
+    if os.path.isdir(target_dir):
+        return preferred
+    return FALLBACK_WATCHDOG_HEARTBEAT_PATH
 
 
 def write_watchdog_heartbeat(
     bot,
-    path: str = "/dev/shm/sniper_ai_heartbeat.json",
+    path: str | None = None,
     min_interval_s: float = 15.0,
 ):
     """Escribe heartbeat de vida para watchdog externo (idempotente por intervalo)."""
-    now = time.time()
-    last = float(getattr(bot, "_watchdog_last_write_ts", 0.0) or 0.0)
-    if now - last < min_interval_s:
+    now_mono = monotonic_now()
+    last_mono = float(getattr(bot, "_watchdog_last_write_mono", 0.0) or 0.0)
+    if now_mono - last_mono < min_interval_s:
         return
 
-    target_path = path
+    target_path = resolve_watchdog_heartbeat_path(path)
     target_dir = os.path.dirname(target_path) or "."
-    if not os.path.isdir(target_dir):
-        target_path = "/tmp/sniper_ai_heartbeat.json"
-        target_dir = "/tmp"
 
+    now_utc = utc_now()
     payload = {
-        "ts": now,
+        "ts": now_utc.timestamp(),
+        "ts_iso": now_utc.isoformat(),
         "pid": os.getpid(),
         "status": "alive",
     }
@@ -33,4 +47,4 @@ def write_watchdog_heartbeat(
         os.fsync(handle.fileno())
 
     os.replace(tmp_path, target_path)
-    bot._watchdog_last_write_ts = now
+    bot._watchdog_last_write_mono = now_mono

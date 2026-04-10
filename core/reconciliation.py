@@ -1,11 +1,12 @@
 import hashlib
-import time
-from datetime import datetime
 
+from core.execution_telemetry import append_execution_event
 from notifier import send_telegram_msg
+from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 
 
 CLIENT_ORDER_PREFIX = "sai-v118"
+PENDING_SEND_STALE_SECONDS = 90
 
 
 def generate_client_order_id(
@@ -123,6 +124,7 @@ def reconcile_bootstrap_state(bot):
         adopted = 0
         lost = 0
         pending_open = 0
+        intent_expired = 0
 
         # Caso 1: posición en Exchange pero no en DB -> adopción forzosa
         missing_in_db = sorted(position_symbols - db_symbols)
@@ -135,7 +137,7 @@ def reconcile_bootstrap_state(bot):
                 "entry": info["entry"],
                 "amount": info["amount"],
                 "size_usd": info["entry"] * info["amount"],
-                "open_time": datetime.now(),
+                "open_time": utc_now_iso(),
                 "pnl": 0.0,
                 "is_shadow": False,
                 "simulated_real": False,
@@ -181,6 +183,7 @@ def reconcile_bootstrap_state(bot):
 
         # Caso 2: en DB abierta pero no en Exchange -> LOST_IN_TRANSMISSION
         safe_pending_symbols = set()
+        expired_symbols = set()
         for symbol in sorted(db_symbols - position_symbols):
             state = db_snapshot.get(symbol) or {}
             if not isinstance(state, dict):
@@ -188,6 +191,22 @@ def reconcile_bootstrap_state(bot):
             entry_coid = str(state.get("entry_client_order_id") or "")
             if not entry_coid:
                 continue
+
+            status = str(state.get("status") or "").upper()
+            intent_created = state.get("intent_created_at_utc") or state.get(
+                "open_time"
+            )
+            intent_age_seconds = None
+            if intent_created:
+                try:
+                    intent_age_seconds = max(
+                        0.0,
+                        (
+                            utc_now() - parse_datetime_utc(intent_created)
+                        ).total_seconds(),
+                    )
+                except Exception:
+                    intent_age_seconds = None
 
             exchange_order = None
             fetch_by_coid = getattr(bot.execution, "fetch_order_by_client_id", None)
@@ -202,7 +221,57 @@ def reconcile_bootstrap_state(bot):
             if exchange_order is None and entry_coid in open_orders_by_coid:
                 exchange_order = open_orders_by_coid[entry_coid]
 
+            state["intent_last_check_at_utc"] = utc_now_iso()
+            state["intent_check_attempts"] = (
+                int(state.get("intent_check_attempts", 0) or 0) + 1
+            )
+
             if exchange_order is None:
+                if status == "PENDING_SEND":
+                    stale_limit = float(
+                        getattr(
+                            bot,
+                            "pending_send_stale_seconds",
+                            PENDING_SEND_STALE_SECONDS,
+                        )
+                    )
+                    age = intent_age_seconds if intent_age_seconds is not None else 0.0
+
+                    if age < stale_limit:
+                        state.setdefault("intent_created_at_utc", utc_now_iso())
+                        safe_pending_symbols.add(symbol)
+                        with bot.lock:
+                            bot.active_trades[symbol] = state
+                        with bot.db_lock:
+                            bot.brain.save_active_trade_state(symbol, state)
+                        continue
+
+                    with bot.db_lock:
+                        bot.brain.save_error_snapshot(
+                            symbol,
+                            "INTENT_EXPIRED",
+                            {
+                                "entry_client_order_id": entry_coid,
+                                "age_seconds": round(float(age), 3),
+                                "stale_limit_seconds": stale_limit,
+                                "reconciliation_ts": utc_now_iso(),
+                            },
+                        )
+                        bot.brain.delete_active_trade_state(symbol)
+                    append_execution_event(
+                        bot,
+                        "INTENT_EXPIRED",
+                        {
+                            "symbol": symbol,
+                            "entry_client_order_id": entry_coid,
+                            "age_seconds": round(float(age), 3),
+                            "stale_limit_seconds": stale_limit,
+                        },
+                    )
+                    with bot.lock:
+                        bot.active_trades.pop(symbol, None)
+                    intent_expired += 1
+                    expired_symbols.add(symbol)
                 continue
             if not isinstance(exchange_order, dict):
                 continue
@@ -213,7 +282,10 @@ def reconcile_bootstrap_state(bot):
                 state["status"] = "PENDING_EXCHANGE_OPEN"
                 state["exchange_open_order_id"] = exchange_order.get("id")
                 state["exchange_open_order_status"] = exchange_order.get("status")
-                state["reconciled_at"] = datetime.now().isoformat()
+                state["reconciled_at"] = utc_now_iso()
+                state["intent_created_at_utc"] = (
+                    state.get("intent_created_at_utc") or utc_now_iso()
+                )
                 with bot.lock:
                     bot.active_trades[symbol] = state
                 with bot.db_lock:
@@ -224,20 +296,25 @@ def reconcile_bootstrap_state(bot):
                 state["status"] = "ENTRY_FILLED_AWAITING_POSITION_SYNC"
                 state["exchange_entry_order_id"] = exchange_order.get("id")
                 state["exchange_open_order_status"] = exchange_order.get("status")
-                state["reconciled_at"] = datetime.now().isoformat()
+                state["reconciled_at"] = utc_now_iso()
+                state["intent_created_at_utc"] = (
+                    state.get("intent_created_at_utc") or utc_now_iso()
+                )
                 with bot.lock:
                     bot.active_trades[symbol] = state
                 with bot.db_lock:
                     bot.brain.save_active_trade_state(symbol, state)
                 safe_pending_symbols.add(symbol)
 
-        missing_in_exchange = sorted((db_symbols - ex_symbols) - safe_pending_symbols)
+        missing_in_exchange = sorted(
+            ((db_symbols - ex_symbols) - safe_pending_symbols) - expired_symbols
+        )
         for symbol in missing_in_exchange:
             with bot.db_lock:
                 bot.brain.save_error_snapshot(
                     symbol,
                     "LOST_IN_TRANSMISSION",
-                    {"reconciliation_ts": datetime.now().isoformat()},
+                    {"reconciliation_ts": utc_now_iso()},
                 )
                 bot.brain.delete_active_trade_state(symbol)
             with bot.lock:
@@ -264,10 +341,10 @@ def reconcile_bootstrap_state(bot):
                 f"🛑 INTEGRITY_LOCK activado: diff={diff_pct:.3f}% local={local_balance:.2f} ex={exchange_balance:.2f}"
             )
 
-        if adopted or lost or pending_open:
+        if adopted or lost or pending_open or intent_expired:
             bot.log(
                 "🔁 Reconciliación bootstrap: "
-                f"adoptadas={adopted} | pending_open={pending_open} | lost_in_tx={lost}"
+                f"adoptadas={adopted} | pending_open={pending_open} | intent_expired={intent_expired} | lost_in_tx={lost}"
             )
 
     except Exception as e:
@@ -275,4 +352,4 @@ def reconcile_bootstrap_state(bot):
 
 
 def allocate_signal_timestamp() -> float:
-    return time.time()
+    return utc_now().timestamp()

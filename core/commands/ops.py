@@ -1,12 +1,15 @@
 import importlib.util
+import json
 import os
 import pickle
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from config import Config
 from notifier import send_telegram_msg
+from core.cooldown_state import persist_cooldowns
 
 
 def _help_message() -> str:
@@ -22,6 +25,7 @@ def _help_message() -> str:
         "• `/off` | `/pause`: Pausar sistema\n"
         "• `/panic`: Cierre de emergencia\n"
         "• `/unquarantine`: Resetear cooldown de pares\n\n"
+        "• `/force_clear [PAR]`: Liberar recovery bloqueado con verificación\n\n"
         "📊 *AUDITORÍA*\n"
         "• `/status`: Estado operativo actual\n"
         "• `/audit_report`: Auditoría últimos 100 trades\n"
@@ -29,6 +33,7 @@ def _help_message() -> str:
         "• `/targets`: Ver radar de objetivos\n"
         "• `/signals`: Distribución de señales\n"
         "• `/shadow_stats`: Estadísticas modo Shadow\n"
+        "• `/sre_intent`: SLA intents 1h/24h\n"
         "• `/tiers`: Señales por Tier\n"
         "• `/top`: Top señales por probabilidad\n"
         "• `/thresholds`: Umbrales actuales del motor 1H\n\n"
@@ -53,7 +58,95 @@ def _help_message() -> str:
         "• `/force_shadow` y `/clean`"
     )
 
+
 def _handle_misc_commands(bot, text: str) -> bool:
+    if text == "/sre_intent":
+        try:
+            events_path = Path("logs/execution_events.jsonl")
+            if not events_path.exists():
+                send_telegram_msg(
+                    "ℹ️ SRE Intent: aún no existe logs/execution_events.jsonl"
+                )
+                return True
+
+            now_utc = datetime.now(timezone.utc)
+            cut_1h = now_utc - timedelta(hours=1)
+            cut_24h = now_utc - timedelta(hours=24)
+
+            ack_1h = exp_1h = 0
+            ack_24h = exp_24h = 0
+
+            with events_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+
+                    event = str(row.get("event") or "")
+                    if event not in {"ENTRY_ORDER_ACK", "INTENT_EXPIRED"}:
+                        continue
+
+                    raw_ts = row.get("ts")
+                    if not raw_ts:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(str(raw_ts))
+                    except Exception:
+                        continue
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    else:
+                        ts = ts.astimezone(timezone.utc)
+
+                    if ts >= cut_24h:
+                        if event == "ENTRY_ORDER_ACK":
+                            ack_24h += 1
+                        else:
+                            exp_24h += 1
+                    if ts >= cut_1h:
+                        if event == "ENTRY_ORDER_ACK":
+                            ack_1h += 1
+                        else:
+                            exp_1h += 1
+
+            ratio_1h = (exp_1h / ack_1h * 100.0) if ack_1h > 0 else 0.0
+            ratio_24h = (exp_24h / ack_24h * 100.0) if ack_24h > 0 else 0.0
+
+            def _level(ratio: float) -> str:
+                if ratio >= 1.0:
+                    return "🚨 CRITICAL"
+                if ratio >= 0.5:
+                    return "⚠️ WARNING"
+                return "✅ OK"
+
+            api_weight_txt = "n/a"
+            if getattr(bot, "weight_tracker", None):
+                try:
+                    st = bot.weight_tracker.get_status()
+                    api_weight_txt = (
+                        f"{st.get('current_weight', 0)}/{st.get('limit', 2400)} "
+                        f"({st.get('usage_pct', 0.0):.1f}%)"
+                    )
+                except Exception:
+                    api_weight_txt = "error"
+
+            send_telegram_msg(
+                "🛡️ *SRE INTENT SLA*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"1h  • ACK={ack_1h} EXP={exp_1h} RATIO={ratio_1h:.2f}% {_level(ratio_1h)}\n"
+                f"24h • ACK={ack_24h} EXP={exp_24h} RATIO={ratio_24h:.2f}% {_level(ratio_24h)}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚖️ API Weight (1m): {api_weight_txt}\n"
+                "SLO: warning>=0.5% | critical>=1.0%"
+            )
+        except Exception as error:
+            send_telegram_msg(f"❌ Error /sre_intent: {error}")
+        return True
+
     if text == "/tiers":
         if not bot.scanner_history:
             send_telegram_msg("🕵️ *TIERS:* No hay señales en el radar todavía.")
@@ -67,11 +160,23 @@ def _handle_misc_commands(bot, text: str) -> bool:
 
         msg = "🏆 *SEÑALES POR TIER*\n\n"
         if tiers["ELITE"]:
-            msg += "💎 *ELITE*\n" + "\n".join([f"• {x}" for x in tiers["ELITE"][:10]]) + "\n\n"
+            msg += (
+                "💎 *ELITE*\n"
+                + "\n".join([f"• {x}" for x in tiers["ELITE"][:10]])
+                + "\n\n"
+            )
         if tiers["GOLD"]:
-            msg += "🥇 *GOLD*\n" + "\n".join([f"• {x}" for x in tiers["GOLD"][:10]]) + "\n\n"
+            msg += (
+                "🥇 *GOLD*\n"
+                + "\n".join([f"• {x}" for x in tiers["GOLD"][:10]])
+                + "\n\n"
+            )
         if tiers["SILVER"]:
-            msg += "🥈 *SILVER*\n" + "\n".join([f"• {x}" for x in tiers["SILVER"][:10]]) + "\n"
+            msg += (
+                "🥈 *SILVER*\n"
+                + "\n".join([f"• {x}" for x in tiers["SILVER"][:10]])
+                + "\n"
+            )
 
         if not tiers["ELITE"] and not tiers["GOLD"] and not tiers["SILVER"]:
             msg += "⚪ Solo señales IRON detectadas."
@@ -80,7 +185,9 @@ def _handle_misc_commands(bot, text: str) -> bool:
         return True
 
     if text == "/dump_db":
-        send_telegram_msg("📦 *EXPORTANDO BASE DE DATOS...*\nEsto puede tomar unos segundos.")
+        send_telegram_msg(
+            "📦 *EXPORTANDO BASE DE DATOS...*\nEsto puede tomar unos segundos."
+        )
         try:
             result = subprocess.run(
                 [sys.executable, "export_database.py"],
@@ -99,6 +206,7 @@ def _handle_misc_commands(bot, text: str) -> bool:
 
     return False
 
+
 def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
     if text in ["/train", "/force_train"]:
         send_telegram_msg("🧠 *FORZANDO ENTRENAMIENTO...*")
@@ -116,7 +224,10 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
             from ghost_trainer import train_ghost_brain
 
             train_ghost_brain()
-            if os.path.exists("ghost_brain.pkl") and os.path.getmtime("ghost_brain.pkl") > last_mtime:
+            if (
+                os.path.exists("ghost_brain.pkl")
+                and os.path.getmtime("ghost_brain.pkl") > last_mtime
+            ):
                 with open("ghost_brain.pkl", "rb") as handle:
                     bot.ghost_model = pickle.load(handle)
                 bot.brain.set_metadata("last_ghost_train", datetime.now())
@@ -138,7 +249,9 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
                 os.path.join(root, "tools", "ai_coach.py"),
                 os.path.join(root, "ai_coach.py"),
             ]
-            coach_path = next((path for path in coach_candidates if os.path.exists(path)), None)
+            coach_path = next(
+                (path for path in coach_candidates if os.path.exists(path)), None
+            )
             if not coach_path:
                 send_telegram_msg("ℹ️ AI Coach no disponible en este entorno.")
                 return True
@@ -228,6 +341,9 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
             with bot.lock:
                 cooldown_count = len(bot.cooldown_pairs)
                 bot.cooldown_pairs.clear()
+                if hasattr(bot, "cooldown_deadlines_mono"):
+                    bot.cooldown_deadlines_mono.clear()
+            persist_cooldowns(bot)
 
             blacklist_count = 0
             if hasattr(bot, "risk_engine") and bot.risk_engine is not None:
@@ -245,6 +361,83 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
             )
         except Exception as error:
             send_telegram_msg(f"❌ Error reseteando cooldowns: {error}")
+        return True
+
+    if text.startswith("/force_clear"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            send_telegram_msg(
+                "⚠️ Uso: /force_clear [SYMBOL] (ej: /force_clear BTC/USDT)"
+            )
+            return True
+
+        symbol = parts[1].strip().upper().replace(":USDT", "")
+        if "/" not in symbol:
+            if symbol.endswith("USDT") and len(symbol) > 4:
+                symbol = f"{symbol[:-4]}/USDT"
+            else:
+                symbol = f"{symbol}/USDT"
+
+        try:
+            with bot.lock:
+                state = dict((bot.active_trades or {}).get(symbol) or {})
+
+            if not state:
+                send_telegram_msg(
+                    f"ℹ️ {symbol}: no existe estado activo local para limpiar."
+                )
+                return True
+
+            entry_coid = str(state.get("entry_client_order_id") or "")
+            order_found = False
+            position_found = False
+
+            try:
+                for order in bot.execution.fetch_open_orders(symbol) or []:
+                    if not isinstance(order, dict):
+                        continue
+                    if str(order.get("clientOrderId") or "") == entry_coid:
+                        order_found = True
+                        break
+                if not order_found and entry_coid:
+                    lookup = getattr(bot.execution, "fetch_order_by_client_id", None)
+                    if callable(lookup):
+                        found = lookup(symbol, entry_coid)
+                        order_found = isinstance(found, dict)
+            except Exception:
+                order_found = False
+
+            try:
+                for pos in bot.execution.fetch_positions() or []:
+                    if not isinstance(pos, dict):
+                        continue
+                    norm = str(pos.get("symbol") or "").replace(":USDT", "")
+                    if norm != symbol:
+                        continue
+                    if abs(float(pos.get("contracts") or 0.0)) > 0:
+                        position_found = True
+                        break
+            except Exception:
+                position_found = False
+
+            if order_found or position_found:
+                send_telegram_msg(
+                    f"🛑 /force_clear cancelado en {symbol}: hay evidencia en Exchange "
+                    f"(open_order={int(order_found)} position={int(position_found)}). "
+                    "Ejecuta reconciliación, no limpieza manual."
+                )
+                return True
+
+            with bot.db_lock:
+                bot.brain.delete_active_trade_state(symbol)
+            with bot.lock:
+                bot.active_trades.pop(symbol, None)
+
+            send_telegram_msg(
+                f"🧹 FORCE CLEAR aplicado en {symbol}. Estado local y DB liberados sin evidencia en Exchange."
+            )
+        except Exception as error:
+            send_telegram_msg(f"❌ Error en /force_clear {symbol}: {error}")
         return True
 
     if text == "/thresholds":

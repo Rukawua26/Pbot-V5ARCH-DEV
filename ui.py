@@ -4,6 +4,7 @@ SNIPER AI v118-PRO - CONSOLE UI
 Sin Rich, prints simples con progreso de scan
 """
 
+import shutil
 from datetime import datetime
 from config import Config
 
@@ -25,6 +26,15 @@ class UI:
 
     def update(self, **kwargs):
         self.state.update(kwargs)
+
+    @staticmethod
+    def _fit_text(text, max_len):
+        value = str(text or "")
+        if max_len <= 0 or len(value) <= max_len:
+            return value
+        if max_len <= 3:
+            return value[:max_len]
+        return value[: max_len - 3] + "..."
 
     def _print_scanning(self):
         """Muestra el progreso del scan en curso"""
@@ -69,7 +79,16 @@ class UI:
         # Stats de la DB
         total_real = db_stats.get("total_real_trades", 0) if db_stats else 0
         total_shadow = db_stats.get("total_shadow_trades", 0) if db_stats else 0
-        wr = db_stats.get("win_rate", 0) if db_stats else 0
+        shadow_wr = (
+            db_stats.get("shadow_win_rate", db_stats.get("win_rate", 0))
+            if db_stats
+            else 0
+        )
+        real_wr = db_stats.get("real_win_rate", None) if db_stats else None
+        real_wr_str = f"{real_wr:.1f}%" if isinstance(real_wr, (int, float)) else "N/A"
+
+        term_width = max(shutil.get_terminal_size((120, 30)).columns, 70)
+        table_width = max(70, min(term_width, 180))
 
         # Header
         print("=" * 70)
@@ -79,7 +98,8 @@ class UI:
         # Balance y stats
         print(f"\n📊 CUENTA")
         print(f"   Balance: ${balance:.2f}")
-        print(f"   Win Rate: {wr:.1f}%")
+        print(f"   SHADOW WR: {shadow_wr:.1f}%")
+        print(f"   REAL WR: {real_wr_str}")
         print(f"   Real Trades Totales: {total_real} | Shadow Totales: {total_shadow}")
 
         # Trades activos
@@ -111,13 +131,13 @@ class UI:
 
         # Radar - símbolos escaneados
         print(f"\n📡 RADAR ({len(scanner)} pares)")
-        print("-" * 70)
+        print("-" * table_width)
         if scanner:
             # Header de la tabla
             print(
                 f"{'#':<3} {'SYMBOL':<12} {'SIG':<5} {'PROB':<7} {'RSI':<5} {'TREND':<6} {'TIER':<6} {'RESULT'}"
             )
-            print("-" * 70)
+            print("-" * table_width)
             for i, item in enumerate(scanner, 1):
                 sym = item.get("symbol", "?")
                 signal = item.get("signal", "?") or item.get("side", "?")
@@ -151,9 +171,12 @@ class UI:
                 rsi_str = f"{rsi_val:.0f}" if rsi_val else "?"
                 trend_str = trend[:5] if trend else "N/A"
 
-                print(
-                    f"{i:<3} {sym:<12} {sig:<5} {prob_str:<7} {rsi_str:>4}  {trend_str:<6} {mode:<6} {result[:30]}"
-                )
+                sym_str = self._fit_text(sym, 12)
+                prefix = f"{i:<3} {sym_str:<12} {sig:<5} {prob_str:<7} {rsi_str:>4}  {trend_str:<6} {mode:<6} "
+                result_width = max(24, table_width - len(prefix))
+                result_text = self._fit_text(result, result_width)
+
+                print(prefix + result_text)
         else:
             print("   🔄 Esperando datos del radar...")
 
@@ -167,11 +190,15 @@ class UI:
             print(f"\n🧠 MACHINE LEARNING")
             perf = ml.get("performance", {})
             if perf:
-                print(f"   Score: {perf.get('score', 0):.2f} | Precision: {perf.get('precision', 0):.2f}")
-            
+                print(
+                    f"   Score: {perf.get('score', 0):.2f} | Precision: {perf.get('precision', 0):.2f}"
+                )
+
             top = ml.get("top_symbols", [])
             if top:
-                top_str = ", ".join([f"{s['symbol']}({s['accuracy']:.0f}%)" for s in top[:3]])
+                top_str = ", ".join(
+                    [f"{s['symbol']}({s['accuracy']:.0f}%)" for s in top[:3]]
+                )
                 print(f"   Top: {top_str}")
 
         print("=" * 70)

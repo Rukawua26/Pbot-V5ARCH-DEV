@@ -27,6 +27,7 @@ class ExecutionService:
         self.weight_tracker = None
         self.last_hard_sl_error = ""
         self.last_entry_reject_error = ""
+        self._last_valid_balance: Optional[float] = None
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker
@@ -34,6 +35,29 @@ class ExecutionService:
     def _track_api_weight(self, endpoint: str, weight: int, category: str):
         if self.weight_tracker:
             self.weight_tracker.track(endpoint, weight, category)
+
+    def _track_emergency_stuck(
+        self, symbol: str, side: str, amount: float, order: dict
+    ):
+        """Emite telemetría de emergencia cuando posición queda atrapada en libro."""
+        self.logger.critical(
+            f"🚨 EMERGENCY_EXIT_STUCK | {symbol} | {side} | "
+            f"amount={amount} | order_id={order.get('id', 'N/A')}"
+        )
+        # Notificación Telegram de emergencia
+        try:
+            from notifier import send_telegram_msg
+
+            send_telegram_msg(
+                f"🚨 *EMERGENCY_EXIT_STUCK*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔹 *{symbol}* ({side})\n"
+                f"💰 Amount: {amount}\n"
+                f"📋 Order ID: {order.get('id', 'N/A')}\n"
+                f"⚠️ *INTERVENCIÓN MANUAL REQUERIDA*"
+            )
+        except Exception:
+            pass
 
     def has_markets_loaded(self) -> bool:
         try:
@@ -163,7 +187,18 @@ class ExecutionService:
 
     def set_leverage(self, leverage, symbol):
         try:
-            result = self.exchange.set_leverage(leverage, symbol)
+            requested_leverage = leverage
+            try:
+                bounded_leverage = int(float(leverage))
+            except (TypeError, ValueError):
+                bounded_leverage = int(getattr(Config, "LEVERAGE", 10))
+            bounded_leverage = max(1, min(bounded_leverage, 10))
+            if str(bounded_leverage) != str(requested_leverage):
+                self.logger.warning(
+                    f"⚠️ Leverage ajustado por guardrail: {requested_leverage}x -> {bounded_leverage}x ({symbol})"
+                )
+
+            result = self.exchange.set_leverage(bounded_leverage, symbol)
             self._track_api_weight("set_leverage", 1, "trading")
             return result
         except Exception as e:
@@ -225,23 +260,58 @@ class ExecutionService:
             return None
 
     def get_balance(self) -> float:
-        try:
-            balance: CCXTBalanceResponse = self.exchange.fetch_balance()
-            self._track_api_weight("fetch_balance", 5, "account")
+        last_error = None
 
-            # [FIX] Prioridad a 'totalWalletBalance' nativo de Futuros para mayor precisión
-            info = balance.get("info", {})
-            total_wallet = info.get("totalWalletBalance")
+        for attempt in range(2):
+            try:
+                balance: CCXTBalanceResponse = self.exchange.fetch_balance()
+                self._track_api_weight("fetch_balance", 5, "account")
 
-            if total_wallet is not None:
-                return float(total_wallet)
+                info = balance.get("info", {})
+                total_wallet = info.get("totalWalletBalance")
+                if total_wallet is not None:
+                    parsed = float(total_wallet)
+                    self._last_valid_balance = parsed
+                    return parsed
 
-            # Fallback a lectura estándar de CCXT
-            total = balance.get("total", {})
-            return float(total.get("USDT", 0.0))
-        except Exception as e:
-            self.logger.error(f"Error fetching balance: {e}")
-            return 0.0
+                total = balance.get("total", {})
+                parsed = float(total.get("USDT", 0.0))
+                self._last_valid_balance = parsed
+                return parsed
+            except Exception as e:
+                last_error = e
+                msg = str(e)
+                timestamp_error = (
+                    "-1021" in msg
+                    or "recvWindow" in msg
+                    or "Timestamp for this request is outside of the recvWindow" in msg
+                )
+
+                if timestamp_error and attempt == 0:
+                    self.logger.warning(
+                        "⚠️ Error de timestamp detectado al leer balance. Re-sincronizando reloj con Binance y reintentando..."
+                    )
+                    try:
+                        if hasattr(self.exchange, "load_time_difference"):
+                            self.exchange.load_time_difference()
+                        elif hasattr(self.exchange, "fetch_time"):
+                            self.exchange.fetch_time()
+                    except Exception as sync_error:
+                        self.logger.warning(
+                            f"⚠️ No se pudo sincronizar diferencia horaria: {sync_error}"
+                        )
+                    time.sleep(0.35)
+                    continue
+
+                break
+
+        self.logger.error(f"Error fetching balance: {last_error}")
+        if self._last_valid_balance is not None:
+            self.logger.warning(
+                f"⚠️ Usando último balance válido en caché: ${self._last_valid_balance:.2f}"
+            )
+            return float(self._last_valid_balance)
+        return 0.0
 
     def place_hard_sl(
         self,
@@ -274,7 +344,12 @@ class ExecutionService:
     def close_position(
         self, symbol: str, side: str, amount: float
     ) -> Optional[CCXTOrder]:
-        """Cierra una posición abierta inmediatamente vía MARKET order."""
+        """
+        [v119-CHASE-LIMIT] Cierra posición con Chase Limit + Hard Floor.
+        - -2% inicial, persigue hasta -5% (Hard Floor)
+        - Si Hard Floor no llena: deja orden en libro + EMERGENCY_EXIT_STUCK
+        - NUNCA fallback a MARKET
+        """
         try:
             exit_side = "sell" if side.lower() == "buy" else "buy"
             params = {"reduceOnly": True}
@@ -288,11 +363,101 @@ class ExecutionService:
                     f"⚠️ No se pudieron cancelar órdenes previas en {symbol}: {error}"
                 )
 
-            order = self.exchange.create_order(
-                symbol, "market", exit_side, amount, None, params
+            # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
+            current_price = float(
+                (self.exchange.fetch_ticker(symbol) or {}).get("last", 0) or 0
             )
-            self._track_api_weight("create_order", 1, "trading")
-            return order
+
+            if current_price > 0:
+                # Estrategia de persecución
+                CHASE_STEPS = [0.98, 0.97, 0.96, 0.95]  # -2%, -3%, -4%, -5%
+                HARD_FLOOR_PCT = 0.05  # -5% máximo
+                TIMEOUT_PER_STEP = 2  # segundos por paso
+
+                last_order = None
+                for step_idx, step_mult in enumerate(CHASE_STEPS):
+                    limit_price = (
+                        current_price * step_mult
+                        if exit_side == "sell"
+                        else current_price * (2 - step_mult)
+                    )
+                    try:
+                        limit_price = self.exchange.price_to_precision(
+                            symbol, limit_price
+                        )
+                        order = self.exchange.create_order(
+                            symbol, "limit", exit_side, amount, limit_price, params
+                        )
+                        self._track_api_weight("create_order", 1, "trading")
+                        last_order = order
+
+                        # Esperar fill con timeout
+                        start_wait = time.time()
+                        while time.time() - start_wait < TIMEOUT_PER_STEP:
+                            try:
+                                status = self.exchange.fetch_order(order["id"], symbol)
+                                if status.get("status") in ["closed", "filled"]:
+                                    self.logger.info(
+                                        f"✅ CHASE_LIMIT OK {symbol} @ {limit_price} "
+                                        f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
+                                    )
+                                    return order
+                            except:
+                                break
+                            time.sleep(0.5)
+
+                        # Timeout en este step → siguiente persecución
+                        self.logger.warning(
+                            f"⏳ Chase step {step_idx + 1} timeout {symbol} @ {limit_price}, "
+                            f"persiguiendo..."
+                        )
+                        self.exchange.cancel_order(order["id"], symbol)
+
+                    except Exception as step_err:
+                        self.logger.warning(
+                            f"⚠️ Chase step {step_idx + 1} falló {symbol}: {step_err}"
+                        )
+                        continue
+
+                # [HARD FLOOR] Si llegó aquí, ningún step llenó
+                # Dejar la última orden en el libro y marcar EMERGENCY_EXIT_STUCK
+                if last_order:
+                    self.logger.critical(
+                        f"🚨 HARD_FLOOR_REACHED {symbol}: posición atrapada en libro @ "
+                        f"{last_order.get('price', 'N/A')}. Alerta manual requerida."
+                    )
+                    # Emitir evento de telemetría de emergencia
+                    self._track_emergency_stuck(symbol, exit_side, amount, last_order)
+                    return last_order
+                else:
+                    # Si ninguna orden se creó, intentar una última orden al precio actual
+                    # como último recurso (sin slippage protection, pero sin MARKET)
+                    self.logger.warning(
+                        f"⚠️ Sin fill tras persecución {symbol}, ordenando al precio actual"
+                    )
+                    try:
+                        market = self.exchange.market(symbol)
+                        emergency_price = self.exchange.price_to_precision(
+                            symbol, current_price
+                        )
+                        order = self.exchange.create_order(
+                            symbol, "limit", exit_side, amount, emergency_price, params
+                        )
+                        self._track_api_weight("create_order", 1, "trading")
+                        return order
+                    except Exception as emergency_err:
+                        self.logger.critical(
+                            f"❌ EMERGENCY_EXIT_FAILED {symbol}: {emergency_err}"
+                        )
+                        return None
+            else:
+                # Sin precio disponible → NO ejecutar (evitar slippage ciego)
+                self.logger.critical(
+                    f"🛑 NO_PRICE {symbol}: No hay precio para ejecutar salida. "
+                    f"Posición queda abierta para intervención manual."
+                )
+                return None
+
         except Exception as e:
             self.logger.error(f"❌ Error cerrando posición {symbol}: {e}")
             raise e
@@ -301,12 +466,13 @@ class ExecutionService:
         self, symbol: str, side: str, amount: float
     ) -> Optional[CCXTOrder]:
         """
-        [V118-SMART-EXIT]
-        Cierra una posición inmediatamente cuando la confianza predictiva de la IA decae
-        por debajo de niveles operativos. Cancela toda orden latente (SL/TP) y lanza MARKET.
+        [v119-CHASE-LIMIT] Cierra por degradación neuronal con Chase Limit + Hard Floor.
+        - -2% inicial, persigue hasta -5% (Hard Floor)
+        - Si Hard Floor no llena: deja orden en libro + EMERGENCY_EXIT_STUCK
+        - NUNCA fallback a MARKET
         """
         self.logger.warning(
-            f"⚠️ [SMART EXIT] Forzando cierre MARKET por degradación neuronal en {symbol} ({side})"
+            f"⚠️ [SMART EXIT] Chase Limit (-2%→-5%) por degradación neuronal en {symbol} ({side})"
         )
         try:
             exit_side = "sell" if side.lower() == "buy" else "buy"
@@ -321,12 +487,88 @@ class ExecutionService:
                     f"Error cancelando órdenes previas al SMART EXIT {symbol}: {e}"
                 )
 
-            # Cierre Definitivo Táctico
-            order = self.exchange.create_order(
-                symbol, "market", exit_side, amount, None, params
+            # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
+            current_price = float(
+                (self.exchange.fetch_ticker(symbol) or {}).get("last", 0) or 0
             )
-            self._track_api_weight("create_order", 1, "trading")
-            return order
+
+            if current_price > 0:
+                CHASE_STEPS = [0.98, 0.97, 0.96, 0.95]
+                HARD_FLOOR_PCT = 0.05
+                TIMEOUT_PER_STEP = 2
+
+                last_order = None
+                for step_idx, step_mult in enumerate(CHASE_STEPS):
+                    limit_price = (
+                        current_price * step_mult
+                        if exit_side == "sell"
+                        else current_price * (2 - step_mult)
+                    )
+                    try:
+                        limit_price = self.exchange.price_to_precision(
+                            symbol, limit_price
+                        )
+                        order = self.exchange.create_order(
+                            symbol, "limit", exit_side, amount, limit_price, params
+                        )
+                        self._track_api_weight("create_order", 1, "trading")
+                        last_order = order
+
+                        start_wait = time.time()
+                        while time.time() - start_wait < TIMEOUT_PER_STEP:
+                            try:
+                                status = self.exchange.fetch_order(order["id"], symbol)
+                                if status.get("status") in ["closed", "filled"]:
+                                    self.logger.info(
+                                        f"✅ CHASE_DEGRADATION OK {symbol} @ {limit_price} "
+                                        f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
+                                    )
+                                    return order
+                            except:
+                                break
+                            time.sleep(0.5)
+
+                        self.logger.warning(
+                            f"⏳ Chase step {step_idx + 1} timeout {symbol} @ {limit_price}"
+                        )
+                        self.exchange.cancel_order(order["id"], symbol)
+
+                    except Exception as step_err:
+                        self.logger.warning(
+                            f"⚠️ Chase step {step_idx + 1} falló {symbol}: {step_err}"
+                        )
+                        continue
+
+                # [HARD FLOOR] Ningún step llenó
+                if last_order:
+                    self.logger.critical(
+                        f"🚨 HARD_FLOOR_REACHED (degradation) {symbol}: posición atrapada @ "
+                        f"{last_order.get('price', 'N/A')}. Intervención manual."
+                    )
+                    self._track_emergency_stuck(symbol, exit_side, amount, last_order)
+                    return last_order
+                else:
+                    # Último recurso: precio actual
+                    try:
+                        emergency_price = self.exchange.price_to_precision(
+                            symbol, current_price
+                        )
+                        order = self.exchange.create_order(
+                            symbol, "limit", exit_side, amount, emergency_price, params
+                        )
+                        self._track_api_weight("create_order", 1, "trading")
+                        return order
+                    except Exception as emergency_err:
+                        self.logger.critical(
+                            f"❌ EMERGENCY_EXIT_FAILED (degradation) {symbol}: {emergency_err}"
+                        )
+                        return None
+            else:
+                self.logger.critical(
+                    f"🛑 NO_PRICE {symbol}: Degradación sin precio. Posiciónabierta."
+                )
+                return None
+
         except Exception as e:
             self.logger.critical(
                 f"❌ FATAL ERROR ejecutando Salida por Degradación en {symbol}: {e}"

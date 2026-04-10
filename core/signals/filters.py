@@ -1,6 +1,14 @@
-from datetime import datetime
-
 from config import Config
+from core.cooldown_state import is_symbol_in_cooldown
+from core.time_utils import utc_now, utc_now_iso
+from strategy import Strategy
+
+
+def _normalize_filter_reason(reason):
+    text = str(reason or "").strip()
+    if text.upper().startswith("VETO:"):
+        text = text.split(":", 1)[1].strip()
+    return text
 
 
 def _apply_entry_filters_and_adjust_prob(
@@ -10,7 +18,7 @@ def _apply_entry_filters_and_adjust_prob(
     # Aplicar filtros de RSI, ADX y horario antes de evaluar
     rsi_val = ctx.get("rsi", 50)
     adx_val = ctx.get("adx", 20)
-    current_time = datetime.now()
+    current_time = utc_now()
     volatility_val = ctx.get("atr_pct", 0)
 
     # [v118] Determinar prospecto de modo (Shadow/Real) para bypass de filtros
@@ -99,7 +107,7 @@ def _apply_entry_filters_and_adjust_prob(
     base_sym = symbol.split("/")[0]
     if symbol in blacklist or base_sym in [b.split("/")[0] for b in blacklist]:
         filter_passed = False
-        filter_reason = f"VETO: Símbolo en blacklist ({symbol})"
+        filter_reason = f"Símbolo en blacklist ({symbol})"
         bot.log(f"⛔ {symbol} vetado: en blacklist")
 
     # Aplicar pesos de día/hora a la probabilidad IA
@@ -241,7 +249,7 @@ def _plan_execution_mode(
             should_execute = False
             filter_passed = False
             filter_reason = "COHERENCIA: SELL bloqueado en régimen ALCISTA"
-            audit_verdict = f"⛔ VETO: {filter_reason}"
+            audit_verdict = f"⛔ VETO: {_normalize_filter_reason(filter_reason)}"
             if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)) and bool(
                 getattr(Config, "BREAKOUT_WATCH_COHERENCE_ENABLED", True)
             ):
@@ -278,7 +286,7 @@ def _plan_execution_mode(
             should_execute = False
             filter_passed = False
             filter_reason = "COHERENCIA: BUY bloqueado en régimen BAJISTA"
-            audit_verdict = f"⛔ VETO: {filter_reason}"
+            audit_verdict = f"⛔ VETO: {_normalize_filter_reason(filter_reason)}"
             if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)) and bool(
                 getattr(Config, "BREAKOUT_WATCH_COHERENCE_ENABLED", True)
             ):
@@ -366,7 +374,7 @@ def _resolve_audit_verdict_and_stats(
     )
 
     if not filter_passed:
-        audit_verdict = f"⛔ VETO: {filter_reason}"
+        audit_verdict = f"⛔ VETO: {_normalize_filter_reason(filter_reason)}"
         if bool(ctx.get("breakout_ready", False)):
             audit_verdict += " | 👁️ BREAKOUT READY"
         bot.log(f"⛔ {symbol} vetado: {filter_reason}")
@@ -378,7 +386,7 @@ def _resolve_audit_verdict_and_stats(
 
     if ml_pure_prob >= 75.0 and "VETO" in audit_verdict:
         conflict_msg = (
-            f"[A/B TEST CONFLICT] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {symbol} | "
+            f"[A/B TEST CONFLICT] {utc_now_iso()} | {symbol} | "
             f"ML_CONFIDENCE: {ml_pure_prob:.1f}% -> QUERÍA OPERAR ({audit_signal}) PERO FUE VETADO POR: {audit_verdict}\n"
         )
         try:
@@ -388,7 +396,7 @@ def _resolve_audit_verdict_and_stats(
             bot.log(f"⚠️ No se pudo registrar conflicto A/B en {symbol}: {error}")
     elif ml_pure_prob < 50.0 and ("OK" in audit_verdict or "SHADOW" in audit_verdict):
         conflict_msg = (
-            f"[A/B TEST CONFLICT] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {symbol} | "
+            f"[A/B TEST CONFLICT] {utc_now_iso()} | {symbol} | "
             f"ML_CONFIDENCE: {ml_pure_prob:.1f}% -> QUERÍA ABORTAR PERO REGLAS APROBARON OPERAR ({audit_signal})\n"
         )
         try:
@@ -397,10 +405,8 @@ def _resolve_audit_verdict_and_stats(
         except Exception as error:
             bot.log(f"⚠️ No se pudo registrar conflicto A/B en {symbol}: {error}")
 
-    if symbol in bot.cooldown_pairs and datetime.now() < bot.cooldown_pairs[symbol]:
-        remaining = (
-            int((bot.cooldown_pairs[symbol] - datetime.now()).total_seconds() / 60) + 1
-        )
+    in_cd, remaining = is_symbol_in_cooldown(bot, symbol)
+    if in_cd:
         audit_verdict = f"❄️ COOLDOWN ({remaining}m)"
 
     if (

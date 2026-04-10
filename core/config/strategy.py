@@ -49,7 +49,10 @@ class StrategyConfig:
     SHADOW_PROB_MIN = 0.55
     REAL_CONFIDENCE_THRESHOLD = 0.70
 
-    # --- STOP LOSS Y TAKE PROFIT ---
+    # --- STOP LOSS Y TAKE PROFIT (ATR DINÁMICO v119) ---
+    # [RIESGO/BENEFICIO INVERTIDO] SL = 1.5x ATR (antes 3.0x)
+    # [RIESGO/BENEFICIO INVERTIDO] TP Trailing = 2.0x ATR (antes 2.0x)
+    # Objetivos: ganancias promedio +3%, pérdidas -1.5%
     ATR_SL_MULTIPLIER_RANGE = 0.2
     ATR_SL_MULTIPLIER_TREND = 1.0
     ATR_TP_MULTIPLIER_RANGE = 1.2
@@ -58,19 +61,19 @@ class StrategyConfig:
     TRAILING_ACTIVATION_PNL = 0.80
     EARLY_BREAKEVEN_ACTIVATION_PNL = 1.5
     TRAILING_BREAKEVEN_PNL = 2.0
-    TRAILING_BREAKEVEN_PULLBACK = 1.0  # Subido de 0.8 para dar más aire
+    TRAILING_BREAKEVEN_PULLBACK = 1.0
     TRAILING_ATR_MULTIPLIER = 2.5
 
     DYNAMIC_SL_TP = True
-    STOP_LOSS_ATR_MODIFIER = 3.0  # Master SL Multiplier
-    ATR_SL_MULTIPLIER = 3.0  # Deprecated, use STOP_LOSS_ATR_MODIFIER
-    ATR_TP1_MULTIPLIER = 2.0
-    ATR_TP2_MULTIPLIER = 4.0
+    STOP_LOSS_ATR_MODIFIER = 1.5  # [v119] SL dinámico: Entry - 1.5x ATR
+    ATR_SL_MULTIPLIER = 1.5  # Deprecated, use STOP_LOSS_ATR_MODIFIER
+    ATR_TP1_MULTIPLIER = 2.0  # [v119] Trailing activo a Entry + 2.0x ATR
+    ATR_TP2_MULTIPLIER = 4.0  # TP2 para exits parciales
 
-    TP1_ENABLED = True
+    TP1_ENABLED = False
     TP1_PERCENT = 50
     TP1_LEVEL = 1.8
-    TP2_ENABLED = True
+    TP2_ENABLED = False
     TP2_PERCENT = 50
     TP2_LEVEL = 3.6
 

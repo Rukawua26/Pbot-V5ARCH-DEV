@@ -1,9 +1,9 @@
-from datetime import datetime
 import time
 
 import pandas as pd
 
 from config import Config
+from core.cooldown_state import is_symbol_in_cooldown
 from core.signals.analyze import _analyze_symbol_candidate
 from core.signals.context import _build_symbol_context, _update_signal_diagnostics
 from core.signals.execution import _execute_and_update_symbol
@@ -45,9 +45,7 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 f"🔌 VETO LATENCIA: {symbol} tardó {elapsed}ms. "
                 f"Cuarentena de {int(latency_quarantine_seconds / 60)} min."
             )
-            bot.latency_quarantine[symbol] = (
-                time.time() + latency_quarantine_seconds
-            )
+            bot.latency_quarantine[symbol] = time.time() + latency_quarantine_seconds
             bot.update_radar(
                 symbol,
                 {"signal": "WAIT", "mode": "NONE"},
@@ -59,7 +57,9 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
             )
             continue
 
-        analysis = bot._analyze_symbol_candidate(symbol_raw, symbol, df_main, df_4h, elapsed)
+        analysis = bot._analyze_symbol_candidate(
+            symbol_raw, symbol, df_main, df_4h, elapsed
+        )
         if analysis is None:
             continue
 
@@ -103,22 +103,22 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 audit_signal,
             )
 
-            prob_final, filter_passed, filter_reason, ctx = bot._apply_entry_filters_and_adjust_prob(
-                symbol=symbol,
-                symbol_raw=symbol_raw,
-                df_main=df_main,
-                audit_signal=audit_signal,
-                prob_final=prob_final,
-                ctx=ctx,
-                vol_rel=vol_rel,
+            prob_final, filter_passed, filter_reason, ctx = (
+                bot._apply_entry_filters_and_adjust_prob(
+                    symbol=symbol,
+                    symbol_raw=symbol_raw,
+                    df_main=df_main,
+                    audit_signal=audit_signal,
+                    prob_final=prob_final,
+                    ctx=ctx,
+                    vol_rel=vol_rel,
+                )
             )
 
             # --- Telemetría ML UI ---
             bot.last_ml_confidence = prob_final
             ml_pure_prob = votos.get("G", 50.0)
-            bot.last_ghost_weight = getattr(
-                bot, "ghost_weight_override", 35.0
-            )
+            bot.last_ghost_weight = getattr(bot, "ghost_weight_override", 35.0)
 
             audit_verdict = bot._resolve_audit_verdict_and_stats(
                 symbol=symbol,
@@ -193,19 +193,8 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
 
             # --- COOLDOWN UNIVERSAL (INSTRUCCIÓN 2) ---
             # Verificar cooldown sin importar si es Shadow o Real
-            if (
-                symbol in bot.cooldown_pairs
-                and datetime.now() < bot.cooldown_pairs[symbol]
-            ):
-                remaining = (
-                    int(
-                        (
-                            bot.cooldown_pairs[symbol] - datetime.now()
-                        ).total_seconds()
-                        / 60
-                    )
-                    + 1
-                )
+            in_cd, remaining = is_symbol_in_cooldown(bot, symbol)
+            if in_cd:
                 bot.log(f"❄️ COOLDOWN {symbol}: {remaining}m restantes")
                 bot.update_radar(
                     symbol_raw,
@@ -217,7 +206,13 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 )
                 continue
 
-            should_execute, is_shadow_exec, audit_verdict, filter_passed, filter_reason = bot._plan_execution_mode(
+            (
+                should_execute,
+                is_shadow_exec,
+                audit_verdict,
+                filter_passed,
+                filter_reason,
+            ) = bot._plan_execution_mode(
                 symbol=symbol,
                 audit_signal=audit_signal,
                 prob_final=prob_final,

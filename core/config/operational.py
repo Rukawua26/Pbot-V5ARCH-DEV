@@ -38,6 +38,7 @@ class OperationalConfig:
         os.getenv("SHADOW_SIM_MIN_PARTIAL_RATIO", "0.30")
     )
     PARTIAL_FILL_TIMEOUT_SECONDS = int(os.getenv("PARTIAL_FILL_TIMEOUT_SECONDS", "300"))
+    PENDING_SEND_STALE_SECONDS = int(os.getenv("PENDING_SEND_STALE_SECONDS", "90"))
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY
@@ -70,13 +71,17 @@ class OperationalConfig:
     }
 
     # --- SISTEMA DE TRIAJE CINÉTICO ---
+    # [FASE 1: ESCUDO TÉRMICO] Filtros de Liquidez
     TOP_TRIAGE_COUNT = 50
-    TRIAGE_SPREAD_MAX = 0.005
+    TRIAGE_SPREAD_MAX = 0.0015  # 0.15% max spread (anti-slippage)
     TRIAGE_TIMEOUT_SECONDS = 4
-    TRIAGE_MIN_VOL_24H = 10_000_000
+    TRIAGE_MIN_VOL_24H = 15_000_000  # $15M mínimo (filtro anti-basura)
     TRIAGE_RVOL_EMA_ALPHA = 0.02
     LATENCY_VETO_MS = 4500
     LATENCY_QUARANTINE_SECONDS = 300
+
+    # [FASE 2: GATILLO SEGURO] Filtros de Pre-Ejecución
+    ENTRY_SPREAD_VETO_THRESHOLD = 0.0015  # 0.15% - veto si >
 
     # --- CONTROLES TÁCTICOS POR SÍMBOLO (Decision Matrix) ---
     SYMBOL_CONTROLS_REFRESH_SECONDS = int(

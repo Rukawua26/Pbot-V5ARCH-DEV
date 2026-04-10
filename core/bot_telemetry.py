@@ -7,6 +7,8 @@ def collect_telemetry(bot, logger):
             maturity = bot.brain.get_ai_maturity()
             brain_stats = bot.brain.get_stats()
             pnl_data = bot.brain.get_daily_real_pnl(bot.balance)
+            shadow_wr = brain_stats.get("shadow_win_rate", 50.0)
+            real_wr = brain_stats.get("real_win_rate")
 
             stats.update(
                 {
@@ -17,7 +19,9 @@ def collect_telemetry(bot, logger):
                     else pnl_data,
                     "total_real_trades": brain_stats.get("total_trades", 0),
                     "total_shadow_trades": brain_stats.get("shadow_trades", 0),
-                    "win_rate": brain_stats.get("shadow_win_rate", 50.0),
+                    "win_rate": shadow_wr,
+                    "shadow_win_rate": shadow_wr,
+                    "real_win_rate": real_wr,
                 }
             )
 

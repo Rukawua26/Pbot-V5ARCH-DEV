@@ -119,6 +119,67 @@ class ExecutionAdapterContractTest(unittest.TestCase):
         open_later = adapter.fetch_open_orders("BTC/USDT")
         self.assertFalse(any(o.get("id") == order.get("id") for o in open_later))
 
+    def test_shadow_fill_monotonic_markers_never_precede_ack(self):
+        live = _FakeExecutionService("k", "s")
+        adapter = ShadowExecutionAdapter(
+            live,
+            min_latency_ms=40,
+            max_latency_ms=40,
+            reject_rate=0.0,
+            partial_fill_rate=1.0,
+            partial_fill_complete_rate=1.0,
+            min_partial_ratio=0.5,
+            random_source=random.Random(11),
+        )
+
+        order = adapter.create_precision_order(
+            "BTC/USDT", "BUY", amount=2.0, price=100.0, client_order_id="cid-causal-1"
+        )
+        self.assertIsInstance(order, dict)
+        order = order or {}
+        ack_mono = float((order.get("info") or {}).get("shadow_ack_mono") or 0.0)
+        self.assertGreater(ack_mono, 0.0)
+
+        partial = adapter.fetch_order_by_client_id("BTC/USDT", "cid-causal-1") or {}
+        partial_info = partial.get("info") or {}
+        partial_mono = partial_info.get("shadow_partial_mono")
+        self.assertIsNotNone(partial_mono)
+        self.assertGreaterEqual(float(partial_mono), ack_mono)
+
+        time.sleep(0.06)
+        closed = adapter.fetch_order_by_client_id("BTC/USDT", "cid-causal-1") or {}
+        closed_info = closed.get("info") or {}
+        full_mono = closed_info.get("shadow_full_mono")
+        self.assertIsNotNone(full_mono)
+        self.assertGreaterEqual(float(full_mono), ack_mono)
+
+    def test_partial_then_full_never_skips_intermediate_partial_state(self):
+        live = _FakeExecutionService("k", "s")
+        adapter = ShadowExecutionAdapter(
+            live,
+            min_latency_ms=20,
+            max_latency_ms=20,
+            reject_rate=0.0,
+            partial_fill_rate=1.0,
+            partial_fill_complete_rate=1.0,
+            min_partial_ratio=0.5,
+            random_source=random.Random(13),
+        )
+
+        order = adapter.create_precision_order(
+            "BTC/USDT", "BUY", amount=2.0, price=100.0, client_order_id="cid-causal-2"
+        )
+        self.assertIsInstance(order, dict)
+        order = order or {}
+        self.assertEqual(str(order.get("status") or "").lower(), "open")
+        self.assertGreater(float(order.get("filled") or 0.0), 0.0)
+        self.assertGreater(float(order.get("remaining") or 0.0), 0.0)
+
+        time.sleep(0.06)
+        second_poll = adapter.fetch_order_by_client_id("BTC/USDT", "cid-causal-2") or {}
+        self.assertEqual(str(second_poll.get("status") or "").lower(), "closed")
+        self.assertEqual(float(second_poll.get("remaining") or 0.0), 0.0)
+
     def test_shadow_adapter_sets_immediate_trigger_error_for_invalid_sl(self):
         live = _FakeExecutionService("k", "s")
         adapter = ShadowExecutionAdapter(

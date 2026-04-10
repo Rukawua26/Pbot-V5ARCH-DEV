@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Watchdog externo para Sniper AI.
 
-Si el heartbeat en /dev/shm no se actualiza dentro del umbral, reinicia el servicio.
+Si el heartbeat no se actualiza dentro del umbral, reinicia el servicio.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+from core.watchdog import resolve_watchdog_heartbeat_path
 
 
 def read_heartbeat_ts(path: Path) -> float:
@@ -26,12 +28,12 @@ def read_heartbeat_ts(path: Path) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sniper AI external watchdog")
-    parser.add_argument("--heartbeat", default="/dev/shm/sniper_ai_heartbeat.json")
+    parser.add_argument("--heartbeat", default="")
     parser.add_argument("--service", default="sniper-ai.service")
     parser.add_argument("--stale-seconds", type=int, default=45)
     args = parser.parse_args()
 
-    heartbeat_path = Path(args.heartbeat)
+    heartbeat_path = Path(resolve_watchdog_heartbeat_path(args.heartbeat or None))
     ts = read_heartbeat_ts(heartbeat_path)
     now = time.time()
 
@@ -44,9 +46,14 @@ def main() -> int:
         f"[ALERT] Heartbeat stale/missing. ts={ts:.3f}, now={now:.3f}, stale_s={args.stale_seconds}"
     )
 
+    systemctl_path = shutil.which("systemctl")
+    if not systemctl_path:
+        print("[FAIL] systemctl no está disponible en este entorno")
+        return 1
+
     try:
         subprocess.run(
-            ["/usr/bin/systemctl", "restart", args.service],
+            [systemctl_path, "restart", args.service],
             check=True,
             capture_output=True,
             text=True,

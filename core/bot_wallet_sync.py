@@ -4,6 +4,7 @@ import time
 from config import Config
 from core.execution_telemetry import append_execution_event
 from core.reconciliation import generate_child_client_order_id
+from core.time_utils import parse_datetime_utc, utc_now
 from notifier import send_telegram_msg
 
 
@@ -432,10 +433,8 @@ def sync_wallet(bot):
                     and not Config.PAPER_MODE
                 ):
                     # PROTECCIÓN DE LATENCIA: No purgar si el trade tiene menos de 60 segundos
-                    open_time = trade.get("open_time")
-                    if isinstance(open_time, str):
-                        open_time = datetime.fromisoformat(open_time)
-                    if (datetime.now() - open_time).total_seconds() < 120:
+                    open_time = parse_datetime_utc(trade.get("open_time") or utc_now())
+                    if (utc_now() - open_time).total_seconds() < 120:
                         continue
 
                     bot.log(f"🧹 Purgando manual: {symbol}")

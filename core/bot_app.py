@@ -100,6 +100,7 @@ from core.bot_misc_ops import (
     load_ai_restrictions,
     self_adjust_exigency as adjust_exigency,
 )
+from core.bot_shutdown import request_graceful_shutdown
 
 try:
     from export_master_dataset import export_dataset
@@ -116,17 +117,18 @@ def _module_available(module_name: str) -> bool:
 
 logger = logging.getLogger("SniperAI")
 logger.setLevel(logging.INFO)
-log_handler = RotatingFileHandler(
-    Config.LOG_FILE,
-    maxBytes=10 * 1024 * 1024,
-    backupCount=5,
-    encoding="utf-8",
-)
-log_formatter = logging.Formatter(
-    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
-log_handler.setFormatter(log_formatter)
-logger.addHandler(log_handler)
+if not logger.handlers:
+    log_handler = RotatingFileHandler(
+        Config.LOG_FILE,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    log_formatter = logging.Formatter(
+        "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    log_handler.setFormatter(log_formatter)
+    logger.addHandler(log_handler)
 
 
 def _backup_database_placeholder():
@@ -376,13 +378,22 @@ def run_entrypoint():
             logger.warning(
                 f"⚠️ Señal {signal_name} recibida. Iniciando apagado ordenado..."
             )
-            bot.stop_requested = True
-            bot.is_running = False
+            request_graceful_shutdown(bot, reason=signal_name, logger=logger)
 
         signal.signal(signal.SIGINT, _graceful_shutdown)
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, _graceful_shutdown)
 
         bot.run()
+
+        if getattr(bot, "shutdown_in_progress", False):
+            shutdown_done = bool(
+                getattr(bot, "shutdown_complete", None)
+                and bot.shutdown_complete.wait(timeout=85)
+            )
+            if not shutdown_done:
+                logger.warning(
+                    "⚠️ SHUTDOWN_SEQUENCE excedió ventana de espera local; saliendo para evitar SIGKILL de systemd."
+                )
     except Exception as error:
         logger.critical(f"❌ FATAL ERROR: {error}\n{traceback.format_exc()}")

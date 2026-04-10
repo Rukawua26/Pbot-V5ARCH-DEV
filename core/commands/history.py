@@ -83,7 +83,8 @@ def _handle_history_commands(bot, text: str) -> bool:
         c_total, w_total, l_total, wr_total = 0, 0, 0, 0.0
         h_avg_win, h_avg_loss = 0.0, 0.0
         try:
-            conn = sqlite3.connect("sniper_brain.db")
+            db_path = getattr(bot.brain, "db_name", "sniper_brain.db")
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN pnl_percent > 0 THEN 1 ELSE 0 END), AVG(CASE WHEN pnl_percent > 0 THEN pnl_percent END), AVG(CASE WHEN pnl_percent <= 0 THEN pnl_percent END) FROM trades WHERE is_shadow=1"

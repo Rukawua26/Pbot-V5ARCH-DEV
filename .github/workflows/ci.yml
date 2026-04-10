@@ -46,3 +46,7 @@ jobs:
       - name: Regression unit tests (runtime flows)
         run: |
           python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Temporal invariance stress tests
+        run: |
+          python -m unittest tests/test_temporal_invariance.py

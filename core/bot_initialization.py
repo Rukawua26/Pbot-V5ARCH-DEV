@@ -1,9 +1,10 @@
 import os
 import threading
-import time
 import uuid
 
 from config import Config
+from core.cooldown_state import load_cooldowns
+from core.time_utils import monotonic_now
 
 
 def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
@@ -15,6 +16,9 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.pairs_to_scan = []
     bot.is_running = True
     bot.stop_requested = False
+    bot.shutdown_in_progress = False
+    bot.shutdown_complete = threading.Event()
+    bot._shutdown_thread = None
     bot.init_complete = threading.Event()
     bot._api_weight_logged = False
     bot.weight_tracker = None
@@ -43,7 +47,8 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
         getattr(Config, "SYMBOL_REDUCED_SIZE_MULTIPLIER", 0.5)
     )
     bot._exit_eval_last_log = {}
-    bot._daily_report_next_ts = time.time() + 24 * 3600
+    now_mono = monotonic_now()
+    bot._daily_report_next_ts = now_mono + 24 * 3600
     bot.breakout_overrides_today = 0
     bot._mfe_alert_last_ts = 0.0
     bot.lock = threading.Lock()
@@ -57,6 +62,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.risk_multiplier = 1.0
     bot.blacklist = {}
     bot.cooldown_pairs = {}
+    bot.cooldown_deadlines_mono = {}
     bot.restricted_hours = []
     bot.restricted_sectors = []
     bot.restricted_symbols = []
@@ -78,6 +84,9 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.user_notes = "Escribe tus notas aquí..."
     bot.global_rag_impact = 0.0
     bot.instance_uuid = str(uuid.uuid4())[:12]
+    bot.pending_send_stale_seconds = int(
+        getattr(Config, "PENDING_SEND_STALE_SECONDS", 90)
+    )
 
 
 def init_realtime_and_monitoring(
@@ -104,6 +113,13 @@ def init_realtime_and_monitoring(
     except Exception as error:
         bot.log(f"⚠️ Error restaurando trades: {error}")
 
+    try:
+        load_cooldowns(bot)
+        if bot.cooldown_pairs:
+            bot.log(f"❄️ Restaurados {len(bot.cooldown_pairs)} cooldowns persistentes.")
+    except Exception as error:
+        bot.log(f"⚠️ Error restaurando cooldowns: {error}")
+
     threading.Thread(target=bot._heartbeat_loop, daemon=True).start()
 
     bot.cache_dir = "data_storage/candles"
@@ -114,13 +130,13 @@ def init_realtime_and_monitoring(
     bot.last_ohlcv_fetch = {}
     bot.last_train_date = bot.brain.get_last_train_timestamp()
     bot.ml_healthy = True
-    bot.last_radar_update = time.time()
+    bot.last_radar_update = monotonic_now()
 
     bot._weekly_sent = False
     bot._vol_ema = {}
     bot._snapshot_tickers = {}
-    bot.last_ml_health_check = time.time()
-    bot.last_perf_check = time.time()
+    bot.last_ml_health_check = monotonic_now()
+    bot.last_perf_check = monotonic_now()
     bot.last_panic_alert = 0
     bot.last_ml_confidence = 75.0
     bot.last_ghost_weight = 1.0
@@ -131,10 +147,10 @@ def init_realtime_and_monitoring(
     bot.last_pm_check = 0
     bot.day_report_sent = False
     bot.daily_backup_done = False
-    bot.last_cache_save = time.time()
-    bot._api_weight_logged_time = time.time()
+    bot.last_cache_save = monotonic_now()
+    bot._api_weight_logged_time = monotonic_now()
 
-    bot._perf_start_ts = time.time()
+    bot._perf_start_ts = monotonic_now()
     bot._perf_start_rss_mb = 0.0
     bot._perf_h1_logged = False
     bot._perf_h24_logged = False

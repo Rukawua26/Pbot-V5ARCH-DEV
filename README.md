@@ -22,6 +22,7 @@
 
 - Refactor modular masivo: `main.py` paso de monolito a entrypoint minimalista.
 - Nueva capa de aplicacion en `core/bot_app.py` y fachada en `core/bot_facade.py`.
+- Optimización de Salidas: Desactivación de TP estáticos (TP1/TP2) para priorizar Trailing ATR dinámico y reversión de confianza IA (`DEGRADED_CONFIDENCE`), permitiendo capturar tendencias más extensas.
 - CI reforzado en GitHub Actions: compilacion, smoke imports, guardrail anti-`pass`, contratos arquitectonicos.
 - Suite de regresion runtime incorporada en `tests/`.
 - Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
@@ -55,6 +56,13 @@ Variables opcionales para Shadow Live:
 - `EXECUTION_BACKEND=shadow_live` para simular ejecucion con latencia/rechazo/fill parcial.
 - `SHADOW_SIM_LATENCY_MIN_MS`, `SHADOW_SIM_LATENCY_MAX_MS`
 - `SHADOW_SIM_REJECT_RATE`, `SHADOW_SIM_PARTIAL_FILL_RATE`, `SHADOW_SIM_PARTIAL_COMPLETE_RATE`, `SHADOW_SIM_MIN_PARTIAL_RATIO`
+
+Variables opcionales operativas (portabilidad/retencion):
+
+- `WATCHDOG_HEARTBEAT_PATH` (default: `/dev/shm/sniper_ai_heartbeat.json`, fallback automatico a `/tmp/...`)
+- `RUNTIME_METRICS_MAX_BYTES`, `RUNTIME_METRICS_BACKUPS`
+- `EXECUTION_EVENTS_MAX_BYTES`, `EXECUTION_EVENTS_BACKUPS`
+- `PENDING_SEND_STALE_SECONDS` (default: `90`) para expirar intenciones huérfanas tras reinicio
 
 Telemetria estructurada de ejecucion:
 
@@ -108,6 +116,17 @@ sudo systemctl enable sniper-ai.service
 sudo systemctl restart sniper-ai.service
 sudo systemctl status sniper-ai.service --no-pager
 ```
+
+Plantillas portables (recomendado para VPS multi-entorno):
+
+- `deploy/systemd/sniper-ai.service.template`
+- `deploy/systemd/sniper-ai-watchdog.service.template`
+
+Reemplaza en esas plantillas: `{{USER}}`, `{{WORKDIR}}`, `{{PYTHON_BIN}}`, `{{HEARTBEAT_PATH}}`.
+
+Runbook SRE de recovery temporal e intenciones:
+
+- `docs/runbooks/sre-intent-recovery.md`
 
 ### Watchdog externo (recomendado)
 
