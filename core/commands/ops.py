@@ -207,38 +207,58 @@ def _handle_misc_commands(bot, text: str) -> bool:
     return False
 
 
+import asyncio
+
+
 def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
     if text in ["/train", "/force_train"]:
-        send_telegram_msg("🧠 *FORZANDO ENTRENAMIENTO...*")
+        send_telegram_msg("🧠 *FORZANDO ENTRENAMIENTO...* (Background Process)")
+
+        async def run_training():
+            try:
+                # 1. Ejecución desacoplada con Prioridad Baja (nice -n 15)
+                # Esto evita que el entrenamiento asfixie al bot_guardian
+                process = await asyncio.create_subprocess_exec(
+                    "nice",
+                    "-n",
+                    "15",
+                    "python3",
+                    "tools/ghost_trainer.py",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+
+                # 2. Espera no bloqueante del Event Loop
+                stdout, stderr = await process.communicate()
+
+                if process.returncode == 0:
+                    # 3. Hot-Swap: Recarga del modelo en RAM
+                    if os.path.exists("ghost_brain.pkl"):
+                        with open("ghost_brain.pkl", "rb") as handle:
+                            bot.ghost_model = pickle.load(handle)
+                        bot.brain.set_metadata("last_ghost_train", datetime.now())
+                        bot.mandatory_train_pending = False
+                        send_telegram_msg(
+                            "✅ *ÉXITO:* Nuevo cerebro cargado en RAM sin interrupciones."
+                        )
+                    else:
+                        send_telegram_msg(
+                            "⚠️ Entrenamiento terminó pero no se encontró ghost_brain.pkl"
+                        )
+                else:
+                    error_msg = stderr.decode().strip()
+                    send_telegram_msg(
+                        f"❌ Fallo en entrenamiento (Cod {process.returncode}).\n"
+                        f"El modelo actual sigue intacto.\nError: {error_msg[-200:]}"
+                    )
+            except Exception as e:
+                send_telegram_msg(f"❌ Error crítico en subproceso: {e}")
+
         try:
-            if importlib.util.find_spec("ghost_trainer") is None:
-                send_telegram_msg(
-                    "ℹ️ Entrenamiento manual no disponible (`ghost_trainer.py` ausente)."
-                )
-                return True
+            asyncio.run(run_training())
+        except Exception as e:
+            send_telegram_msg(f"❌ Error ejecutando loop de entrenamiento: {e}")
 
-            last_mtime = 0
-            if os.path.exists("ghost_brain.pkl"):
-                last_mtime = os.path.getmtime("ghost_brain.pkl")
-
-            from ghost_trainer import train_ghost_brain
-
-            train_ghost_brain()
-            if (
-                os.path.exists("ghost_brain.pkl")
-                and os.path.getmtime("ghost_brain.pkl") > last_mtime
-            ):
-                with open("ghost_brain.pkl", "rb") as handle:
-                    bot.ghost_model = pickle.load(handle)
-                bot.brain.set_metadata("last_ghost_train", datetime.now())
-                bot.mandatory_train_pending = False
-                send_telegram_msg("✅ *ÉXITO:* Nuevo cerebro cargado y operativo.")
-            else:
-                send_telegram_msg(
-                    "⚠️ Entrenamiento completado sin cambios (¿Datos insuficientes < 100?)."
-                )
-        except Exception as error:
-            send_telegram_msg(f"❌ Error crítico: {error}")
         return True
 
     if text == "/evolution":
