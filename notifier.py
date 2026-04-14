@@ -4,21 +4,12 @@ SNIPER AI - NOTIFIER MODULE v118.2
 Módulo de notificaciones para Telegram con reintentos y cola.
 """
 
-import requests
 import time
 import threading
 import queue
 from enum import Enum
 from config import Config
-from core.telegram_api import telegram_api_url
-
-
-def _sanitize_telegram_error(error) -> str:
-    msg = str(error)
-    token = str(getattr(Config, "TELEGRAM_TOKEN", "") or "")
-    if token:
-        msg = msg.replace(token, "***")
-    return msg
+from core.telegram_api import sanitize_telegram_error, telegram_post
 
 
 class Priority(Enum):
@@ -51,7 +42,7 @@ class NotificationQueue:
             except queue.Empty:
                 continue
 
-    def _send_with_retry(self, url, payload, retries):
+    def _send_with_retry(self, method, payload, retries):
         for attempt in range(retries):
             try:
                 # Rate limiting
@@ -60,7 +51,7 @@ class NotificationQueue:
                 if elapsed < self.rate_limit:
                     time.sleep(self.rate_limit - elapsed)
 
-                response = requests.post(url, json=payload, timeout=10)
+                response = telegram_post(method, json=payload, timeout=10)
                 if response.status_code == 200:
                     self.last_sent = time.time()
                     return True
@@ -71,7 +62,7 @@ class NotificationQueue:
             except Exception as e:
                 if attempt == retries - 1:
                     print(
-                        f"⚠️ Telegram send failed after {retries} attempts: {_sanitize_telegram_error(e)}"
+                        f"⚠️ Telegram send failed after {retries} attempts: {sanitize_telegram_error(e)}"
                     )
         return False
 
@@ -79,13 +70,12 @@ class NotificationQueue:
         if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
             return
 
-        url = telegram_api_url("sendMessage")
         payload = {
             "chat_id": Config.TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown",
         }
-        self.queue.put((url, payload, self.max_retries))
+        self.queue.put(("sendMessage", payload, self.max_retries))
 
     def stop(self):
         self.running = False
@@ -109,7 +99,7 @@ def send_telegram_msg(message, priority=Priority.INFO):
     try:
         get_queue().send(message, priority)
     except Exception as e:
-        print(f"⚠️ Telegram Error: {_sanitize_telegram_error(e)}")
+        print(f"⚠️ Telegram Error: {sanitize_telegram_error(e)}")
 
 
 def send_telegram_photo(caption, photo_buffer):
@@ -118,19 +108,18 @@ def send_telegram_photo(caption, photo_buffer):
         if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
             return
 
-        url = telegram_api_url("sendPhoto")
         files = {"photo": ("sniper.png", photo_buffer, "image/png")}
         data = {
             "chat_id": Config.TELEGRAM_CHAT_ID,
             "caption": caption,
             "parse_mode": "Markdown",
         }
-        response = requests.post(url, data=data, files=files, timeout=15)
+        response = telegram_post("sendPhoto", data=data, files=files, timeout=15)
 
         if response.status_code != 200:
             print(f"⚠️ Telegram Photo Error: {response.text}")
     except Exception as e:
-        print(f"⚠️ Telegram Photo Error: {_sanitize_telegram_error(e)}")
+        print(f"⚠️ Telegram Photo Error: {sanitize_telegram_error(e)}")
 
 
 def notify_trade(symbol, side, pnl_percent, is_shadow):

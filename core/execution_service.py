@@ -31,6 +31,8 @@ class ExecutionService:
         self.last_entry_reject_error = ""
         self._last_valid_balance: Optional[float] = None
         self._exchange_call_lock = threading.RLock()
+        self._cancel_all_failures = {}
+        self._no_price_exit_state = {}
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker
@@ -124,6 +126,84 @@ class ExecutionService:
                 return False
             time.sleep(0.5)
         return False
+
+    def _record_cancel_all_orders_success(self, symbol: str):
+        self._cancel_all_failures.pop(symbol, None)
+
+    def _record_cancel_all_orders_failure(self, symbol: str, error):
+        state = self._cancel_all_failures.get(symbol, {"count": 0})
+        state["count"] = int(state.get("count") or 0) + 1
+        state["last_error"] = str(error)
+        state["last_ts"] = time.time()
+        self._cancel_all_failures[symbol] = state
+
+        count = state["count"]
+        self.logger.warning(
+            f"⚠️ cancel_all_orders fallo {symbol}: intento consecutivo {count}, error={error}"
+        )
+        if count >= 3:
+            self.logger.critical(
+                f"🚨 CANCEL_ALL_ORDERS_DEGRADED {symbol}: {count} fallos consecutivos"
+            )
+            try:
+                from notifier import send_telegram_msg
+
+                send_telegram_msg(
+                    f"🚨 *CANCEL_ALL_ORDERS_DEGRADED*\n"
+                    f"Símbolo: {symbol}\n"
+                    f"Fallos consecutivos: {count}\n"
+                    f"Error: {str(error)[:180]}"
+                )
+            except Exception as notify_error:
+                self.logger.warning(
+                    f"⚠️ No se pudo notificar CANCEL_ALL_ORDERS_DEGRADED: {notify_error}"
+                )
+
+    def _handle_no_price_exit(self, symbol: str, exit_side: str, amount: float):
+        now_mono = time.monotonic()
+        state = self._no_price_exit_state.get(symbol) or {
+            "first_seen": now_mono,
+            "last_warn": 0.0,
+        }
+
+        threshold_s = int(
+            getattr(Config, "NO_PRICE_EXIT_ESCALATION_SECONDS", 180) or 180
+        )
+        allow_market = bool(getattr(Config, "NO_PRICE_ALLOW_MARKET_EXIT", False))
+        elapsed_s = now_mono - float(state.get("first_seen") or now_mono)
+
+        if elapsed_s < threshold_s or not allow_market:
+            remaining = max(0.0, float(threshold_s) - elapsed_s)
+            if now_mono - float(state.get("last_warn") or 0.0) > 30.0:
+                self.logger.critical(
+                    f"🛑 NO_PRICE {symbol}: salida bloqueada. "
+                    f"Escalado en {remaining:.1f}s (allow_market={allow_market})."
+                )
+                state["last_warn"] = now_mono
+            self._no_price_exit_state[symbol] = state
+            return None
+
+        try:
+            order = self._call_exchange(
+                "no_price_market_emergency_exit",
+                lambda: self.exchange.create_order(
+                    symbol, "market", exit_side, amount, None, {"reduceOnly": True}
+                ),
+                retries=2,
+                timeout_s=20.0,
+            )
+            self._track_api_weight("create_order", 1, "trading")
+            self.logger.critical(
+                f"🚨 NO_PRICE_ESCALATED_MARKET_EXIT {symbol}: market reduce-only ejecutada"
+            )
+            self._no_price_exit_state.pop(symbol, None)
+            return order
+        except Exception as error:
+            self.logger.critical(
+                f"❌ NO_PRICE_ESCALATED_MARKET_EXIT_FAILED {symbol}: {error}"
+            )
+            self._no_price_exit_state[symbol] = state
+            return None
 
     def has_markets_loaded(self) -> bool:
         try:
@@ -452,10 +532,9 @@ class ExecutionService:
                     timeout_s=20.0,
                 )
                 self._track_api_weight("cancel_all_orders", 1, "trading")
+                self._record_cancel_all_orders_success(symbol)
             except Exception as error:
-                self.logger.warning(
-                    f"⚠️ No se pudieron cancelar órdenes previas en {symbol}: {error}"
-                )
+                self._record_cancel_all_orders_failure(symbol, error)
 
             # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
             current_price = float(
@@ -507,6 +586,7 @@ class ExecutionService:
                                 f"✅ CHASE_LIMIT OK {symbol} @ {limit_price} "
                                 f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
                             )
+                            self._no_price_exit_state.pop(symbol, None)
                             return order
 
                         # Timeout en este step → siguiente persecución
@@ -562,6 +642,7 @@ class ExecutionService:
                             timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
+                        self._no_price_exit_state.pop(symbol, None)
                         return order
                     except Exception as emergency_err:
                         self.logger.critical(
@@ -570,11 +651,7 @@ class ExecutionService:
                         return None
             else:
                 # Sin precio disponible → NO ejecutar (evitar slippage ciego)
-                self.logger.critical(
-                    f"🛑 NO_PRICE {symbol}: No hay precio para ejecutar salida. "
-                    f"Posición queda abierta para intervención manual."
-                )
-                return None
+                return self._handle_no_price_exit(symbol, exit_side, amount)
 
         except Exception as e:
             self.logger.error(f"❌ Error cerrando posición {symbol}: {e}")
@@ -605,10 +682,9 @@ class ExecutionService:
                     timeout_s=20.0,
                 )
                 self._track_api_weight("cancel_all_orders", 1, "trading")
+                self._record_cancel_all_orders_success(symbol)
             except Exception as e:
-                self.logger.error(
-                    f"Error cancelando órdenes previas al SMART EXIT {symbol}: {e}"
-                )
+                self._record_cancel_all_orders_failure(symbol, e)
 
             # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
             current_price = float(
@@ -658,6 +734,7 @@ class ExecutionService:
                                 f"✅ CHASE_DEGRADATION OK {symbol} @ {limit_price} "
                                 f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
                             )
+                            self._no_price_exit_state.pop(symbol, None)
                             return order
 
                         self.logger.warning(
@@ -704,6 +781,7 @@ class ExecutionService:
                             timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
+                        self._no_price_exit_state.pop(symbol, None)
                         return order
                     except Exception as emergency_err:
                         self.logger.critical(
@@ -711,10 +789,7 @@ class ExecutionService:
                         )
                         return None
             else:
-                self.logger.critical(
-                    f"🛑 NO_PRICE {symbol}: Degradación sin precio. Posiciónabierta."
-                )
-                return None
+                return self._handle_no_price_exit(symbol, exit_side, amount)
 
         except Exception as e:
             self.logger.critical(

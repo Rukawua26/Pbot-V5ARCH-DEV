@@ -2,19 +2,9 @@ import json
 import random
 import time
 
-import requests
-
 from config import Config
-from core.telegram_api import telegram_api_url
+from core.telegram_api import sanitize_telegram_error, telegram_get_json
 from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
-
-
-def _sanitize_telegram_error(error) -> str:
-    msg = str(error)
-    token = str(getattr(Config, "TELEGRAM_TOKEN", "") or "")
-    if token:
-        msg = msg.replace(token, "***")
-    return msg
 
 
 def websocket_monitor(bot):
@@ -81,12 +71,11 @@ def telegram_listener(bot):
                 time.sleep(10)
                 continue
 
-            url = telegram_api_url("getUpdates")
-            response = requests.get(
-                url,
+            response = telegram_get_json(
+                "getUpdates",
                 params={"offset": last_update_id, "timeout": 30},
                 timeout=35,
-            ).json()
+            )
 
             for update in response.get("result", []):
                 last_update_id = update["update_id"] + 1
@@ -101,7 +90,7 @@ def telegram_listener(bot):
             now_ts = monotonic_now()
             if now_ts - float(getattr(bot, "_telegram_last_err_log", 0.0)) > 120:
                 bot._telegram_last_err_log = now_ts
-                bot.log(f"Telegram Error: {_sanitize_telegram_error(error)}")
+                bot.log(f"Telegram Error: {sanitize_telegram_error(error)}")
             time.sleep(backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, 60)
             continue

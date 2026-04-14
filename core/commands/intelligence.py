@@ -1,7 +1,7 @@
 import importlib.util
 
 from config import Config
-from core.telegram_api import telegram_api_url
+from core.telegram_api import sanitize_telegram_error, telegram_post
 from notifier import send_telegram_msg
 
 
@@ -115,19 +115,20 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
                 send_telegram_msg("ℹ️ Módulo visual no disponible (`tools.ai_mapper`).")
                 return True
 
-            import requests
             from tools.ai_mapper import generate_ai_intel_image
 
             image_bio = generate_ai_intel_image(bot.brain)
             files = {"photo": ("ai_intel.png", image_bio, "image/png")}
-            requests.post(
-                telegram_api_url("sendPhoto"),
+            telegram_post(
+                "sendPhoto",
                 data={"chat_id": Config.TELEGRAM_CHAT_ID},
                 files=files,
                 timeout=(5, 20),
             )
         except Exception as error:
-            send_telegram_msg(f"❌ Error generando XAI: {error}")
+            send_telegram_msg(
+                f"❌ Error generando XAI: {sanitize_telegram_error(error)}"
+            )
         return True
 
     if text == "/report":

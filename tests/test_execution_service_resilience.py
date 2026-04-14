@@ -54,6 +54,31 @@ class _TimeoutProbeExchange:
         }
 
 
+class _NoPriceExchange:
+    def __init__(self):
+        self.timeout = 9000
+        self.market_exit_calls = 0
+
+    def cancel_all_orders(self, _symbol):
+        return []
+
+    def fetch_ticker(self, _symbol):
+        return {"last": 0}
+
+    def create_order(self, symbol, order_type, side, amount, price, params):
+        self.market_exit_calls += 1
+        return {
+            "id": "mkt-1",
+            "symbol": symbol,
+            "type": order_type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "params": params,
+            "status": "closed",
+        }
+
+
 class ExecutionServiceResilienceTest(unittest.TestCase):
     @patch("core.execution_service.time.sleep", return_value=None)
     def test_cancel_order_retries_on_network_error(self, _sleep_mock):
@@ -90,6 +115,41 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
         self.assertEqual(result.get("status"), "canceled")
         self.assertEqual(result.get("timeout_seen"), 20000)
         self.assertEqual(service.exchange.timeout, 9000)
+
+    @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", True)
+    @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
+    @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
+    def test_no_price_escalates_to_market_exit_after_threshold(self, _mono_mock):
+        service = ExecutionService("k", "s")
+        service.exchange = _NoPriceExchange()
+        service.set_weight_tracker(None)
+
+        first = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+        second = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+        third = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertIsNotNone(third)
+        self.assertEqual(third.get("type"), "market")
+        self.assertEqual(service.exchange.market_exit_calls, 1)
+
+    @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", False)
+    @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
+    @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
+    def test_no_price_does_not_market_exit_when_disabled(self, _mono_mock):
+        service = ExecutionService("k", "s")
+        service.exchange = _NoPriceExchange()
+        service.set_weight_tracker(None)
+
+        first = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+        second = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+        third = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertIsNone(third)
+        self.assertEqual(service.exchange.market_exit_calls, 0)
 
 
 if __name__ == "__main__":

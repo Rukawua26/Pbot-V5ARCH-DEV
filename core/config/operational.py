@@ -40,6 +40,10 @@ class OperationalConfig:
     PARTIAL_FILL_TIMEOUT_SECONDS = int(os.getenv("PARTIAL_FILL_TIMEOUT_SECONDS", "300"))
     PENDING_SEND_STALE_SECONDS = int(os.getenv("PENDING_SEND_STALE_SECONDS", "90"))
     HARD_SL_ATTACH_MAX_RETRIES = int(os.getenv("HARD_SL_ATTACH_MAX_RETRIES", "3"))
+    NO_PRICE_EXIT_ESCALATION_SECONDS = int(
+        os.getenv("NO_PRICE_EXIT_ESCALATION_SECONDS", "180")
+    )
+    NO_PRICE_ALLOW_MARKET_EXIT = _env_bool("NO_PRICE_ALLOW_MARKET_EXIT", True)
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY
