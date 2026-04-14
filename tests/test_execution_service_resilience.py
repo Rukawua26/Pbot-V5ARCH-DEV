@@ -41,6 +41,19 @@ class _FlakyHardSlExchange:
         }
 
 
+class _TimeoutProbeExchange:
+    def __init__(self):
+        self.timeout = 9000
+
+    def cancel_order(self, order_id, symbol):
+        return {
+            "id": order_id,
+            "symbol": symbol,
+            "status": "canceled",
+            "timeout_seen": self.timeout,
+        }
+
+
 class ExecutionServiceResilienceTest(unittest.TestCase):
     @patch("core.execution_service.time.sleep", return_value=None)
     def test_cancel_order_retries_on_network_error(self, _sleep_mock):
@@ -66,6 +79,17 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(service.exchange.create_attempts, 2)
         self.assertEqual(service.last_hard_sl_error, "")
+
+    def test_call_exchange_restores_timeout_after_operation(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _TimeoutProbeExchange()
+        service.set_weight_tracker(None)
+
+        result = service.cancel_order("BTC/USDT", "order-timeout")
+
+        self.assertEqual(result.get("status"), "canceled")
+        self.assertEqual(result.get("timeout_seen"), 20000)
+        self.assertEqual(service.exchange.timeout, 9000)
 
 
 if __name__ == "__main__":

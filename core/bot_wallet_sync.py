@@ -181,6 +181,7 @@ def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):
     )
     if sl_order:
         trade["sl_exchange_order_id"] = sl_order.get("id")
+        trade["hard_sl_attach_fail_count"] = 0
         trade["status"] = "OPEN"
         with bot.db_lock:
             bot.brain.save_active_trade_state(symbol, trade)
@@ -189,6 +190,23 @@ def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):
         sl_error = str(getattr(bot.execution, "last_hard_sl_error", "") or "")
         if _is_immediate_trigger_rejection(sl_error):
             _emergency_market_close_unprotected(bot, symbol, trade, amount, sl_error)
+            return True
+        fail_count = int(trade.get("hard_sl_attach_fail_count") or 0) + 1
+        trade["hard_sl_attach_fail_count"] = fail_count
+        with bot.db_lock:
+            bot.brain.save_active_trade_state(symbol, trade)
+        max_retries = int(getattr(Config, "HARD_SL_ATTACH_MAX_RETRIES", 3) or 3)
+        if fail_count >= max_retries:
+            bot.log(
+                f"☢️ HARD_SL_ATTACH_RETRY_EXHAUSTED {symbol}: {fail_count}/{max_retries}. Ejecutando cierre de emergencia."
+            )
+            _emergency_market_close_unprotected(
+                bot,
+                symbol,
+                trade,
+                amount,
+                sl_error or "HARD_SL_ATTACH_FAILED_PERSISTENT",
+            )
             return True
         bot.log(f"⚠️ Riesgo crítico: {symbol} sigue sin HARD SL en exchange")
     return False

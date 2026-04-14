@@ -39,6 +39,7 @@ class OperationalConfig:
     )
     PARTIAL_FILL_TIMEOUT_SECONDS = int(os.getenv("PARTIAL_FILL_TIMEOUT_SECONDS", "300"))
     PENDING_SEND_STALE_SECONDS = int(os.getenv("PENDING_SEND_STALE_SECONDS", "90"))
+    HARD_SL_ATTACH_MAX_RETRIES = int(os.getenv("HARD_SL_ATTACH_MAX_RETRIES", "3"))
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY

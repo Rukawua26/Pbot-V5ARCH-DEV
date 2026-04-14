@@ -188,6 +188,51 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         self.assertEqual(bot.execution.close_position.call_count, 3)
         mocked_tg.assert_called_once()
 
+    @patch("core.bot_wallet_sync.send_telegram_msg")
+    @patch("core.bot_wallet_sync.Config.HARD_SL_ATTACH_MAX_RETRIES", 1)
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    def test_non_immediate_sl_failures_escalate_to_emergency_close(self, mocked_tg):
+        bot = self._base_bot()
+        bot.integrity_lock_active = False
+        bot.is_paused = False
+        bot.active_trades = {
+            "XRP/USDT": {
+                "symbol": "XRP/USDT",
+                "side": "BUY",
+                "entry": 0.5,
+                "amount": 100.0,
+                "sl": 0.49,
+                "is_shadow": False,
+                "open_time": datetime.now(),
+                "entry_client_order_id": "sai-v118-xrp",
+                "sl_exchange_order_id": None,
+            }
+        }
+        bot.execution = SimpleNamespace(
+            fetch_positions=lambda: [
+                {
+                    "symbol": "XRP/USDT:USDT",
+                    "contracts": 100.0,
+                    "side": "long",
+                    "entryPrice": 0.5,
+                    "unrealizedPnl": -2.0,
+                    "info": {},
+                }
+            ],
+            fetch_open_orders=lambda _symbol=None: [],
+            place_hard_sl=MagicMock(return_value=None),
+            close_position=MagicMock(side_effect=RuntimeError("exchange unavailable")),
+            last_hard_sl_error="minNotional validation failed",
+        )
+
+        sync_wallet(bot)
+
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(getattr(bot, "halt_system_active", False))
+        self.assertEqual(bot.execution.close_position.call_count, 3)
+        mocked_tg.assert_called_once()
+
     @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
     @patch("core.bot_wallet_sync.Config.PARTIAL_FILL_TIMEOUT_SECONDS", 60)
     def test_partial_fill_timeout_cancels_remaining_order(self):

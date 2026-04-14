@@ -2,6 +2,7 @@ import ccxt
 import time
 import logging
 import random
+import threading
 from typing import Optional
 from config import Config
 from core.types import CCXTOrder, CCXTBalanceResponse
@@ -29,6 +30,7 @@ class ExecutionService:
         self.last_hard_sl_error = ""
         self.last_entry_reject_error = ""
         self._last_valid_balance: Optional[float] = None
+        self._exchange_call_lock = threading.RLock()
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker
@@ -42,31 +44,38 @@ class ExecutionService:
     ):
         last_error = None
         for attempt in range(1, retries + 1):
-            try:
-                if timeout_s > 0:
-                    self.exchange.timeout = int(timeout_s * 1000)
-                return fn()
-            except ccxt.RateLimitExceeded as error:
-                last_error = error
-                if attempt >= retries:
+            with self._exchange_call_lock:
+                previous_timeout = getattr(self.exchange, "timeout", None)
+                timeout_overridden = False
+                try:
+                    if timeout_s > 0:
+                        self.exchange.timeout = int(timeout_s * 1000)
+                        timeout_overridden = True
+                    return fn()
+                except ccxt.RateLimitExceeded as error:
+                    last_error = error
+                    if attempt >= retries:
+                        break
+                    sleep_s = (0.6 * attempt) + random.uniform(0.0, 0.3)
+                    self.logger.warning(
+                        f"⚠️ {op_name} rate-limit retry {attempt}/{retries}: {error}"
+                    )
+                except (ccxt.NetworkError, ccxt.RequestTimeout) as error:
+                    last_error = error
+                    if attempt >= retries:
+                        break
+                    sleep_s = (0.35 * attempt) + random.uniform(0.0, 0.2)
+                    self.logger.warning(
+                        f"⚠️ {op_name} network timeout/retry {attempt}/{retries}: {error}"
+                    )
+                except Exception as error:
+                    last_error = error
                     break
-                sleep_s = (0.6 * attempt) + random.uniform(0.0, 0.3)
-                self.logger.warning(
-                    f"⚠️ {op_name} rate-limit retry {attempt}/{retries}: {error}"
-                )
+                finally:
+                    if timeout_overridden:
+                        self.exchange.timeout = previous_timeout
+            if attempt < retries:
                 time.sleep(sleep_s)
-            except (ccxt.NetworkError, ccxt.RequestTimeout) as error:
-                last_error = error
-                if attempt >= retries:
-                    break
-                sleep_s = (0.35 * attempt) + random.uniform(0.0, 0.2)
-                self.logger.warning(
-                    f"⚠️ {op_name} network timeout/retry {attempt}/{retries}: {error}"
-                )
-                time.sleep(sleep_s)
-            except Exception as error:
-                last_error = error
-                break
         if last_error is not None:
             raise last_error
         raise RuntimeError(f"{op_name} failed without captured error")
