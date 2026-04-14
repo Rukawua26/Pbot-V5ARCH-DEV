@@ -96,7 +96,20 @@ def init_realtime_and_monitoring(
     ml_monitor_cls,
 ):
     bot.data_service.load_cache()
-    bot.ws_manager = websocket_cls(symbols=[])
+
+    bootstrap_symbols = []
+    for symbol in list(getattr(Config, "PAIRS", []) or []):
+        if not isinstance(symbol, str):
+            continue
+        clean = symbol.strip()
+        if not clean:
+            continue
+        bootstrap_symbols.append(clean)
+
+    if not bootstrap_symbols:
+        bootstrap_symbols = ["BTC/USDT"]
+
+    bot.ws_manager = websocket_cls(symbols=bootstrap_symbols)
     bot.ws_manager.start_background()
 
     if ml_monitor_available and ml_monitor_cls is not None:

@@ -134,6 +134,16 @@ def _shutdown_sequence(bot, reason: str, logger):
     except Exception as error:
         bot.log(f"⚠️ SHUTDOWN: shadow logger stop falló: {error}")
 
+    try:
+        loop = getattr(bot, "main_loop", None)
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(loop.stop)
+        loop_thread = getattr(bot, "_main_loop_thread", None)
+        if loop_thread is not None and loop_thread.is_alive():
+            loop_thread.join(timeout=2.0)
+    except Exception as error:
+        bot.log(f"⚠️ SHUTDOWN: main loop stop falló: {error}")
+
     append_execution_event(
         bot,
         "SHUTDOWN_SEQUENCE_DONE",

@@ -118,22 +118,43 @@ class StrategyUtils:
 
         try:
             if mode == "full":
-                if "ema" not in df.columns:
-                    df.ta.ema(length=50, append=True)
-                if "rsi" not in df.columns:
-                    df.ta.rsi(length=14, append=True)
-                if "atr" not in df.columns:
-                    df.ta.atr(length=14, append=True)
-                if "adx" not in df.columns:
-                    df.ta.adx(length=14, append=True)
-                if "bb_lower" not in df.columns:
-                    df.ta.bbands(length=20, append=True)
-                if "stoch_k" not in df.columns:
-                    df.ta.stoch(k=14, d=3, append=True)
+                # Recalcular SIEMPRE indicadores base desde OHLCV para evitar
+                # reutilizar columnas normalizadas/contaminadas del caché.
+                cols_to_drop = [
+                    "ema",
+                    "rsi",
+                    "atr",
+                    "adx",
+                    "bb_lower",
+                    "bb_upper",
+                    "stoch_k",
+                    "stoch_d",
+                    "ema_200",
+                    "EMA_50",
+                    "RSI_14",
+                    "ATRr_14",
+                    "ADX_14",
+                    "BBL_20_2.0",
+                    "BBU_20_2.0",
+                    "STOCHk_14_3_3",
+                    "STOCHd_14_3_3",
+                    "EMA_200",
+                ]
+                df.drop(
+                    columns=[c for c in cols_to_drop if c in df.columns],
+                    inplace=True,
+                    errors="ignore",
+                )
+
+                df.ta.ema(length=50, append=True)
+                df.ta.rsi(length=14, append=True)
+                df.ta.atr(length=14, append=True)
+                df.ta.adx(length=14, append=True)
+                df.ta.bbands(length=20, append=True)
+                df.ta.stoch(k=14, d=3, append=True)
                 if "volume_ma" not in df.columns and "volume" in df.columns:
                     df["volume_ma"] = df["volume"].rolling(window=20).mean()
-                if "ema_200" not in df.columns:
-                    df.ta.ema(length=200, append=True)
+                df.ta.ema(length=200, append=True)
 
                 rename_map = {
                     "EMA_50": "ema",
@@ -151,10 +172,18 @@ class StrategyUtils:
                     inplace=True,
                 )
             else:
-                if "ema" not in df.columns:
-                    df.ta.ema(length=50, append=True)
-                    df.rename(columns={"EMA_50": "ema"}, inplace=True)
-                if "ema_200" not in df.columns and len(df) >= 200:
+                df.drop(
+                    columns=[
+                        c
+                        for c in ["ema", "ema_200", "EMA_50", "EMA_200"]
+                        if c in df.columns
+                    ],
+                    inplace=True,
+                    errors="ignore",
+                )
+                df.ta.ema(length=50, append=True)
+                df.rename(columns={"EMA_50": "ema"}, inplace=True)
+                if len(df) >= 200:
                     df.ta.ema(length=200, append=True)
                     df.rename(columns={"EMA_200": "ema_200"}, inplace=True)
 
@@ -166,6 +195,14 @@ class StrategyUtils:
                     return None
 
             df.fillna(0, inplace=True)
+
+            # Preservar indicadores crudos para decisiones/filtros/UI.
+            # Las columnas base pueden normalizarse para ML, pero el runtime
+            # institucional debe evaluar RSI/ADX en su escala natural.
+            if "rsi" in df.columns:
+                df["rsi_raw"] = df["rsi"]
+            if "adx" in df.columns:
+                df["adx_raw"] = df["adx"]
 
             # --- [SRE] NORMALIZACIÓN DINÁMICA Z-SCORE (Anti-Feature Drift) ---
             # Definimos las features que la IA consume (basado en GhostAgent)
@@ -180,6 +217,7 @@ class StrategyUtils:
                 "bb_pos",
                 "bb_width",
             ]
+            available_features = [col for col in features_to_scale if col in df.columns]
 
             # 1. Generación de Features Sintéticas ANTES de normalizar
             # Esto evita que el Z-Score destruya la lógica matemática (ej: rsi**2)
@@ -196,7 +234,7 @@ class StrategyUtils:
                 df["vol_adx"] = df["volume"] * df["adx"]
 
             # Actualizamos la lista para incluir las sintéticas en el escalado
-            all_scaled_cols = features_to_scale + [
+            all_scaled_cols = available_features + [
                 "rsi_sq",
                 "rsi_log",
                 "rsi_inv",
@@ -221,7 +259,8 @@ class StrategyUtils:
                     df[col] = (df[col] - rolling_mean) / rolling_std
 
             # Limpieza de NaNs resultantes de la ventana móvil
-            df.dropna(subset=features_to_scale, inplace=True)
+            if available_features:
+                df.dropna(subset=available_features, inplace=True)
 
             return df
         except Exception as e:

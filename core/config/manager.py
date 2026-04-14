@@ -26,7 +26,7 @@ class Config(OperationalConfig, StrategyConfig):
 
     # --- Breakout Hunter (pasivo) ---
     BREAKOUT_WATCH_ENABLED = True
-    BREAKOUT_MIN_IA_PROB = 60.0
+    BREAKOUT_MIN_IA_PROB = 55.0
     BREAKOUT_SHOCK_MIN_IA_PROB = 50.0
     BREAKOUT_WATCH_COHERENCE_ENABLED = True
     BREAKOUT_COHERENCE_MIN_IA_PROB = 50.0

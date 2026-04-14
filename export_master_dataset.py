@@ -24,18 +24,51 @@ def export_dataset():
     print("🚀 Iniciando exportación de Dataset Maestro...")
     conn = sqlite3.connect(db_path)
 
-    # Extraemos datos ordenados por tiempo para mantener la secuencia (Vital para LSTM)
-    query = """
-        SELECT timestamp, symbol, side, pnl_percent, market_snapshot, is_shadow 
-        FROM trades 
-        WHERE market_snapshot IS NOT NULL 
-        ORDER BY timestamp ASC
-    """
+    # Extraemos datos ordenados por tiempo para mantener la secuencia (vivo + archivo)
+    def _table_exists(table_name: str) -> bool:
+        check_q = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1"
+        row = conn.execute(check_q, (table_name,)).fetchone()
+        return row is not None
+
+    has_trades = _table_exists("trades")
+    has_archive = _table_exists("trades_archive_v1")
+
+    if not has_trades and not has_archive:
+        print("⚠️ No existen tablas de trades para exportar.")
+        conn.close()
+        return
+
+    if has_trades and has_archive:
+        query = """
+            SELECT timestamp, symbol, side, pnl_percent, market_snapshot, is_shadow
+            FROM trades
+            WHERE market_snapshot IS NOT NULL
+            UNION ALL
+            SELECT timestamp, symbol, side, pnl_percent, market_snapshot, is_shadow
+            FROM trades_archive_v1
+            WHERE market_snapshot IS NOT NULL
+            ORDER BY timestamp ASC
+        """
+    elif has_trades:
+        query = """
+            SELECT timestamp, symbol, side, pnl_percent, market_snapshot, is_shadow
+            FROM trades
+            WHERE market_snapshot IS NOT NULL
+            ORDER BY timestamp ASC
+        """
+    else:
+        query = """
+            SELECT timestamp, symbol, side, pnl_percent, market_snapshot, is_shadow
+            FROM trades_archive_v1
+            WHERE market_snapshot IS NOT NULL
+            ORDER BY timestamp ASC
+        """
+
     df = pd.read_sql_query(query, conn)
     conn.close()
 
     if df.empty:
-        print("⚠️ Base de datos vacía o sin snapshots.")
+        print("⚠️ No hay snapshots disponibles en tablas de trades/archivo.")
         return
 
     # --- LIMPIEZA DE OUTLIERS (Errores de API o Liquidaciones extremas) ---

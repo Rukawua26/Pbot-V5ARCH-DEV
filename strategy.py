@@ -98,8 +98,16 @@ class Strategy:
         df_4h = StrategyUtils.preprocess_data(df_4h, mode="trend")
 
         # 3. Extracción de Contexto
-        rsi = base_df["rsi"].iloc[-1]
-        adx = base_df["adx"].iloc[-1]
+        rsi = (
+            base_df["rsi_raw"].iloc[-1]
+            if "rsi_raw" in base_df.columns
+            else base_df["rsi"].iloc[-1]
+        )
+        adx = (
+            base_df["adx_raw"].iloc[-1]
+            if "adx_raw" in base_df.columns
+            else base_df["adx"].iloc[-1]
+        )
         atr_pct = base_df["atr"].iloc[-1] / precio if precio > 0 else 0
         vol_avg = (
             base_df["volume_ma"].iloc[-1] if "volume_ma" in base_df.columns else 0.0

@@ -10,6 +10,7 @@ import threading
 import queue
 from enum import Enum
 from config import Config
+from core.telegram_api import telegram_api_url
 
 
 def _sanitize_telegram_error(error) -> str:
@@ -78,7 +79,7 @@ class NotificationQueue:
         if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
             return
 
-        url = f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendMessage"
+        url = telegram_api_url("sendMessage")
         payload = {
             "chat_id": Config.TELEGRAM_CHAT_ID,
             "text": message,
@@ -117,7 +118,7 @@ def send_telegram_photo(caption, photo_buffer):
         if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
             return
 
-        url = f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendPhoto"
+        url = telegram_api_url("sendPhoto")
         files = {"photo": ("sniper.png", photo_buffer, "image/png")}
         data = {
             "chat_id": Config.TELEGRAM_CHAT_ID,

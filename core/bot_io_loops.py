@@ -5,6 +5,7 @@ import time
 import requests
 
 from config import Config
+from core.telegram_api import telegram_api_url
 from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 
 
@@ -80,7 +81,7 @@ def telegram_listener(bot):
                 time.sleep(10)
                 continue
 
-            url = f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/getUpdates"
+            url = telegram_api_url("getUpdates")
             response = requests.get(
                 url,
                 params={"offset": last_update_id, "timeout": 30},

@@ -46,15 +46,6 @@ class ExecutionService:
                 if timeout_s > 0:
                     self.exchange.timeout = int(timeout_s * 1000)
                 return fn()
-            except (ccxt.NetworkError, ccxt.RequestTimeout) as error:
-                last_error = error
-                if attempt >= retries:
-                    break
-                sleep_s = (0.35 * attempt) + random.uniform(0.0, 0.2)
-                self.logger.warning(
-                    f"⚠️ {op_name} network timeout/retry {attempt}/{retries}: {error}"
-                )
-                time.sleep(sleep_s)
             except ccxt.RateLimitExceeded as error:
                 last_error = error
                 if attempt >= retries:
@@ -62,6 +53,15 @@ class ExecutionService:
                 sleep_s = (0.6 * attempt) + random.uniform(0.0, 0.3)
                 self.logger.warning(
                     f"⚠️ {op_name} rate-limit retry {attempt}/{retries}: {error}"
+                )
+                time.sleep(sleep_s)
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as error:
+                last_error = error
+                if attempt >= retries:
+                    break
+                sleep_s = (0.35 * attempt) + random.uniform(0.0, 0.2)
+                self.logger.warning(
+                    f"⚠️ {op_name} network timeout/retry {attempt}/{retries}: {error}"
                 )
                 time.sleep(sleep_s)
             except Exception as error:
@@ -95,6 +95,26 @@ class ExecutionService:
             self.logger.warning(
                 f"⚠️ No se pudo enviar alerta EMERGENCY_EXIT_STUCK: {error}"
             )
+
+    def _wait_order_filled(self, symbol: str, order_id: str, timeout_s: int) -> bool:
+        start_wait = time.time()
+        while time.time() - start_wait < timeout_s:
+            try:
+                status = self._call_exchange(
+                    "fetch_order",
+                    lambda: self.exchange.fetch_order(order_id, symbol),
+                    retries=2,
+                    timeout_s=15.0,
+                )
+                if status.get("status") in ["closed", "filled"]:
+                    return True
+            except Exception as poll_error:
+                self.logger.warning(
+                    f"⚠️ Error consultando estado de orden {order_id} en {symbol}: {poll_error}"
+                )
+                return False
+            time.sleep(0.5)
+        return False
 
     def has_markets_loaded(self) -> bool:
         try:
@@ -416,7 +436,12 @@ class ExecutionService:
 
             # Cancelar órdenes pendientes antes de cerrar
             try:
-                self.exchange.cancel_all_orders(symbol)
+                self._call_exchange(
+                    "cancel_all_orders",
+                    lambda: self.exchange.cancel_all_orders(symbol),
+                    retries=3,
+                    timeout_s=20.0,
+                )
                 self._track_api_weight("cancel_all_orders", 1, "trading")
             except Exception as error:
                 self.logger.warning(
@@ -425,7 +450,16 @@ class ExecutionService:
 
             # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
             current_price = float(
-                (self.exchange.fetch_ticker(symbol) or {}).get("last", 0) or 0
+                (
+                    self._call_exchange(
+                        "fetch_ticker",
+                        lambda: self.exchange.fetch_ticker(symbol),
+                        retries=2,
+                        timeout_s=15.0,
+                    )
+                    or {}
+                ).get("last", 0)
+                or 0
             )
 
             if current_price > 0:
@@ -445,33 +479,38 @@ class ExecutionService:
                         limit_price = self.exchange.price_to_precision(
                             symbol, limit_price
                         )
-                        order = self.exchange.create_order(
-                            symbol, "limit", exit_side, amount, limit_price, params
+                        order = self._call_exchange(
+                            "close_position_create_order",
+                            lambda: self.exchange.create_order(
+                                symbol, "limit", exit_side, amount, limit_price, params
+                            ),
+                            retries=3,
+                            timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
                         last_order = order
 
                         # Esperar fill con timeout
-                        start_wait = time.time()
-                        while time.time() - start_wait < TIMEOUT_PER_STEP:
-                            try:
-                                status = self.exchange.fetch_order(order["id"], symbol)
-                                if status.get("status") in ["closed", "filled"]:
-                                    self.logger.info(
-                                        f"✅ CHASE_LIMIT OK {symbol} @ {limit_price} "
-                                        f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
-                                    )
-                                    return order
-                            except:
-                                break
-                            time.sleep(0.5)
+                        if self._wait_order_filled(
+                            symbol, order["id"], timeout_s=TIMEOUT_PER_STEP
+                        ):
+                            self.logger.info(
+                                f"✅ CHASE_LIMIT OK {symbol} @ {limit_price} "
+                                f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
+                            )
+                            return order
 
                         # Timeout en este step → siguiente persecución
                         self.logger.warning(
                             f"⏳ Chase step {step_idx + 1} timeout {symbol} @ {limit_price}, "
                             f"persiguiendo..."
                         )
-                        self.exchange.cancel_order(order["id"], symbol)
+                        self._call_exchange(
+                            "close_position_cancel_order",
+                            lambda: self.exchange.cancel_order(order["id"], symbol),
+                            retries=2,
+                            timeout_s=15.0,
+                        )
 
                     except Exception as step_err:
                         self.logger.warning(
@@ -500,8 +539,18 @@ class ExecutionService:
                         emergency_price = self.exchange.price_to_precision(
                             symbol, current_price
                         )
-                        order = self.exchange.create_order(
-                            symbol, "limit", exit_side, amount, emergency_price, params
+                        order = self._call_exchange(
+                            "close_position_emergency_create_order",
+                            lambda: self.exchange.create_order(
+                                symbol,
+                                "limit",
+                                exit_side,
+                                amount,
+                                emergency_price,
+                                params,
+                            ),
+                            retries=3,
+                            timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
                         return order
@@ -540,7 +589,12 @@ class ExecutionService:
 
             # Limpieza exhaustiva de la orden (Hard Reset)
             try:
-                self.exchange.cancel_all_orders(symbol)
+                self._call_exchange(
+                    "cancel_all_orders",
+                    lambda: self.exchange.cancel_all_orders(symbol),
+                    retries=3,
+                    timeout_s=20.0,
+                )
                 self._track_api_weight("cancel_all_orders", 1, "trading")
             except Exception as e:
                 self.logger.error(
@@ -549,7 +603,16 @@ class ExecutionService:
 
             # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
             current_price = float(
-                (self.exchange.fetch_ticker(symbol) or {}).get("last", 0) or 0
+                (
+                    self._call_exchange(
+                        "fetch_ticker",
+                        lambda: self.exchange.fetch_ticker(symbol),
+                        retries=2,
+                        timeout_s=15.0,
+                    )
+                    or {}
+                ).get("last", 0)
+                or 0
             )
 
             if current_price > 0:
@@ -568,30 +631,35 @@ class ExecutionService:
                         limit_price = self.exchange.price_to_precision(
                             symbol, limit_price
                         )
-                        order = self.exchange.create_order(
-                            symbol, "limit", exit_side, amount, limit_price, params
+                        order = self._call_exchange(
+                            "close_degradation_create_order",
+                            lambda: self.exchange.create_order(
+                                symbol, "limit", exit_side, amount, limit_price, params
+                            ),
+                            retries=3,
+                            timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
                         last_order = order
 
-                        start_wait = time.time()
-                        while time.time() - start_wait < TIMEOUT_PER_STEP:
-                            try:
-                                status = self.exchange.fetch_order(order["id"], symbol)
-                                if status.get("status") in ["closed", "filled"]:
-                                    self.logger.info(
-                                        f"✅ CHASE_DEGRADATION OK {symbol} @ {limit_price} "
-                                        f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
-                                    )
-                                    return order
-                            except:
-                                break
-                            time.sleep(0.5)
+                        if self._wait_order_filled(
+                            symbol, order["id"], timeout_s=TIMEOUT_PER_STEP
+                        ):
+                            self.logger.info(
+                                f"✅ CHASE_DEGRADATION OK {symbol} @ {limit_price} "
+                                f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
+                            )
+                            return order
 
                         self.logger.warning(
                             f"⏳ Chase step {step_idx + 1} timeout {symbol} @ {limit_price}"
                         )
-                        self.exchange.cancel_order(order["id"], symbol)
+                        self._call_exchange(
+                            "close_degradation_cancel_order",
+                            lambda: self.exchange.cancel_order(order["id"], symbol),
+                            retries=2,
+                            timeout_s=15.0,
+                        )
 
                     except Exception as step_err:
                         self.logger.warning(
@@ -613,8 +681,18 @@ class ExecutionService:
                         emergency_price = self.exchange.price_to_precision(
                             symbol, current_price
                         )
-                        order = self.exchange.create_order(
-                            symbol, "limit", exit_side, amount, emergency_price, params
+                        order = self._call_exchange(
+                            "close_degradation_emergency_create_order",
+                            lambda: self.exchange.create_order(
+                                symbol,
+                                "limit",
+                                exit_side,
+                                amount,
+                                emergency_price,
+                                params,
+                            ),
+                            retries=3,
+                            timeout_s=20.0,
                         )
                         self._track_api_weight("create_order", 1, "trading")
                         return order

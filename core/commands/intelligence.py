@@ -1,6 +1,7 @@
 import importlib.util
 
 from config import Config
+from core.telegram_api import telegram_api_url
 from notifier import send_telegram_msg
 
 
@@ -120,7 +121,7 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
             image_bio = generate_ai_intel_image(bot.brain)
             files = {"photo": ("ai_intel.png", image_bio, "image/png")}
             requests.post(
-                f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendPhoto",
+                telegram_api_url("sendPhoto"),
                 data={"chat_id": Config.TELEGRAM_CHAT_ID},
                 files=files,
                 timeout=(5, 20),

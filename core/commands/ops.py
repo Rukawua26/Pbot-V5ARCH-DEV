@@ -5,6 +5,7 @@ import os
 import pickle
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -208,11 +209,28 @@ def _handle_misc_commands(bot, text: str) -> bool:
     return False
 
 
-import asyncio
-
-
 def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
     if text in ["/train", "/force_train"]:
+        loop = getattr(bot, "main_loop", None)
+        if loop is None or not loop.is_running():
+            send_telegram_msg(
+                "❌ Entrenamiento bloqueado: Global Event Loop inalcanzable. Reinicia el bot para restaurar el runtime."
+            )
+            return True
+
+        dispatch_lock = getattr(bot, "_training_dispatch_lock", None)
+        if dispatch_lock is None:
+            dispatch_lock = threading.Lock()
+            setattr(bot, "_training_dispatch_lock", dispatch_lock)
+
+        with dispatch_lock:
+            in_flight = getattr(bot, "_training_future", None)
+            if in_flight is not None and not in_flight.done():
+                send_telegram_msg(
+                    "⏳ Ya hay un entrenamiento en curso. Espera a que termine para lanzar otro."
+                )
+                return True
+
         send_telegram_msg("🧠 *FORZANDO ENTRENAMIENTO...* (Background Process)")
 
         async def run_training():
@@ -248,11 +266,19 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
             except Exception as e:
                 send_telegram_msg(f"❌ Error crítico en subproceso: {e}")
 
+        def _on_training_done(_future):
+            with dispatch_lock:
+                setattr(bot, "_training_future", None)
+
         try:
-            # [SRE] Puente Threadsafe: Inyección de la corrutina en el loop principal
-            asyncio.run_coroutine_threadsafe(run_training(), bot.main_loop)
+            future = asyncio.run_coroutine_threadsafe(run_training(), loop)
+            with dispatch_lock:
+                setattr(bot, "_training_future", future)
+            future.add_done_callback(_on_training_done)
             send_telegram_msg("⚙️ Solicitud de entrenamiento enviada al Loop Principal.")
         except Exception as e:
+            with dispatch_lock:
+                setattr(bot, "_training_future", None)
             send_telegram_msg(f"❌ Error al delegar entrenamiento: {e}")
 
         return True

@@ -48,7 +48,6 @@ def assert_bot_app_contract() -> None:
         raise AssertionError(f"Bot contract incompleto, faltan métodos: {missing}")
 
 
-
 def assert_bot_facade_contract() -> None:
     tree = load_ast(ROOT / "core" / "bot_facade.py")
     methods = class_method_names(tree, "BotFacade")
@@ -61,13 +60,55 @@ def assert_bot_facade_contract() -> None:
     }
     missing = sorted(required - methods)
     if missing:
-        raise AssertionError(f"BotFacade contract incompleto, faltan métodos: {missing}")
+        raise AssertionError(
+            f"BotFacade contract incompleto, faltan métodos: {missing}"
+        )
+
+
+def assert_execution_safety_invariants() -> None:
+    trade_manager_source = (ROOT / "core" / "trade_manager.py").read_text(
+        encoding="utf-8"
+    )
+    execution_service_source = (ROOT / "core" / "execution_service.py").read_text(
+        encoding="utf-8"
+    )
+    execution_port_source = (ROOT / "core" / "execution_port.py").read_text(
+        encoding="utf-8"
+    )
+    risk_engine_source = (ROOT / "core" / "risk_engine.py").read_text(encoding="utf-8")
+
+    required_trade_manager_tokens = [
+        "ENTRY_ABORTED_NO_HARD_SL",
+        "FAIL_SAFE_CLOSE_FAILED_HALT",
+        "_fail_safe_close_when_sl_missing",
+    ]
+    for token in required_trade_manager_tokens:
+        if token not in trade_manager_source:
+            raise AssertionError(
+                f"trade_manager.py no contiene invariante de seguridad requerido: {token}"
+            )
+
+    if "def fetch_book_ticker(self, symbol: str)" not in execution_port_source:
+        raise AssertionError(
+            "execution_port.py no define fetch_book_ticker(symbol), contrato de spread incompleto"
+        )
+
+    if "def _call_exchange(" not in execution_service_source:
+        raise AssertionError(
+            "execution_service.py no define _call_exchange, resiliencia exchange incompleta"
+        )
+
+    if "if margin_fraction > 1.0:" not in risk_engine_source:
+        raise AssertionError(
+            "risk_engine.py no normaliza MAX_MARGIN_PERCENT (porcentaje/fracción)"
+        )
 
 
 def main() -> int:
     assert_main_entrypoint()
     assert_bot_app_contract()
     assert_bot_facade_contract()
+    assert_execution_safety_invariants()
     print("[OK] Contratos arquitectónicos validados")
     return 0
 

@@ -168,7 +168,7 @@ class UI:
                 else:
                     mode = tier[:4] if tier else "IRON"
 
-                rsi_str = f"{rsi_val:.0f}" if rsi_val else "?"
+                rsi_str = f"{rsi_val:.0f}" if isinstance(rsi_val, (int, float)) else "?"
                 trend_str = trend[:5] if trend else "N/A"
 
                 sym_str = self._fit_text(sym, 12)

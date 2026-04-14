@@ -1,4 +1,16 @@
+import math
+
 from config import Config
+
+
+def _safe_metric_to_int(value, default=0):
+    try:
+        num = float(value)
+        if math.isnan(num) or math.isinf(num):
+            return int(default)
+        return int(round(num))
+    except Exception:
+        return int(default)
 
 
 def update_radar(
@@ -96,24 +108,16 @@ def update_radar(
             "signal": decision["signal"],
             "side": decision["signal"],
             "rsi_val": (
-                int(ctx.get("rsi", {}).get("val", 0))
+                _safe_metric_to_int(ctx.get("rsi", {}).get("val", 0))
                 if isinstance(ctx.get("rsi"), dict)
-                else (
-                    int(ctx.get("rsi", 0))
-                    if isinstance(ctx.get("rsi", 0), (int, float))
-                    else 0
-                )
+                else _safe_metric_to_int(ctx.get("rsi", 0))
             )
             if ctx
             else 0,
             "adx_val": (
-                int(ctx.get("adx", {}).get("val", 0))
+                _safe_metric_to_int(ctx.get("adx", {}).get("val", 0))
                 if isinstance(ctx.get("adx"), dict)
-                else (
-                    int(ctx.get("adx", 0))
-                    if isinstance(ctx.get("adx", 0), (int, float))
-                    else 0
-                )
+                else _safe_metric_to_int(ctx.get("adx", 0))
             )
             if ctx
             else 0,

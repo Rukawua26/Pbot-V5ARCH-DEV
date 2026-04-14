@@ -9,10 +9,19 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
     ema_ref = df_main["ema"].iloc[-1] if "ema" in df_main.columns else price
     trend_label = "RANGO"
     current_adx = float(
-        ind.get("adx", df_main["adx"].iloc[-1] if "adx" in df_main.columns else 0.0)
+        ind.get(
+            "adx",
+            (
+                df_main["adx_raw"].iloc[-1]
+                if "adx_raw" in df_main.columns
+                else (df_main["adx"].iloc[-1] if "adx" in df_main.columns else 0.0)
+            ),
+        )
     )
     current_rsi = float(
-        df_main["rsi"].iloc[-1] if "rsi" in df_main.columns else 50.0
+        df_main["rsi_raw"].iloc[-1]
+        if "rsi_raw" in df_main.columns
+        else (df_main["rsi"].iloc[-1] if "rsi" in df_main.columns else 50.0)
     )
 
     if current_adx > 25:
@@ -30,7 +39,9 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
         "close": price,
         "df_1h": df_main,
         "atr": df_main["atr"].iloc[-1] if "atr" in df_main.columns else 0.0,
-        "atr_pct": (df_main["atr"].iloc[-1] / price) if ("atr" in df_main.columns and price > 0) else 0,
+        "atr_pct": (df_main["atr"].iloc[-1] / price)
+        if ("atr" in df_main.columns and price > 0)
+        else 0,
         "trend": trend_label,
         "regime": ind.get("regime", "NORMAL"),
         "veto_reason": ind.get("veto_reason"),
@@ -56,7 +67,10 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
 
     return decision, ctx, ob_status, vol_rel
 
-def _update_signal_diagnostics(bot, symbol, audit_signal, prob_final, mode, votos, ind, signal_stats):
+
+def _update_signal_diagnostics(
+    bot, symbol, audit_signal, prob_final, mode, votos, ind, signal_stats
+):
     if audit_signal in ["BUY", "SELL"]:
         signal_stats[audit_signal] += 1
     else:
