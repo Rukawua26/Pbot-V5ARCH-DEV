@@ -1,6 +1,7 @@
 import ccxt
 import time
 import logging
+import random
 from typing import Optional
 from config import Config
 from core.types import CCXTOrder, CCXTBalanceResponse
@@ -36,6 +37,40 @@ class ExecutionService:
         if self.weight_tracker:
             self.weight_tracker.track(endpoint, weight, category)
 
+    def _call_exchange(
+        self, op_name: str, fn, *, retries: int = 2, timeout_s: float = 0.0
+    ):
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                if timeout_s > 0:
+                    self.exchange.timeout = int(timeout_s * 1000)
+                return fn()
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as error:
+                last_error = error
+                if attempt >= retries:
+                    break
+                sleep_s = (0.35 * attempt) + random.uniform(0.0, 0.2)
+                self.logger.warning(
+                    f"⚠️ {op_name} network timeout/retry {attempt}/{retries}: {error}"
+                )
+                time.sleep(sleep_s)
+            except ccxt.RateLimitExceeded as error:
+                last_error = error
+                if attempt >= retries:
+                    break
+                sleep_s = (0.6 * attempt) + random.uniform(0.0, 0.3)
+                self.logger.warning(
+                    f"⚠️ {op_name} rate-limit retry {attempt}/{retries}: {error}"
+                )
+                time.sleep(sleep_s)
+            except Exception as error:
+                last_error = error
+                break
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"{op_name} failed without captured error")
+
     def _track_emergency_stuck(
         self, symbol: str, side: str, amount: float, order: dict
     ):
@@ -56,8 +91,10 @@ class ExecutionService:
                 f"📋 Order ID: {order.get('id', 'N/A')}\n"
                 f"⚠️ *INTERVENCIÓN MANUAL REQUERIDA*"
             )
-        except Exception:
-            pass
+        except Exception as error:
+            self.logger.warning(
+                f"⚠️ No se pudo enviar alerta EMERGENCY_EXIT_STUCK: {error}"
+            )
 
     def has_markets_loaded(self) -> bool:
         try:
@@ -147,7 +184,12 @@ class ExecutionService:
     def cancel_order(self, symbol: str, order_id: str):
         if not symbol or not order_id:
             return None
-        canceled = self.exchange.cancel_order(order_id, symbol)
+        canceled = self._call_exchange(
+            "cancel_order",
+            lambda: self.exchange.cancel_order(order_id, symbol),
+            retries=3,
+            timeout_s=20.0,
+        )
         self._track_api_weight("cancel_order", 1, "trading")
         return canceled
 
@@ -160,6 +202,14 @@ class ExecutionService:
         books = self.exchange.fapiPublicGetTickerBookTicker()
         self._track_api_weight("fapiPublicGetTickerBookTicker", 1, "market")
         return books
+
+    def fetch_book_ticker(self, symbol: str):
+        market_id = self.exchange.market_id(symbol)
+        book = self.exchange.fapiPublicGetTickerBookTicker({"symbol": market_id})
+        self._track_api_weight("fapiPublicGetTickerBookTicker", 1, "market")
+        if isinstance(book, list):
+            return (book[0] if book else {}) or {}
+        return book or {}
 
     def fetch_funding_rate(self, symbol: str):
         fr = self.exchange.fetch_funding_rate(symbol)
@@ -244,13 +294,18 @@ class ExecutionService:
                 f"🚀 Enviando LIMIT IOC {symbol} {side} @ {limit_price_str}"
             )
 
-            order: CCXTOrder = self.exchange.create_order(
-                symbol,
-                type="limit",
-                side=side.lower(),
-                amount=amount,
-                price=float(limit_price_str),
-                params=params,
+            order: CCXTOrder = self._call_exchange(
+                "create_precision_order",
+                lambda: self.exchange.create_order(
+                    symbol,
+                    type="limit",
+                    side=side.lower(),
+                    amount=amount,
+                    price=float(limit_price_str),
+                    params=params,
+                ),
+                retries=3,
+                timeout_s=25.0,
             )
             self._track_api_weight("create_order", 1, "trading")
 
@@ -330,8 +385,13 @@ class ExecutionService:
             }
             if client_order_id:
                 params["newClientOrderId"] = client_order_id
-            order = self.exchange.create_order(
-                symbol, "STOP_MARKET", sl_side, amount, None, params
+            order = self._call_exchange(
+                "place_hard_sl",
+                lambda: self.exchange.create_order(
+                    symbol, "STOP_MARKET", sl_side, amount, None, params
+                ),
+                retries=3,
+                timeout_s=25.0,
             )
             self._track_api_weight("create_order", 1, "trading")
             self.last_hard_sl_error = ""

@@ -120,7 +120,8 @@ def _handle_intelligence_commands(bot, text: str) -> bool:
             image_bio = generate_ai_intel_image(bot.brain)
             files = {"photo": ("ai_intel.png", image_bio, "image/png")}
             requests.post(
-                f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendPhoto?chat_id={Config.TELEGRAM_CHAT_ID}",
+                f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendPhoto",
+                data={"chat_id": Config.TELEGRAM_CHAT_ID},
                 files=files,
                 timeout=(5, 20),
             )

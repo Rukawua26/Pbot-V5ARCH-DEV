@@ -28,6 +28,22 @@ def _clamp_leverage_1_to_10(raw_leverage) -> int:
     return max(1, min(lev, 10))
 
 
+def _fail_safe_close_when_sl_missing(
+    bot, symbol: str, side: str, amount: float
+) -> bool:
+    for attempt in range(1, 4):
+        try:
+            bot.execution.close_position(symbol, side, amount)
+            return True
+        except Exception as error:
+            bot.log(
+                f"⚠️ FAIL_SAFE_CLOSE intento {attempt}/3 fallido en {symbol}: {error}"
+            )
+            if attempt < 3:
+                time.sleep(2 ** (attempt - 1))
+    return False
+
+
 def execute_order(
     bot,
     symbol: str,
@@ -319,7 +335,20 @@ def execute_order(
         # [FASE 2: GATILLO SEGURO] Verificación de spread en tiempo real
         spread_veto_pct = getattr(Config, "ENTRY_SPREAD_VETO_THRESHOLD", 0.0015)
         try:
-            book_ticker = bot.execution.fetch_book_ticker(symbol)
+            fetch_book_ticker = getattr(bot.execution, "fetch_book_ticker", None)
+            if callable(fetch_book_ticker):
+                book_ticker = fetch_book_ticker(symbol)
+            else:
+                all_books = bot.execution.fetch_book_tickers() or []
+                market_id = symbol.replace("/", "")
+                book_ticker = next(
+                    (
+                        item
+                        for item in all_books
+                        if str(item.get("symbol") or "").upper() == market_id.upper()
+                    ),
+                    {},
+                )
             bid = float(book_ticker.get("bidPrice", 0) or 0)
             ask = float(book_ticker.get("askPrice", 0) or 0)
             if bid > 0 and ask > 0:
@@ -442,6 +471,43 @@ def execute_order(
                     sl_val,
                     client_order_id=sl_client_order_id,
                 )
+
+                if not sl_order:
+                    sl_error = str(
+                        getattr(bot.execution, "last_hard_sl_error", "") or ""
+                    )
+                    bot.log(
+                        f"☢️ HARD_SL_ATTACH_FAILED {symbol}: entrada cerrada por fail-safe para evitar posición desnuda. error={sl_error[:180]}"
+                    )
+                    append_execution_event(
+                        bot,
+                        "ENTRY_ABORTED_NO_HARD_SL",
+                        {
+                            "symbol": symbol,
+                            "entry_client_order_id": entry_client_order_id,
+                            "sl_client_order_id": sl_client_order_id,
+                            "sl_error": sl_error[:180],
+                        },
+                    )
+
+                    closed = _fail_safe_close_when_sl_missing(
+                        bot, symbol, side, filled_amount
+                    )
+                    if not closed:
+                        bot.is_paused = True
+                        bot.integrity_lock_active = True
+                        setattr(bot, "halt_system_active", True)
+                        append_execution_event(
+                            bot,
+                            "FAIL_SAFE_CLOSE_FAILED_HALT",
+                            {
+                                "symbol": symbol,
+                                "entry_client_order_id": entry_client_order_id,
+                                "sl_error": sl_error[:180],
+                            },
+                        )
+                    _drop_pending_intent()
+                    return "ENTRY_ABORTED_NO_HARD_SL"
 
                 send_telegram_msg(
                     f"🚀 *🔥 REAL TRADE ABIERTO*\n"

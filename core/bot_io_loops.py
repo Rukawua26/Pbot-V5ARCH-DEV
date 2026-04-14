@@ -8,6 +8,14 @@ from config import Config
 from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 
 
+def _sanitize_telegram_error(error) -> str:
+    msg = str(error)
+    token = str(getattr(Config, "TELEGRAM_TOKEN", "") or "")
+    if token:
+        msg = msg.replace(token, "***")
+    return msg
+
+
 def websocket_monitor(bot):
     """Hilo dedicado a escuchar precios en tiempo real vía Websockets (v106.5)."""
     try:
@@ -72,8 +80,12 @@ def telegram_listener(bot):
                 time.sleep(10)
                 continue
 
-            url = f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/getUpdates?offset={last_update_id}&timeout=30"
-            response = requests.get(url, timeout=35).json()
+            url = f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/getUpdates"
+            response = requests.get(
+                url,
+                params={"offset": last_update_id, "timeout": 30},
+                timeout=35,
+            ).json()
 
             for update in response.get("result", []):
                 last_update_id = update["update_id"] + 1
@@ -88,7 +100,7 @@ def telegram_listener(bot):
             now_ts = monotonic_now()
             if now_ts - float(getattr(bot, "_telegram_last_err_log", 0.0)) > 120:
                 bot._telegram_last_err_log = now_ts
-                bot.log(f"Telegram Error: {error}")
+                bot.log(f"Telegram Error: {_sanitize_telegram_error(error)}")
             time.sleep(backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, 60)
             continue

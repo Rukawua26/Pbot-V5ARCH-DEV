@@ -113,14 +113,17 @@ class RiskEngine:
         try:
             # --- 1. Límites absolutos ---
             base_notional = Config.MIN_NOTIONAL_VALUE  # e.g. $12
-            max_margin_usd = balance * Config.MAX_MARGIN_PERCENT  # 5% del balance
+            margin_fraction = float(getattr(Config, "MAX_MARGIN_PERCENT", 5.0))
+            if margin_fraction > 1.0:
+                margin_fraction = margin_fraction / 100.0
+            max_margin_usd = balance * margin_fraction
             max_notional_allowed = max_margin_usd * leverage
 
             # Veto de capital insuficiente: no se puede ni abrir el mínimo
             if not is_shadow and max_notional_allowed < base_notional:
                 self.logger.warning(
                     f"🚫 CAPITAL_INSUF {symbol}: regla riesgo "
-                    f"({Config.MAX_MARGIN_PERCENT * 100:.1f}%) → "
+                    f"({margin_fraction * 100:.1f}%) → "
                     f"${max_notional_allowed:.2f} < min ${base_notional:.2f}"
                 )
                 return 0, -1

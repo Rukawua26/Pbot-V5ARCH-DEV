@@ -3,6 +3,10 @@ SNIPER AI v118 - Aplicacion principal del bot.
 """
 
 import traceback
+import asyncio
+import time
+import threading
+import sys
 from functools import lru_cache
 import importlib.util
 import signal
@@ -155,6 +159,7 @@ except ImportError:
 
 class Bot(BotFacade):
     def __init__(self):
+        self.is_running = True
         self.ui = UI()
         self.brain = Brain()
         self.main_loop = None  # [SRE] Referencia al Global Event Loop
@@ -163,11 +168,68 @@ class Bot(BotFacade):
         self._dashboard_module = dashboard
         self._logger = logger
         self._shadow_logger = shadow_logger
+        self._main_loop_thread = None
+        self._main_loop_ready = threading.Event()
+
+        self._bind_main_loop_or_abort()
 
         self._init_core_services_and_engines()
         self._init_runtime_state()
         self._init_realtime_and_monitoring()
         self._init_models_and_startup_tasks()
+
+    def _bind_main_loop_or_abort(self):
+        if (
+            getattr(self, "main_loop", None) is not None
+            and not self.main_loop.is_closed()
+            and self.main_loop.is_running()
+        ):
+            return
+
+        loop = asyncio.new_event_loop()
+        self.main_loop = loop
+
+        def _run_loop_forever():
+            try:
+                asyncio.set_event_loop(loop)
+                self._main_loop_ready.set()
+                loop.run_forever()
+            except Exception as error:
+                logger.critical(
+                    f"🚨 FATAL BOOT ERROR: Event Loop thread falló: {error}"
+                )
+            finally:
+                try:
+                    loop.close()
+                except Exception as error:
+                    logger.warning(f"⚠️ No se pudo cerrar event loop principal: {error}")
+
+        self._main_loop_thread = threading.Thread(
+            target=_run_loop_forever,
+            daemon=True,
+            name="sniper-main-loop",
+        )
+        self._main_loop_thread.start()
+
+        if not self._main_loop_ready.wait(timeout=2.0):
+            logger.critical(
+                "🚨 FATAL BOOT ERROR: Global Event Loop no pudo inicializarse en tiempo. Abortando arranque."
+            )
+            raise SystemExit(1)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not loop.is_running():
+            time.sleep(0.02)
+
+        if (
+            not getattr(self, "main_loop", None)
+            or self.main_loop.is_closed()
+            or not self.main_loop.is_running()
+        ):
+            logger.critical(
+                "🚨 FATAL BOOT ERROR: Global Event Loop no está enlazado a la instancia del Bot. Abortando arranque."
+            )
+            raise SystemExit(1)
 
     def _init_core_services_and_engines(self):
         return init_core_services_and_engines(self)
@@ -371,10 +433,16 @@ def run_entrypoint():
         if not acquire_single_instance_lock(logger):
             raise SystemExit(1)
 
-        # [SRE] Captura del Global Event Loop antes de lanzar hilos
-        loop = asyncio.get_event_loop()
         bot = Bot()
-        bot.main_loop = loop
+        if (
+            not getattr(bot, "main_loop", None)
+            or bot.main_loop.is_closed()
+            or not bot.main_loop.is_running()
+        ):
+            logger.critical(
+                "🚨 FATAL BOOT ERROR: Global Event Loop no está enlazado a la instancia del Bot. Abortando arranque."
+            )
+            sys.exit(1)
 
         def _graceful_shutdown(signum, _frame):
             signal_name = (

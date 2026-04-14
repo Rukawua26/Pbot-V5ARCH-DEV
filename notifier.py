@@ -12,6 +12,14 @@ from enum import Enum
 from config import Config
 
 
+def _sanitize_telegram_error(error) -> str:
+    msg = str(error)
+    token = str(getattr(Config, "TELEGRAM_TOKEN", "") or "")
+    if token:
+        msg = msg.replace(token, "***")
+    return msg
+
+
 class Priority(Enum):
     DEBUG = 1
     INFO = 2
@@ -61,7 +69,9 @@ class NotificationQueue:
                     break
             except Exception as e:
                 if attempt == retries - 1:
-                    print(f"⚠️ Telegram send failed after {retries} attempts: {e}")
+                    print(
+                        f"⚠️ Telegram send failed after {retries} attempts: {_sanitize_telegram_error(e)}"
+                    )
         return False
 
     def send(self, message, priority=Priority.INFO):
@@ -98,7 +108,7 @@ def send_telegram_msg(message, priority=Priority.INFO):
     try:
         get_queue().send(message, priority)
     except Exception as e:
-        print(f"⚠️ Telegram Error: {e}")
+        print(f"⚠️ Telegram Error: {_sanitize_telegram_error(e)}")
 
 
 def send_telegram_photo(caption, photo_buffer):
@@ -119,7 +129,7 @@ def send_telegram_photo(caption, photo_buffer):
         if response.status_code != 200:
             print(f"⚠️ Telegram Photo Error: {response.text}")
     except Exception as e:
-        print(f"⚠️ Telegram Photo Error: {e}")
+        print(f"⚠️ Telegram Photo Error: {_sanitize_telegram_error(e)}")
 
 
 def notify_trade(symbol, side, pnl_percent, is_shadow):
