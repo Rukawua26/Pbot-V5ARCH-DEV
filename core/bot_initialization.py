@@ -4,6 +4,7 @@ import uuid
 
 from config import Config
 from core.cooldown_state import load_cooldowns
+from core.execution_runtime_state import load_execution_runtime_state
 from core.time_utils import monotonic_now
 
 
@@ -132,6 +133,11 @@ def init_realtime_and_monitoring(
             bot.log(f"❄️ Restaurados {len(bot.cooldown_pairs)} cooldowns persistentes.")
     except Exception as error:
         bot.log(f"⚠️ Error restaurando cooldowns: {error}")
+
+    try:
+        load_execution_runtime_state(bot)
+    except Exception as error:
+        bot.log(f"⚠️ Error restaurando execution runtime state: {error}")
 
     threading.Thread(target=bot._heartbeat_loop, daemon=True).start()
 

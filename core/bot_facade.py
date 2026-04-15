@@ -1,4 +1,5 @@
 from config import Config
+from core.execution_runtime_state import persist_execution_runtime_state
 from core.bot_cycles import (
     fetch_triage_data_parallel,
     finalize_scan_cycle,
@@ -222,6 +223,7 @@ class BotFacade:
         try:
             if hasattr(self, "data_service") and self.data_service:
                 self.data_service.save_cache()
+            persist_execution_runtime_state(self)
         except Exception as error:
             self.log(f"⚠️ Error al guardar caché: {error}")
 

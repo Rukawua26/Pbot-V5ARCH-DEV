@@ -184,6 +184,58 @@ class ExecutionService:
         day_metrics[symbol] = int(day_metrics.get(symbol, 0)) + 1
         return day_metrics[symbol]
 
+    def export_runtime_state(self) -> dict:
+        now_ts = time.time()
+        with self._exchange_call_lock:
+            quarantines = {}
+            for symbol, until in (self._symbol_quarantine_until or {}).items():
+                try:
+                    until_ts = float(until)
+                except (TypeError, ValueError):
+                    continue
+                if until_ts > now_ts:
+                    quarantines[str(symbol)] = until_ts
+
+            day_key = self._active_no_price_day_key()
+            daily_counts = dict((self._no_price_exit_daily_metrics.get(day_key) or {}))
+
+            return {
+                "version": 1,
+                "saved_at": now_ts,
+                "quarantines": quarantines,
+                "no_price_exit_daily": {day_key: daily_counts},
+            }
+
+    def import_runtime_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+
+        now_ts = time.time()
+        with self._exchange_call_lock:
+            loaded_quarantines = {}
+            for symbol, until in (state.get("quarantines") or {}).items():
+                try:
+                    until_ts = float(until)
+                except (TypeError, ValueError):
+                    continue
+                if until_ts > now_ts:
+                    loaded_quarantines[str(symbol)] = until_ts
+            self._symbol_quarantine_until = loaded_quarantines
+
+            persisted_daily = state.get("no_price_exit_daily") or {}
+            day_key = self._active_no_price_day_key()
+            day_metrics = persisted_daily.get(day_key) or {}
+            if isinstance(day_metrics, dict):
+                self._no_price_exit_daily_metrics = {
+                    day_key: {
+                        str(symbol): int(value)
+                        for symbol, value in day_metrics.items()
+                        if isinstance(value, (int, float)) and int(value) >= 0
+                    }
+                }
+            else:
+                self._no_price_exit_daily_metrics = {}
+
     def _record_cancel_all_orders_failure(self, symbol: str, error):
         now_ts = time.time()
         state = self._cancel_all_failures.get(symbol, {"count": 0})

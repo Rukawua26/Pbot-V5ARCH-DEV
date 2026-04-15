@@ -138,7 +138,10 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
     @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", True)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 1)
-    @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
+    @patch(
+        "core.execution_service.time.monotonic",
+        side_effect=[10.0, 10.2, 12.5, 12.5, 12.5, 12.5],
+    )
     def test_no_price_escalates_to_market_exit_after_threshold(self, _mono_mock):
         service = ExecutionService("k", "s")
         service.exchange = _NoPriceExchange()
@@ -157,7 +160,10 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
     @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", False)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 1)
-    @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
+    @patch(
+        "core.execution_service.time.monotonic",
+        side_effect=[10.0, 10.2, 12.5, 12.5, 12.5, 12.5],
+    )
     def test_no_price_does_not_market_exit_when_disabled(self, _mono_mock):
         service = ExecutionService("k", "s")
         service.exchange = _NoPriceExchange()
