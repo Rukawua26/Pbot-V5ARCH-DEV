@@ -108,6 +108,19 @@ def execute_order(
         bot.log(f"🧱 BLOQUEADO por matriz táctica: {symbol}")
         return "SYMBOL_BLOCKED_MATRIX"
 
+    if not is_shadow:
+        execution = getattr(bot, "execution", None)
+        is_quarantined = getattr(execution, "is_symbol_quarantined", None)
+        get_remaining = getattr(
+            execution, "get_symbol_quarantine_remaining_seconds", None
+        )
+        if callable(is_quarantined) and is_quarantined(symbol):
+            remaining_s = int(get_remaining(symbol) if callable(get_remaining) else 0)
+            bot.log(
+                f"🚫 SYMBOL_QUARANTINE_ACTIVE {symbol}: bloqueada apertura real por degradación cancel_all ({remaining_s}s restantes)."
+            )
+            return "SYMBOL_QUARANTINED"
+
     atr_pct = context.get("atr_pct", 0) if context else 0.02
     min_notional = Config.MIN_NOTIONAL_VALUE
     confidence_score = context.get("prob_final", 0.0) if context else 0.0

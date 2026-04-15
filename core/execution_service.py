@@ -3,6 +3,7 @@ import time
 import logging
 import random
 import threading
+from datetime import datetime, timezone
 from typing import Optional
 from config import Config
 from core.types import CCXTOrder, CCXTBalanceResponse
@@ -32,7 +33,10 @@ class ExecutionService:
         self._last_valid_balance: Optional[float] = None
         self._exchange_call_lock = threading.RLock()
         self._cancel_all_failures = {}
+        self._cancel_all_failure_events = {}
+        self._symbol_quarantine_until = {}
         self._no_price_exit_state = {}
+        self._no_price_exit_daily_metrics = {}
 
     def set_weight_tracker(self, tracker):
         self.weight_tracker = tracker
@@ -129,18 +133,97 @@ class ExecutionService:
 
     def _record_cancel_all_orders_success(self, symbol: str):
         self._cancel_all_failures.pop(symbol, None)
+        self._cancel_all_failure_events.pop(symbol, None)
+
+    def _is_quarantine_active(self, symbol: str) -> bool:
+        until = float(self._symbol_quarantine_until.get(symbol) or 0.0)
+        if until <= 0:
+            return False
+        if time.time() >= until:
+            self._symbol_quarantine_until.pop(symbol, None)
+            return False
+        return True
+
+    def is_symbol_quarantined(self, symbol: str) -> bool:
+        return self._is_quarantine_active(symbol)
+
+    def get_symbol_quarantine_remaining_seconds(self, symbol: str) -> int:
+        until = float(self._symbol_quarantine_until.get(symbol) or 0.0)
+        if until <= 0:
+            return 0
+        remaining = int(max(0.0, until - time.time()))
+        if remaining <= 0:
+            self._symbol_quarantine_until.pop(symbol, None)
+            return 0
+        return remaining
+
+    def _active_no_price_day_key(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def get_no_price_market_exit_count(
+        self, symbol: str, day_key: Optional[str] = None
+    ) -> int:
+        key = day_key or self._active_no_price_day_key()
+        return int((self._no_price_exit_daily_metrics.get(key) or {}).get(symbol, 0))
+
+    def _resolve_no_price_threshold(self, symbol: str) -> int:
+        base_threshold = int(
+            getattr(Config, "NO_PRICE_EXIT_ESCALATION_SECONDS", 180) or 180
+        )
+        min_threshold = int(
+            getattr(Config, "NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 45) or 45
+        )
+        daily_count = self.get_no_price_market_exit_count(symbol)
+        dynamic_factor = 1.0 + (0.4 * min(daily_count, 5))
+        dynamic_threshold = int(round(base_threshold / dynamic_factor))
+        return max(min_threshold, dynamic_threshold)
+
+    def _record_no_price_market_exit(self, symbol: str) -> int:
+        day_key = self._active_no_price_day_key()
+        day_metrics = self._no_price_exit_daily_metrics.setdefault(day_key, {})
+        day_metrics[symbol] = int(day_metrics.get(symbol, 0)) + 1
+        return day_metrics[symbol]
 
     def _record_cancel_all_orders_failure(self, symbol: str, error):
+        now_ts = time.time()
         state = self._cancel_all_failures.get(symbol, {"count": 0})
         state["count"] = int(state.get("count") or 0) + 1
         state["last_error"] = str(error)
-        state["last_ts"] = time.time()
+        state["last_ts"] = now_ts
         self._cancel_all_failures[symbol] = state
+
+        events = self._cancel_all_failure_events.get(symbol, [])
+        events.append(now_ts)
+        window_s = int(
+            getattr(Config, "CANCEL_ALL_DEGRADED_WINDOW_SECONDS", 300) or 300
+        )
+        cutoff = now_ts - window_s
+        events = [evt for evt in events if evt >= cutoff]
+        self._cancel_all_failure_events[symbol] = events
 
         count = state["count"]
         self.logger.warning(
             f"⚠️ cancel_all_orders fallo {symbol}: intento consecutivo {count}, error={error}"
         )
+
+        quarantine_events = int(
+            getattr(Config, "CANCEL_ALL_DEGRADED_QUARANTINE_EVENTS", 3) or 3
+        )
+        if len(events) >= quarantine_events:
+            quarantine_s = int(
+                getattr(Config, "CANCEL_ALL_DEGRADED_QUARANTINE_SECONDS", 900) or 900
+            )
+            quarantine_until = now_ts + quarantine_s
+            previous_until = float(self._symbol_quarantine_until.get(symbol) or 0.0)
+            self._symbol_quarantine_until[symbol] = max(
+                previous_until, quarantine_until
+            )
+            remaining_s = int(max(0.0, self._symbol_quarantine_until[symbol] - now_ts))
+            self.logger.critical(
+                f"🚫 SYMBOL_QUARANTINE_ACTIVATED {symbol}: {len(events)} fallos cancel_all en {window_s}s. "
+                f"Quarantined {remaining_s}s."
+            )
+
         if count >= 3:
             self.logger.critical(
                 f"🚨 CANCEL_ALL_ORDERS_DEGRADED {symbol}: {count} fallos consecutivos"
@@ -166,9 +249,7 @@ class ExecutionService:
             "last_warn": 0.0,
         }
 
-        threshold_s = int(
-            getattr(Config, "NO_PRICE_EXIT_ESCALATION_SECONDS", 180) or 180
-        )
+        threshold_s = self._resolve_no_price_threshold(symbol)
         allow_market = bool(getattr(Config, "NO_PRICE_ALLOW_MARKET_EXIT", False))
         elapsed_s = now_mono - float(state.get("first_seen") or now_mono)
 
@@ -193,8 +274,10 @@ class ExecutionService:
                 timeout_s=20.0,
             )
             self._track_api_weight("create_order", 1, "trading")
+            daily_count = self._record_no_price_market_exit(symbol)
             self.logger.critical(
-                f"🚨 NO_PRICE_ESCALATED_MARKET_EXIT {symbol}: market reduce-only ejecutada"
+                f"🚨 NO_PRICE_ESCALATED_MARKET_EXIT {symbol}: market reduce-only ejecutada "
+                f"(daily_count={daily_count}, threshold_s={threshold_s})"
             )
             self._no_price_exit_state.pop(symbol, None)
             return order
@@ -377,6 +460,16 @@ class ExecutionService:
         Ejecución quirúrgica: LIMIT IOC.
         Si no se llena al precio límite (con slippage), se cancela automáticamente.
         """
+        if self._is_quarantine_active(symbol):
+            remaining_s = self.get_symbol_quarantine_remaining_seconds(symbol)
+            self.last_entry_reject_error = (
+                f"SYMBOL_QUARANTINED_CANCEL_ALL_DEGRADED ({remaining_s}s)"
+            )
+            self.logger.warning(
+                f"🚫 ENTRY_BLOCKED_QUARANTINE {symbol}: {remaining_s}s restantes"
+            )
+            return None
+
         try:
             # Calcular precio límite basado en slippage permitido
             limit_price = (

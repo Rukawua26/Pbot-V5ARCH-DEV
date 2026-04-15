@@ -1,4 +1,6 @@
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import ccxt
@@ -79,6 +81,23 @@ class _NoPriceExchange:
         }
 
 
+class _ConcurrentTimeoutExchange:
+    def __init__(self):
+        self.timeout = 9000
+        self._lock = threading.Lock()
+        self.seen_timeouts = []
+
+    def cancel_order(self, order_id, symbol):
+        with self._lock:
+            self.seen_timeouts.append(self.timeout)
+        return {
+            "id": order_id,
+            "symbol": symbol,
+            "status": "canceled",
+            "timeout_seen": self.timeout,
+        }
+
+
 class ExecutionServiceResilienceTest(unittest.TestCase):
     @patch("core.execution_service.time.sleep", return_value=None)
     def test_cancel_order_retries_on_network_error(self, _sleep_mock):
@@ -118,6 +137,7 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
 
     @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", True)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
+    @patch("core.execution_service.Config.NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 1)
     @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
     def test_no_price_escalates_to_market_exit_after_threshold(self, _mono_mock):
         service = ExecutionService("k", "s")
@@ -136,6 +156,7 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
 
     @patch("core.execution_service.Config.NO_PRICE_ALLOW_MARKET_EXIT", False)
     @patch("core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 1)
+    @patch("core.execution_service.Config.NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 1)
     @patch("core.execution_service.time.monotonic", side_effect=[10.0, 10.2, 12.5])
     def test_no_price_does_not_market_exit_when_disabled(self, _mono_mock):
         service = ExecutionService("k", "s")
@@ -150,6 +171,74 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
         self.assertIsNone(second)
         self.assertIsNone(third)
         self.assertEqual(service.exchange.market_exit_calls, 0)
+
+    def test_dynamic_no_price_threshold_tunes_with_daily_exit_count(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _NoPriceExchange()
+        service.set_weight_tracker(None)
+
+        with (
+            patch(
+                "core.execution_service.Config.NO_PRICE_EXIT_ESCALATION_SECONDS", 180
+            ),
+            patch(
+                "core.execution_service.Config.NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", 45
+            ),
+        ):
+            base = service._resolve_no_price_threshold("BTC/USDT")
+            service._record_no_price_market_exit("BTC/USDT")
+            tuned_once = service._resolve_no_price_threshold("BTC/USDT")
+            for _ in range(10):
+                service._record_no_price_market_exit("BTC/USDT")
+            tuned_floor = service._resolve_no_price_threshold("BTC/USDT")
+
+        self.assertEqual(base, 180)
+        self.assertLess(tuned_once, base)
+        self.assertGreaterEqual(tuned_floor, 45)
+
+    def test_cancel_all_degraded_activates_symbol_quarantine(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _TimeoutProbeExchange()
+        service.set_weight_tracker(None)
+
+        with (
+            patch(
+                "core.execution_service.Config.CANCEL_ALL_DEGRADED_WINDOW_SECONDS", 300
+            ),
+            patch(
+                "core.execution_service.Config.CANCEL_ALL_DEGRADED_QUARANTINE_EVENTS", 3
+            ),
+            patch(
+                "core.execution_service.Config.CANCEL_ALL_DEGRADED_QUARANTINE_SECONDS",
+                600,
+            ),
+            patch(
+                "core.execution_service.time.time",
+                side_effect=[10.0, 20.0, 30.0, 30.0, 30.0],
+            ),
+        ):
+            service._record_cancel_all_orders_failure("BTC/USDT", RuntimeError("e1"))
+            service._record_cancel_all_orders_failure("BTC/USDT", RuntimeError("e2"))
+            service._record_cancel_all_orders_failure("BTC/USDT", RuntimeError("e3"))
+            self.assertTrue(service.is_symbol_quarantined("BTC/USDT"))
+            remaining = service.get_symbol_quarantine_remaining_seconds("BTC/USDT")
+
+        self.assertGreater(remaining, 0)
+
+    def test_call_exchange_is_thread_safe_under_concurrency(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _ConcurrentTimeoutExchange()
+        service.set_weight_tracker(None)
+
+        def _op(i):
+            return service.cancel_order("BTC/USDT", f"order-{i}")
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(_op, range(12)))
+
+        self.assertEqual(len(results), 12)
+        self.assertTrue(all(item.get("timeout_seen") == 20000 for item in results))
+        self.assertEqual(service.exchange.timeout, 9000)
 
 
 if __name__ == "__main__":
