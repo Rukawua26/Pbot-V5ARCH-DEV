@@ -57,6 +57,17 @@ class NotificationQueue:
                     return True
                 elif response.status_code == 429:  # Rate limited
                     time.sleep(2**attempt)  # Exponential backoff
+                elif (
+                    response.status_code == 400
+                    and payload.get("parse_mode") == "Markdown"
+                ):
+                    fallback_payload = dict(payload)
+                    fallback_payload.pop("parse_mode", None)
+                    response = telegram_post(method, json=fallback_payload, timeout=10)
+                    if response.status_code == 200:
+                        self.last_sent = time.time()
+                        return True
+                    break
                 else:
                     break
             except Exception as e:
@@ -115,6 +126,13 @@ def send_telegram_photo(caption, photo_buffer):
             "parse_mode": "Markdown",
         }
         response = telegram_post("sendPhoto", data=data, files=files, timeout=15)
+
+        if response.status_code == 400 and data.get("parse_mode") == "Markdown":
+            fallback_data = dict(data)
+            fallback_data.pop("parse_mode", None)
+            response = telegram_post(
+                "sendPhoto", data=fallback_data, files=files, timeout=15
+            )
 
         if response.status_code != 200:
             print(f"⚠️ Telegram Photo Error: {response.text}")

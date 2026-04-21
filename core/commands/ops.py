@@ -1,7 +1,6 @@
 import asyncio
 import importlib.util
 import json
-import os
 import pickle
 import subprocess
 import sys
@@ -49,15 +48,12 @@ def _help_message() -> str:
         "• `/explain [PAR]`: Explicación en tiempo real\n\n"
         "🧠 *INTELIGENCIA*\n"
         "• `/force_train`: Re-entrenar modelo Ghost\n"
-        "• `/evolution`: Ejecutar AI Coach\n"
-        "• `/genetic`: Estado motor genético\n"
         "• `/dna [PAR]`: Parámetros genéticos\n\n"
         "⚙️ *SISTEMA*\n"
         "• `/reset`: Reiniciar PnL diario\n"
-        "• `/dump_db`: Exportar base de datos\n"
         "• `/test`: Test de notificaciones\n\n"
         "🚫 *COMANDOS BLOQUEADOS EN CUARENTENA*\n"
-        "• `/force_shadow` y `/clean`"
+        "• `/force_shadow`, `/clean`, `/dump_db`, `/evolution` y `/genetic`"
     )
 
 
@@ -188,22 +184,8 @@ def _handle_misc_commands(bot, text: str) -> bool:
 
     if text == "/dump_db":
         send_telegram_msg(
-            "📦 *EXPORTANDO BASE DE DATOS...*\nEsto puede tomar unos segundos."
+            "⛔ *Comando deshabilitado.*\nLa exportación remota de DB fue retirada porque dependía de un script ausente."
         )
-        try:
-            result = subprocess.run(
-                [sys.executable, "export_database.py"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0:
-                output = result.stdout
-                send_telegram_msg(f"✅ *EXPORTACIÓN COMPLETA*\n{output}")
-            else:
-                send_telegram_msg(f"❌ Error: {result.stderr}")
-        except Exception as error:
-            send_telegram_msg(f"❌ Error: {error}")
         return True
 
     return False
@@ -284,34 +266,15 @@ def _handle_training_and_maintenance_commands(bot, text: str) -> bool:
         return True
 
     if text == "/evolution":
-        send_telegram_msg("🧬 Ejecutando AI Coach para optimizar filtros...")
-        try:
-            root = os.path.dirname(os.path.dirname(__file__))
-            coach_candidates = [
-                os.path.join(root, "tools", "ai_coach.py"),
-                os.path.join(root, "ai_coach.py"),
-            ]
-            coach_path = next(
-                (path for path in coach_candidates if os.path.exists(path)), None
-            )
-            if not coach_path:
-                send_telegram_msg("ℹ️ AI Coach no disponible en este entorno.")
-                return True
-
-            subprocess.run([sys.executable, coach_path], check=False, timeout=900)
-            send_telegram_msg("🚀 Evolución completada. Parámetros ajustados.")
-        except Exception as error:
-            send_telegram_msg(f"❌ Error evolución: {error}")
+        send_telegram_msg(
+            "⛔ *Comando deshabilitado.*\nAI Coach no está instalado en este entorno y se bloquea para evitar falsas ejecuciones."
+        )
         return True
 
     if text == "/genetic":
         send_telegram_msg(
-            "🧬 *INICIANDO MOTOR GENÉTICO...*\nAnalizando supervivencia de especies y mutando parámetros SL/TP..."
+            "⛔ *Comando deshabilitado.*\nEl motor genético remoto fue retirado porque el script no existe en este despliegue."
         )
-        try:
-            subprocess.Popen([sys.executable, "tools/genetic_engine.py"])
-        except Exception as error:
-            send_telegram_msg(f"❌ Error iniciando motor genético: {error}")
         return True
 
     if text == "/force_shadow":

@@ -1,5 +1,6 @@
 ccxt
 pandas
+ta
 pandas_ta
 rich
 python-dotenv

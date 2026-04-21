@@ -285,6 +285,54 @@ class ReconciliationTest(unittest.TestCase):
         self.assertIn("XRP/USDT", bot.active_trades)
         bot.brain.delete_active_trade_state.assert_not_called()
 
+    def test_reconciliation_aborts_without_mutating_state_when_positions_fail(self):
+        bot = SimpleNamespace()
+        bot.lock = RLock()
+        bot.db_lock = RLock()
+        bot.active_trades = {
+            "BTC/USDT": {"symbol": "BTC/USDT", "status": "OPEN", "is_shadow": False}
+        }
+        bot.balance = 100.0
+        bot.is_paused = False
+        bot.integrity_lock_active = False
+        bot.log = MagicMock()
+        bot.execution = SimpleNamespace(fetch_positions=MagicMock(side_effect=RuntimeError("down")))
+        bot.get_current_balance = lambda: 100.0
+        bot.brain = SimpleNamespace(
+            save_active_trade_state=MagicMock(),
+            save_error_snapshot=MagicMock(),
+            delete_active_trade_state=MagicMock(),
+        )
+
+        reconcile_bootstrap_state(bot)
+
+        self.assertIn("BTC/USDT", bot.active_trades)
+        bot.brain.save_active_trade_state.assert_not_called()
+        bot.brain.save_error_snapshot.assert_not_called()
+        bot.brain.delete_active_trade_state.assert_not_called()
+
+    def test_reconciliation_skips_integrity_lock_when_balance_fetch_fails(self):
+        bot = SimpleNamespace()
+        bot.lock = RLock()
+        bot.db_lock = RLock()
+        bot.active_trades = {}
+        bot.balance = 100.0
+        bot.is_paused = False
+        bot.integrity_lock_active = False
+        bot.log = MagicMock()
+        bot.execution = SimpleNamespace(fetch_positions=lambda: [], fetch_open_orders=lambda: [])
+        bot.get_current_balance = MagicMock(side_effect=RuntimeError("balance down"))
+        bot.brain = SimpleNamespace(
+            save_active_trade_state=MagicMock(),
+            save_error_snapshot=MagicMock(),
+            delete_active_trade_state=MagicMock(),
+        )
+
+        reconcile_bootstrap_state(bot)
+
+        self.assertFalse(bot.integrity_lock_active)
+        self.assertFalse(bot.is_paused)
+
 
 if __name__ == "__main__":
     unittest.main()

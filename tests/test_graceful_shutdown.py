@@ -2,7 +2,7 @@ import threading
 import unittest
 from types import SimpleNamespace
 
-from core.bot_shutdown import _shutdown_sequence
+from core.bot_shutdown import _shutdown_sequence, request_graceful_shutdown
 from core.trade_manager import execute_order
 
 
@@ -88,6 +88,17 @@ class GracefulShutdownTest(unittest.TestCase):
             context={},
         )
         self.assertEqual(result, "SHUTDOWN_IN_PROGRESS")
+
+    def test_request_graceful_shutdown_creates_event_when_missing(self):
+        bot = self._build_bot()
+        del bot.shutdown_complete
+        logger = SimpleNamespace(warning=lambda *_a, **_k: None)
+
+        request_graceful_shutdown(bot, reason="TEST", logger=logger)
+        bot._shutdown_thread.join(timeout=2.0)
+
+        self.assertTrue(bot.shutdown_in_progress)
+        self.assertTrue(bot.shutdown_complete.is_set())
 
 
 if __name__ == "__main__":

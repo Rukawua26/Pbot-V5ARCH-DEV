@@ -24,6 +24,7 @@ def connect_to_binance(bot):
                 "defaultType": "future",
                 "recvWindow": 60000,
                 "fetchCurrencies": False,
+                "warnOnFetchOpenOrdersWithoutSymbol": False,
             },
             "enableRateLimit": True,
             "adjustForTimeDifference": True,
@@ -31,14 +32,21 @@ def connect_to_binance(bot):
             "timeout": 30000,  # FIX: ccxt espera el timeout en ms (30000 ms = 30s)
         }
 
+        exchange = ccxt.binance(exchange_config)
         if Config.USE_TESTNET:
             bot.log("⚠️ MODO TESTNET ACTIVADO")
-            exchange_config["urls"] = {
-                "api": "https://testnet.binancefuture.com",
-                "testnet": "https://testnet.binancefuture.com",
-            }
+            if not hasattr(exchange, "set_sandbox_mode"):
+                raise RuntimeError(
+                    "La clase de exchange actual no soporta sandbox/testnet de forma nativa."
+                )
+            try:
+                exchange.set_sandbox_mode(True)
+            except Exception as error:
+                raise RuntimeError(
+                    f"No se pudo activar testnet/sandbox en Binance Futures: {error}"
+                ) from error
 
-        bot.execution.exchange = ccxt.binance(exchange_config)
+        bot.execution.exchange = exchange
         bot.data_service.exchange = bot.execution.exchange
         bot.execution.load_markets()
 
@@ -75,8 +83,11 @@ def connect_to_binance(bot):
                 )
         except Exception as error:
             bot.log(
-                f"⚠️ CONEXIÓN PARCIAL: Error verificando permisos/balance. Revise sus API Keys. {error}"
+                f"❌ CONEXIÓN RECHAZADA: Error verificando permisos/balance. Revise sus API Keys. {error}"
             )
+            raise RuntimeError(
+                f"Credenciales/permisos Binance inválidos o insuficientes: {error}"
+            ) from error
 
         bot.sync_wallet()
         bot.log(

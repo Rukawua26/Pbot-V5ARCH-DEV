@@ -7,6 +7,23 @@ from core.telegram_api import sanitize_telegram_error, telegram_get_json
 from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 
 
+def _extract_telegram_message(update):
+    if not isinstance(update, dict):
+        return {}
+    return (
+        update.get("message")
+        or update.get("edited_message")
+        or update.get("channel_post")
+        or {}
+    )
+
+
+def _is_authorized_telegram_chat(chat_id) -> bool:
+    expected = str(getattr(Config, "TELEGRAM_CHAT_ID", "") or "").strip()
+    current = str(chat_id or "").strip()
+    return bool(expected) and current == expected
+
+
 def websocket_monitor(bot):
     """Hilo dedicado a escuchar precios en tiempo real vía Websockets (v106.5)."""
     try:
@@ -79,7 +96,14 @@ def telegram_listener(bot):
 
             for update in response.get("result", []):
                 last_update_id = update["update_id"] + 1
-                text = update.get("message", {}).get("text", "").strip()
+                message = _extract_telegram_message(update)
+                text = str(message.get("text", "") or "").strip()
+                chat_id = message.get("chat", {}).get("id")
+
+                if not text:
+                    continue
+                if not _is_authorized_telegram_chat(chat_id):
+                    continue
 
                 # Lógica centralizada
                 bot.handle_command(text)

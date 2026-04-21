@@ -470,3 +470,4 @@ def run_entrypoint():
                 )
     except Exception as error:
         logger.critical(f"❌ FATAL ERROR: {error}\n{traceback.format_exc()}")
+        sys.exit(1)

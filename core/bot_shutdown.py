@@ -160,6 +160,8 @@ def _shutdown_sequence(bot, reason: str, logger):
 def request_graceful_shutdown(bot, reason: str, logger):
     if getattr(bot, "shutdown_in_progress", False):
         return
+    if getattr(bot, "shutdown_complete", None) is None:
+        bot.shutdown_complete = threading.Event()
     bot.shutdown_in_progress = True
 
     worker = threading.Thread(

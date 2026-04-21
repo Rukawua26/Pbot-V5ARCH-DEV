@@ -79,7 +79,13 @@ def reconcile_bootstrap_state(bot):
         with bot.lock:
             db_snapshot = dict(bot.active_trades)
 
-        positions = bot.execution.fetch_positions() or []
+        try:
+            positions = bot.execution.fetch_positions() or []
+        except Exception as error:
+            bot.log(
+                f"⚠️ Reconciliación abortada: no se pudieron consultar posiciones del exchange: {error}"
+            )
+            return
         open_orders = []
         fetch_open_orders = getattr(bot.execution, "fetch_open_orders", None)
         if callable(fetch_open_orders):
@@ -323,7 +329,13 @@ def reconcile_bootstrap_state(bot):
             lost += 1
 
         # Integrity lock por discrepancia de balance
-        exchange_balance = float(bot.get_current_balance() or 0.0)
+        try:
+            exchange_balance = float(bot.get_current_balance() or 0.0)
+        except Exception as error:
+            bot.log(
+                f"⚠️ Reconciliación: no se pudo obtener balance del exchange para integrity lock: {error}"
+            )
+            exchange_balance = 0.0
         local_balance = float(getattr(bot, "balance", 0.0) or 0.0)
         diff_pct = 0.0
         if exchange_balance > 0:
