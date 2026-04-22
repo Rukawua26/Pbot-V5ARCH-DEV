@@ -64,6 +64,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         bot.handle_command.assert_called_once_with("/status")
 
+    @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
     def test_connect_to_binance_aborts_when_balance_check_fails(self, mocked_binance):
         exchange = MagicMock()
@@ -83,7 +84,30 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         bot.sync_wallet.assert_not_called()
 
+    @patch("core.bot_connection.Config.PAPER_MODE", True)
+    @patch("core.bot_connection.ccxt.binance")
+    def test_connect_to_binance_keeps_booting_in_paper_when_balance_check_fails(
+        self, mocked_binance
+    ):
+        exchange = MagicMock()
+        exchange.load_markets.return_value = None
+        exchange.fetch_balance.side_effect = RuntimeError("invalid key")
+        mocked_binance.return_value = exchange
+
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            execution=SimpleNamespace(exchange=None, load_markets=MagicMock()),
+            data_service=SimpleNamespace(exchange=None),
+            sync_wallet=MagicMock(),
+        )
+
+        connect_to_binance(bot)
+
+        bot.sync_wallet.assert_not_called()
+        self.assertFalse(bot.is_hedge_mode)
+
     @patch("core.bot_connection.Config.USE_TESTNET", True)
+    @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
     def test_connect_to_binance_enables_sandbox_in_testnet(self, mocked_binance):
         exchange = MagicMock()
@@ -109,6 +133,45 @@ class BotSecurityRuntimeTest(unittest.TestCase):
         exchange.set_sandbox_mode.assert_called_once_with(True)
 
     @patch("core.bot_connection.Config.USE_TESTNET", True)
+    @patch("core.bot_connection.Config.PAPER_MODE", True)
+    @patch("core.bot_connection.ccxt.binance")
+    def test_connect_to_binance_falls_back_to_public_endpoints_in_paper_testnet(
+        self, mocked_binance
+    ):
+        sandbox_exchange = MagicMock()
+        sandbox_exchange.fetch_balance.return_value = {"USDT": {"total": 1}}
+        public_exchange = MagicMock()
+        public_exchange.fetch_balance.side_effect = RuntimeError("invalid key")
+        bot_execution = SimpleNamespace(
+            exchange=None,
+            load_markets=MagicMock(
+                side_effect=[
+                    RuntimeError(
+                        "binance does not have a testnet/sandbox URL for public endpoints"
+                    ),
+                    None,
+                ]
+            ),
+            fetch_balance=MagicMock(side_effect=RuntimeError("invalid key")),
+        )
+        mocked_binance.side_effect = [sandbox_exchange, public_exchange]
+
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            execution=bot_execution,
+            data_service=SimpleNamespace(exchange=None),
+            sync_wallet=MagicMock(),
+        )
+
+        connect_to_binance(bot)
+
+        sandbox_exchange.set_sandbox_mode.assert_called_once_with(True)
+        self.assertIs(bot.execution.exchange, public_exchange)
+        self.assertEqual(bot_execution.load_markets.call_count, 2)
+        bot.sync_wallet.assert_not_called()
+
+    @patch("core.bot_connection.Config.USE_TESTNET", True)
+    @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
     def test_connect_to_binance_fails_clearly_when_sandbox_activation_breaks(
         self, mocked_binance
