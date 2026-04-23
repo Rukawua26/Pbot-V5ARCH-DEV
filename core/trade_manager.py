@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown, set_symbol_cooldown
 from core.execution_telemetry import append_execution_event
+from core.postmortem import label_exit_reason
 from core.reconciliation import (
     allocate_signal_timestamp,
     generate_child_client_order_id,
@@ -73,6 +74,45 @@ def _sanitize_context(bot, context):
     if isinstance(context, dict):
         return dict(context)
     return {}
+
+
+def _get_local_open_trade_counts(bot):
+    open_statuses = {
+        "OPEN",
+        "PENDING_SEND",
+        "PENDING_EXCHANGE_OPEN",
+        "ENTRY_FILLED_AWAITING_POSITION_SYNC",
+        "PARTIAL_FILL_PENDING",
+        "PARTIAL_FILL",
+    }
+    states = {}
+    try:
+        states.update(getattr(bot, "active_trades", {}) or {})
+    except Exception:
+        pass
+
+    brain = getattr(bot, "brain", None)
+    loader = getattr(brain, "load_active_trade_states", None)
+    if callable(loader):
+        try:
+            for symbol, state in (loader() or {}).items():
+                states.setdefault(symbol, state)
+        except Exception:
+            pass
+
+    num_real = 0
+    num_shadow = 0
+    for state in states.values():
+        if not isinstance(state, dict):
+            continue
+        status = str(state.get("status") or "").upper()
+        if status not in open_statuses:
+            continue
+        if bool(state.get("is_shadow", False)):
+            num_shadow += 1
+        else:
+            num_real += 1
+    return num_real, num_shadow
 
 
 def execute_order(
@@ -153,6 +193,13 @@ def execute_order(
             return "SYMBOL_QUARANTINED"
 
     execution_mode = "SHADOW" if is_shadow else ("PAPER" if Config.PAPER_MODE else "REAL")
+
+    if is_shadow:
+        shadow_cd = int(getattr(Config, "SIGNAL_COOLDOWN_SHADOW_SECONDS", 60) or 60)
+        last_signal = float(getattr(bot, "last_shadow_signal_ts", 0.0) or 0.0)
+        if time.time() - last_signal < shadow_cd:
+            return f"SHADOW_COOLDOWN ({int(shadow_cd - (time.time() - last_signal))}s)"
+
     _safe_log_signal_alert(
         bot,
         symbol=symbol,
@@ -263,6 +310,17 @@ def execute_order(
             )
         return "CIRCUIT_BREAKER_PANIC"
 
+    global_cd = int(getattr(Config, "GLOBAL_ENTRY_COOLDOWN_SECONDS", 300) or 0)
+    last_open_ts = float(getattr(bot, "last_entry_open_ts", 0.0) or 0.0)
+    if global_cd > 0 and last_open_ts > 0:
+        elapsed_global = time.time() - last_open_ts
+        if elapsed_global < global_cd:
+            remaining = int(global_cd - elapsed_global)
+            bot.log(
+                f"⏳ GLOBAL_COOLDOWN activo ({remaining}s restantes): {symbol} bloqueado"
+            )
+            return "GLOBAL_COOLDOWN"
+
     with bot.lock:
         if not is_shadow:
             base_coin = bot._get_base_coin(symbol)
@@ -305,9 +363,12 @@ def execute_order(
             if in_cd:
                 return "COOLDOWN"
 
-        actives = bot.active_trades.values()
-        num_real = sum(1 for t in actives if not t.get("is_shadow", False))
-        num_shadow = sum(1 for t in actives if t.get("is_shadow", False))
+        if Config.PAPER_MODE:
+            num_real, num_shadow = _get_local_open_trade_counts(bot)
+        else:
+            actives = bot.active_trades.values()
+            num_real = sum(1 for t in actives if not t.get("is_shadow", False))
+            num_shadow = sum(1 for t in actives if t.get("is_shadow", False))
 
         if not is_shadow:
             if num_real >= Config.MAX_OPEN_TRADES:
@@ -620,6 +681,9 @@ def execute_order(
             )
 
         _safe_update_signal_alert_status(bot, entry_client_order_id, "EXECUTED")
+        bot.last_entry_open_ts = time.time()
+        if is_shadow:
+            bot.last_shadow_signal_ts = time.time()
 
         with bot.lock:
             clean_snapshot = (context or {}).copy()
@@ -841,6 +905,17 @@ def close_trade(
                 ((entry_price - mfe_price) / entry_price) * 100 if mfe_price else 0
             )
 
+        pm_data = label_exit_reason(
+            reason=reason,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            side=side,
+            mae_percent=mae_percent,
+            mfe_percent=mfe_percent,
+            trade=trade,
+            is_adopted=trade.get("adopted_orphan", False),
+        )
+
         bot.log(
             f"🔍 DEBUG: Intentando guardar trade {symbol} | is_shadow={trade.get('is_shadow', False)}"
         )
@@ -877,6 +952,11 @@ def close_trade(
                         "entry_exchange_order_id": trade.get("entry_exchange_order_id"),
                         "sl_exchange_order_id": trade.get("sl_exchange_order_id"),
                         "tp_exchange_order_id": trade.get("tp_exchange_order_id"),
+                        "exit_reason": pm_data.get("exit_reason", "UNKNOWN"),
+                        "is_adopted": pm_data.get("is_adopted", 0),
+                        "is_dirty": pm_data.get("is_dirty", 0),
+                        "mae_at_sl": pm_data.get("mae_at_sl", 0.0),
+                        "mfe_at_sl": pm_data.get("mfe_at_sl", 0.0),
                     }
                 )
                 bot.log(

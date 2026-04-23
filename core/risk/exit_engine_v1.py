@@ -235,8 +235,11 @@ class ExitEngineV1:
         return None
 
     def evaluate_exit(
-        self, trade: Dict[str, Any], current_price: float, current_atr: float
+        self, trade: Dict[str, Any], current_price: float, current_atr: float,
+        threshold_factor: float = None,
     ) -> Dict[str, Any]:
+        if threshold_factor is None:
+            threshold_factor = 0.30 if trade.get("is_shadow", False) else 0.70
         # Prioridad: invalidación estructural -> trailing ATR -> flat volatility -> time decay
         result = self.check_structural_invalidation_exit(
             trade, current_price, current_atr

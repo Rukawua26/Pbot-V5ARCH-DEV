@@ -63,8 +63,10 @@ def run_guardian_loop(bot):
                     if t.get("status") in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}:
                         current_conf = t.get("current_confidence", 50.0)
                         entry_conf = t.get("entry_confidence", 75.0)
+                        is_shadow = t.get("is_shadow", False)
+                        threshold = 0.30 if is_shadow else 0.70
                         abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
-                            entry_conf, current_conf
+                            entry_conf, current_conf, threshold
                         )
                         if abort_needed:
                             append_execution_event(
@@ -185,6 +187,7 @@ def run_guardian_loop(bot):
                             trade=t,
                             current_price=curr,
                             current_atr=current_atr,
+                            threshold_factor=0.30 if t.get("is_shadow", False) else 0.70,
                         )
                         now_ts = monotonic_now()
                         last_log_ts = float(bot._exit_eval_last_log.get(s, 0.0))

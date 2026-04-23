@@ -1,13 +1,14 @@
 import hashlib
 
 from config import Config
+from core.config.operational import OperationalConfig
 from core.execution_telemetry import append_execution_event
 from notifier import send_telegram_msg
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 
 
 CLIENT_ORDER_PREFIX = "sai-v118"
-PENDING_SEND_STALE_SECONDS = 90
+PENDING_SEND_STALE_SECONDS = 30
 
 
 def generate_client_order_id(
@@ -74,6 +75,58 @@ def generate_child_client_order_id(entry_client_order_id: str, leg: str) -> str:
     return f"{entry_client_order_id}-{leg_safe}-{digest}"
 
 
+def _validate_orphan_size(entry: float, amount: float) -> tuple:
+    """Valida el tamaño de una posición huérfana.
+    Returns: (is_valid: bool, reason: str, size_usd: float)
+    """
+    min_size = float(getattr(OperationalConfig, "ORPHAN_ADOPTION_MIN_SIZE_USD", 10.0))
+    max_size = float(getattr(OperationalConfig, "ORPHAN_ADOPTION_MAX_SIZE_USD", 10000.0))
+    size_usd = entry * amount
+
+    if size_usd < min_size:
+        return False, f"tamaño ${size_usd:.2f} < mínimo ${min_size:.2f}", size_usd
+    if size_usd > max_size:
+        return False, f"tamaño ${size_usd:.2f} > máximo ${max_size:.2f}", size_usd
+    return True, "", size_usd
+
+
+def _compute_orphan_sl(entry: float, side: str, market_price: float) -> float:
+    """Calcula SL dinámico para posición huérfana."""
+    if market_price and market_price > 0:
+        atr_multiplier = float(getattr(OperationalConfig, "ORPHAN_SL_ATR_MULTIPLIER", 2.0))
+        if side == "BUY":
+            return entry - (market_price * atr_multiplier / 100.0)
+        else:
+            return entry + (market_price * atr_multiplier / 100.0)
+
+    percentage = float(getattr(OperationalConfig, "ORPHAN_SL_PERCENTAGE", 0.005))
+    if side == "BUY":
+        return entry * (1 - percentage)
+    else:
+        return entry * (1 + percentage)
+
+
+def _verify_orphan_multiple(bot, symbol: str) -> tuple:
+    """Verifica huérfano desde múltiples endpoints.
+    Returns: (is_valid: bool, reason: str)
+    """
+    fetch_position = getattr(bot.execution, "fetch_position", None)
+    if not callable(fetch_position):
+        return True, ""
+
+    try:
+        pos = fetch_position(symbol)
+        if pos and isinstance(pos, dict):
+            amount = float(pos.get("contracts") or 0)
+            if abs(amount) > 0:
+                return True, ""
+            return False, f"fetch_position({symbol}) возвращает amount=0"
+    except Exception as e:
+        return False, f"fetch_position failed: {e}"
+
+    return True, ""
+
+
 def reconcile_bootstrap_state(bot):
     """Sincroniza estado DB <-> Exchange al arrancar para evitar huérfanos/ghosts."""
     try:
@@ -137,13 +190,35 @@ def reconcile_bootstrap_state(bot):
         missing_in_db = sorted(position_symbols - db_symbols)
         for symbol in missing_in_db:
             info = exchange_positions[symbol]
-            sl = info["entry"] * (0.995 if info["side"] == "BUY" else 1.005)
+            entry_price = info["entry"]
+            amount = info["amount"]
+
+            size_valid, size_reason, size_usd = _validate_orphan_size(entry_price, amount)
+            if not size_valid:
+                bot.log(f"⚠️ Huérfano {symbol} rechazado: {size_reason}")
+                continue
+
+            verify_valid, verify_reason = _verify_orphan_multiple(bot, symbol)
+            if not verify_valid:
+                bot.log(f"⚠️ Huérfano {symbol} rechazado: verificación múltiple falló: {verify_reason}")
+                continue
+
+            market_price = 0.0
+            fetch_ticker = getattr(bot.execution, "fetch_ticker", None)
+            if callable(fetch_ticker):
+                try:
+                    ticker = fetch_ticker(symbol)
+                    market_price = float(ticker.get("last") or ticker.get("markPrice") or 0.0)
+                except Exception as e:
+                    bot.log(f"⚠️ No se pudo obtener ticker para {symbol}: {e}")
+
+            sl = _compute_orphan_sl(entry_price, info["side"], market_price)
             adopted_trade = {
                 "symbol": symbol,
                 "side": info["side"],
-                "entry": info["entry"],
-                "amount": info["amount"],
-                "size_usd": info["entry"] * info["amount"],
+                "entry": entry_price,
+                "amount": amount,
+                "size_usd": size_usd,
                 "open_time": utc_now_iso(),
                 "pnl": 0.0,
                 "is_shadow": False,
@@ -153,9 +228,9 @@ def reconcile_bootstrap_state(bot):
                 "tp": 0.0,
                 "trailing_active": False,
                 "early_be_armed": False,
-                "mae_price": info["entry"],
-                "mfe_price": info["entry"],
-                "market_snapshot": {"is_adopted": True, "prob_final": 99.0},
+                "mae_price": entry_price,
+                "mfe_price": entry_price,
+                "market_snapshot": {"is_adopted": True, "prob_final": 99.0, "market_price": market_price},
                 "adopted_orphan": True,
             }
             with bot.lock:
@@ -165,7 +240,7 @@ def reconcile_bootstrap_state(bot):
 
             try:
                 sl_order = bot.execution.place_hard_sl(
-                    symbol, info["side"], info["amount"], sl
+                    symbol, info["side"], amount, sl
                 )
                 if sl_order:
                     with bot.lock:
@@ -183,8 +258,10 @@ def reconcile_bootstrap_state(bot):
                 f"🚨 *POSICIÓN HUÉRFANA ADOPTADA*\n"
                 f"Símbolo: {symbol}\n"
                 f"Lado: {info['side']}\n"
-                f"Entry: {info['entry']:.6f}\n"
-                f"SL adjuntado: {sl:.6f}"
+                f"Entry: {entry_price:.6f}\n"
+                f"Market: {market_price:.6f}\n"
+                f"Size: ${size_usd:.2f}\n"
+                f"SL: {sl:.6f}"
             )
             adopted += 1
 

@@ -87,8 +87,10 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.global_rag_impact = 0.0
     bot.instance_uuid = str(uuid.uuid4())[:12]
     bot.pending_send_stale_seconds = int(
-        getattr(Config, "PENDING_SEND_STALE_SECONDS", 90)
+        getattr(Config, "PENDING_SEND_STALE_SECONDS", 30)
     )
+    bot.last_entry_open_ts = 0.0
+    bot.last_shadow_signal_ts = 0.0
 
 
 def init_realtime_and_monitoring(

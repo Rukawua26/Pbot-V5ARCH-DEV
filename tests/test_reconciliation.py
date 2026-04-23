@@ -14,8 +14,10 @@ class ReconciliationTest(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertTrue(a.startswith("sai-v118-"))
 
+    @patch("core.reconciliation.Config")
     @patch("core.reconciliation.send_telegram_msg")
-    def test_integrity_lock_is_enabled_when_balance_diff_is_high(self, mocked_tg):
+    def test_integrity_lock_is_enabled_when_balance_diff_is_high(self, mocked_tg, mock_config):
+        mock_config.PAPER_MODE = False
         bot = SimpleNamespace()
         bot.lock = RLock()
         bot.db_lock = RLock()
@@ -24,7 +26,7 @@ class ReconciliationTest(unittest.TestCase):
         bot.is_paused = False
         bot.integrity_lock_active = False
         bot.log = MagicMock()
-        bot.execution = SimpleNamespace(fetch_positions=lambda: [])
+        bot.execution = SimpleNamespace(fetch_positions=lambda: [], fetch_open_orders=lambda: [])
         bot.get_current_balance = lambda: 80.0
         bot.brain = SimpleNamespace(
             save_active_trade_state=MagicMock(),
@@ -332,6 +334,191 @@ class ReconciliationTest(unittest.TestCase):
 
         self.assertFalse(bot.integrity_lock_active)
         self.assertFalse(bot.is_paused)
+
+
+class OrphanAdoptionTest(unittest.TestCase):
+    @patch("core.reconciliation.send_telegram_msg")
+    def test_orphan_rejected_below_min_size(self, mocked_tg):
+        from core.config.operational import OperationalConfig
+        original_min = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MIN_SIZE_USD', 10.0)
+        original_max = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MAX_SIZE_USD', 10000.0)
+        OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = 10.0
+        OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = 10000.0
+
+        try:
+            bot = SimpleNamespace()
+            bot.lock = RLock()
+            bot.db_lock = RLock()
+            bot.active_trades = {}
+            bot.balance = 100.0
+            bot.is_paused = False
+            bot.integrity_lock_active = False
+            bot.log = MagicMock()
+            bot.execution = SimpleNamespace(
+                fetch_positions=lambda: [
+                    {
+                        "symbol": "ETH/USDT:USDT",
+                        "contracts": 0.001,
+                        "side": "long",
+                        "entryPrice": 3000,
+                    }
+                ],
+                fetch_open_orders=lambda: [],
+                place_hard_sl=MagicMock(),
+                fetch_ticker=lambda s: {"last": 3000},
+            )
+            bot.get_current_balance = lambda: 100.0
+            bot.brain = SimpleNamespace(
+                save_active_trade_state=MagicMock(),
+                save_error_snapshot=MagicMock(),
+                delete_active_trade_state=MagicMock(),
+            )
+
+            reconcile_bootstrap_state(bot)
+
+            self.assertNotIn("ETH/USDT", bot.active_trades)
+        finally:
+            OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = original_min
+            OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = original_max
+
+    @patch("core.reconciliation.send_telegram_msg")
+    def test_orphan_rejected_above_max_size(self, mocked_tg):
+        from core.config.operational import OperationalConfig
+        original_min = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MIN_SIZE_USD', 10.0)
+        original_max = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MAX_SIZE_USD', 10000.0)
+        OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = 10.0
+        OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = 10000.0
+
+        try:
+            bot = SimpleNamespace()
+            bot.lock = RLock()
+            bot.db_lock = RLock()
+            bot.active_trades = {}
+            bot.balance = 100.0
+            bot.is_paused = False
+            bot.integrity_lock_active = False
+            bot.log = MagicMock()
+            bot.execution = SimpleNamespace(
+                fetch_positions=lambda: [
+                    {
+                        "symbol": "ETH/USDT:USDT",
+                        "contracts": 10.0,
+                        "side": "long",
+                        "entryPrice": 3000,
+                    }
+                ],
+                fetch_open_orders=lambda: [],
+                place_hard_sl=MagicMock(),
+                fetch_ticker=lambda s: {"last": 3000},
+            )
+            bot.get_current_balance = lambda: 100.0
+            bot.brain = SimpleNamespace(
+                save_active_trade_state=MagicMock(),
+                save_error_snapshot=MagicMock(),
+                delete_active_trade_state=MagicMock(),
+            )
+
+            reconcile_bootstrap_state(bot)
+
+            self.assertNotIn("ETH/USDT", bot.active_trades)
+        finally:
+            OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = original_min
+            OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = original_max
+
+    @patch("core.reconciliation.send_telegram_msg")
+    def test_orphan_adopted_with_dynamic_sl(self, mocked_tg):
+        from core.config.operational import OperationalConfig
+        original_min = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MIN_SIZE_USD', 10.0)
+        original_max = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MAX_SIZE_USD', 10000.0)
+        OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = 10.0
+        OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = 10000.0
+
+        try:
+            bot = SimpleNamespace()
+            bot.lock = RLock()
+            bot.db_lock = RLock()
+            bot.active_trades = {}
+            bot.balance = 100.0
+            bot.is_paused = False
+            bot.integrity_lock_active = False
+            bot.log = MagicMock()
+            bot.execution = SimpleNamespace(
+                fetch_positions=lambda: [
+                    {
+                        "symbol": "ETH/USDT:USDT",
+                        "contracts": 0.5,
+                        "side": "long",
+                        "entryPrice": 3000,
+                    }
+                ],
+                fetch_open_orders=lambda: [],
+                place_hard_sl=MagicMock(return_value={"id": "sl-123"}),
+                fetch_ticker=lambda s: {"last": 2950},
+            )
+            bot.get_current_balance = lambda: 100.0
+            bot.brain = SimpleNamespace(
+                save_active_trade_state=MagicMock(),
+                save_error_snapshot=MagicMock(),
+                delete_active_trade_state=MagicMock(),
+            )
+
+            reconcile_bootstrap_state(bot)
+
+            self.assertIn("ETH/USDT", bot.active_trades)
+            trade = bot.active_trades["ETH/USDT"]
+            self.assertTrue(trade.get("adopted_orphan"))
+            expected_sl = 3000 - (2950 * 0.02)
+            self.assertAlmostEqual(trade["sl"], expected_sl, places=2)
+        finally:
+            OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = original_min
+            OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = original_max
+
+    @patch("core.reconciliation.send_telegram_msg")
+    def test_orphan_fallback_to_fixed_percentage_when_ticker_fails(self, mocked_tg):
+        from core.config.operational import OperationalConfig
+        original_min = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MIN_SIZE_USD', 10.0)
+        original_max = getattr(OperationalConfig, 'ORPHAN_ADOPTION_MAX_SIZE_USD', 10000.0)
+        OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = 10.0
+        OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = 10000.0
+
+        try:
+            bot = SimpleNamespace()
+            bot.lock = RLock()
+            bot.db_lock = RLock()
+            bot.active_trades = {}
+            bot.balance = 100.0
+            bot.is_paused = False
+            bot.integrity_lock_active = False
+            bot.log = MagicMock()
+            bot.execution = SimpleNamespace(
+                fetch_positions=lambda: [
+                    {
+                        "symbol": "ETH/USDT:USDT",
+                        "contracts": 0.5,
+                        "side": "long",
+                        "entryPrice": 3000,
+                    }
+                ],
+                fetch_open_orders=lambda: [],
+                place_hard_sl=MagicMock(return_value={"id": "sl-123"}),
+                fetch_ticker=MagicMock(side_effect=RuntimeError("API error")),
+            )
+            bot.get_current_balance = lambda: 100.0
+            bot.brain = SimpleNamespace(
+                save_active_trade_state=MagicMock(),
+                save_error_snapshot=MagicMock(),
+                delete_active_trade_state=MagicMock(),
+            )
+
+            reconcile_bootstrap_state(bot)
+
+            self.assertIn("ETH/USDT", bot.active_trades)
+            trade = bot.active_trades["ETH/USDT"]
+            expected_sl = 3000 * 0.98
+            self.assertAlmostEqual(trade["sl"], expected_sl, places=2)
+        finally:
+            OperationalConfig.ORPHAN_ADOPTION_MIN_SIZE_USD = original_min
+            OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = original_max
 
 
 if __name__ == "__main__":

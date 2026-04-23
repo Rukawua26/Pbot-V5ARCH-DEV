@@ -1,140 +1,58 @@
 # AGENTS
 
-Guía operativa para agentes que trabajen en `Pbot V5ARCH DEV`.
+## Alcance
 
-## Objetivo
+- Este repo es un bot de trading para Binance Futures con modos `PAPER`, `SHADOW` y `REAL`.
+- Si un cambio toca ejecución, reconciliación, wallet sync, watchdog o recovery, trátalo como cambio de runtime crítico.
 
-Este repositorio contiene un bot de trading para Binance Futures con modos `PAPER`, `SHADOW` y `REAL`. La prioridad es:
+## Fuentes de verdad
 
-1. seguridad operativa
-2. protección de capital
-3. correctitud de runtime
-4. mantenibilidad a largo plazo
-5. cambios pequeños y verificables
+- El entrypoint real es `main.py`; solo importa `run_entrypoint` desde `core.bot_app`.
+- `config.py` es solo un proxy legacy; la configuración real vive en `core/config/manager.py` y `core/config/operational.py`.
+- `.env` se carga al importar `core/config/operational.py`; evita asumir que falta setup explícito en cada script.
+- CI en `.github/workflows/ci.yml` es la referencia para el orden mínimo de validación.
 
-## Reglas Base
+## Arquitectura que importa
 
-- Haz cambios mínimos y correctos
-- No mezcles refactors amplios con cambios funcionales
-- No rompas invariantes de runtime por mejorar ergonomía o conveniencia
-- En modo `REAL`, los fallos de auth/permisos deben fallar claro
-- En modo `PAPER/SHADOW`, degrada de forma segura cuando sea posible
-- Nunca asumas que la DB es la verdad final de exposición live; el exchange manda
-- No introduzcas `pass`, swallow silencioso de excepciones ni logs ambiguos
-- No agregues dependencias nuevas sin necesidad real
+- `core/bot_app.py` hace el bootstrap pesado y construye `Bot`; no metas lógica nueva en `main.py`.
+- `core/bot_facade.py` concentra el contrato público del runtime; conserva sus métodos cuando muevas lógica entre módulos.
+- `core/bot_connection.py` separa el comportamiento de conexión por modo: en `PAPER` puede degradar a endpoints públicos; en `REAL` fallos de auth/permisos deben abortar.
+- `core/execution_adapters.py` define los backends `live` y `shadow_live`; no mezcles simulación con flujo real fuera de esa frontera.
 
-## Skills Obligatorias Por Tipo De Trabajo
+## Invariantes operativos
 
-### Siempre priorizar
+- El exchange manda sobre la DB para exposición real y estado de órdenes/posiciones.
+- No dejes posiciones reales sin `HARD SL` ni agregues retries no idempotentes que puedan duplicar exposición.
+- Si el estado live queda ambiguo, prioriza `HALT` y reconciliación antes de continuar.
+- No introduzcas `pass` silenciosos en `core/`; CI lo bloquea salvo una allowlist mínima.
 
-- `skills/runtime-ops-and-trading-safety/SKILL.md`
-- `skills/security-and-hardening/SKILL.md`
-- `skills/code-review-and-quality/SKILL.md`
-- `skills/test-driven-development/SKILL.md`
+## Skills a cargar
 
-### Según el caso
+- Siempre que el trabajo toque runtime o seguridad, revisa `skills/runtime-ops-and-trading-safety/SKILL.md`.
+- Para cambios de endurecimiento o datos externos, revisa `skills/security-and-hardening/SKILL.md`.
+- Para cambios funcionales, revisa `skills/test-driven-development/SKILL.md` y deja cobertura en `tests/`.
+- Usa `skills/README.md` como índice de skills curadas; las listadas ahí sí aplican a este repo.
 
-- Runtime, exchange, reconciliación, watchdog, recovery:
-  `skills/runtime-ops-and-trading-safety/SKILL.md`
-- Bugs, boot failures, errores extraños, incidentes:
-  `skills/debugging-and-error-recovery/SKILL.md`
-- Contratos, boundaries, servicios, interfaces internas:
-  `skills/api-and-interface-design/SKILL.md`
-- Cambios grandes o multiarchivo:
-  `skills/incremental-implementation/SKILL.md`
-- Diseño previo, especificación o cambios ambiguos:
-  `skills/spec-driven-development/SKILL.md`
-- Descomposición de trabajo:
-  `skills/planning-and-task-breakdown/SKILL.md`
-- Simplificación sin cambio de comportamiento:
-  `skills/code-simplification/SKILL.md`
-- CI, quality gates y automatización:
-  `skills/ci-cd-and-automation/SKILL.md`
-- ADRs y documentación duradera:
-  `skills/documentation-and-adrs/SKILL.md`
-- Migraciones o retiro de código legacy:
-  `skills/deprecation-and-migration/SKILL.md`
+## Verificación mínima
 
-Referencia general:
-- `skills/README.md`
-
-## Invariantes Del Bot
-
-- No dejar posiciones reales desnudas sin protección o decisión explícita
-- No duplicar side effects de exchange por retries no idempotentes
-- Persistir estados relevantes de lifecycle cuando el flujo lo requiera
-- Mantener explícitos los estados runtime y sus transiciones
-- Si hay duda entre continuar o frenar una ruta real, priorizar seguridad
-- Los logs operativos deben identificar símbolo, lado, motivo y estado
-
-## Reglas Estrictas Para Modo REAL
-
-- Cualquier fallo de auth, permisos, balance o conectividad crítica debe fallar claro; no degradar silenciosamente
-- No abrir ni gestionar posiciones reales si el estado del exchange no puede verificarse con confianza
-- No asumir que una orden fue aceptada, abierta o llenada sin evidencia explícita del exchange o reconciliación posterior
-- No reintentar colocación o cierre de órdenes reales de forma no idempotente sin control de duplicación
-- No ejecutar recovery automático si existe riesgo de duplicar exposición o cerrar el lado incorrecto
-- Si falta `HARD SL` en una posición real, tratarlo como incidente crítico y seguir la ruta de protección definida
-- Si el runtime entra en estado ambiguo respecto a exposición real, priorizar `HALT`, alerta y reconciliación antes de continuar
-- Los cambios que afecten `REAL` deben considerar explícitamente boot, restart, recovery, wallet sync y emergency flows
-
-## Checklist Adicional Antes De Aceptar Cambios Que Toquen REAL
-
-- Validar qué pasa si Binance responde timeout, reject o respuesta parcial
-- Validar qué pasa si el proceso reinicia entre persistencia local y side effect de exchange
-- Validar que no queden posiciones u órdenes huérfanas sin ruta de reconciliación
-- Validar que los logs y eventos permitan auditar después el lifecycle completo
-- Validar que `PAPER/SHADOW` y `REAL` no compartan atajos inseguros
-- Validar que cualquier degradación permitida en `PAPER` no se filtre a `REAL`
-
-## Archivos Clave
-
-- `main.py`: entrypoint
-- `core/bot_app.py`: bootstrap principal
-- `core/bot_facade.py`: fachada del runtime
-- `core/bot_connection.py`: conexión y boot con exchange
-- `core/execution_service.py`: ejecución live
-- `core/execution_adapters.py`: adapters `live` / `shadow_live`
-- `core/signals/`: análisis, filtros y planificación de ejecución
-- `core/bot_wallet_sync.py`: reconciliación y sync de wallet/posición
-- `core/config/manager.py`: umbrales unificados
-- `tests/`: regresiones de runtime
-
-## Verificación Mínima
-
-Antes de dar por terminado un cambio que afecte comportamiento:
-
-- correr tests específicos del área tocada
-- validar sintaxis/imports
-- revisar que no se rompan rutas de arranque
-
-Comandos comunes:
+- Usa la venv local cuando exista: `./.venv/bin/python`.
+- Orden base alineado con CI:
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -p "test_*.py"
-./.venv/bin/python -m compileall -q main.py core tests
+./.venv/bin/python -m compileall -q main.py core
 PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_imports.sh
+./.venv/bin/python tools/check_no_silent_pass.py
+./.venv/bin/python tools/regression_contracts.py
+./.venv/bin/python -m unittest discover -s tests -p "test_*.py"
+./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-Si el cambio toca runtime crítico, además revisar:
+- Para un test puntual usa `./.venv/bin/python -m unittest tests/test_bot_security_runtime.py`.
+- Si cambias bootstrap o imports modulares, corre siempre `scripts/smoke_modular_imports.sh`.
+- Si cambias contratos de `main.py`, `Bot` o `BotFacade`, corre siempre `tools/regression_contracts.py`.
 
-- logs generados
-- mensajes de error
-- semántica de recovery/restart
-- comportamiento en `PAPER_MODE` y `REAL` cuando aplique
-- impacto en idempotencia y reconciliación
-- si el flujo sigue siendo seguro tras reinicio inesperado
+## Límites de cambio
 
-## Límites
-
-- No commitear secretos, `.env`, DBs o logs
-- No usar comandos destructivos de git
-- No borrar código legacy sin entender por qué existe
-- No editar fuera de alcance “ya que estás ahí”
-
-## Estilo De Trabajo Esperado
-
-- primero entender
-- luego cambiar
-- luego verificar
-- luego resumir con claridad qué cambió, por qué y cómo se validó
+- Haz cambios pequeños; no mezcles refactors amplios con fixes funcionales.
+- No borres código legacy sin entender si mantiene compatibilidad o recovery.
+- No commitees `.env`, bases `.db`, logs ni reportes generados desde datos locales.

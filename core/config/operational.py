@@ -39,7 +39,13 @@ class OperationalConfig:
         os.getenv("SHADOW_SIM_MIN_PARTIAL_RATIO", "0.30")
     )
     PARTIAL_FILL_TIMEOUT_SECONDS = int(os.getenv("PARTIAL_FILL_TIMEOUT_SECONDS", "300"))
-    PENDING_SEND_STALE_SECONDS = int(os.getenv("PENDING_SEND_STALE_SECONDS", "90"))
+    PENDING_SEND_STALE_SECONDS = int(os.getenv("PENDING_SEND_STALE_SECONDS", "30"))
+    GLOBAL_ENTRY_COOLDOWN_SECONDS = int(
+        os.getenv("GLOBAL_ENTRY_COOLDOWN_SECONDS", "300")
+    )
+    SIGNAL_COOLDOWN_SHADOW_SECONDS = int(
+        os.getenv("SIGNAL_COOLDOWN_SHADOW_SECONDS", "60")
+    )
     HARD_SL_ATTACH_MAX_RETRIES = int(os.getenv("HARD_SL_ATTACH_MAX_RETRIES", "3"))
     CANCEL_ALL_DEGRADED_WINDOW_SECONDS = int(
         os.getenv("CANCEL_ALL_DEGRADED_WINDOW_SECONDS", "300")
@@ -57,6 +63,12 @@ class OperationalConfig:
         os.getenv("NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", "45")
     )
     NO_PRICE_ALLOW_MARKET_EXIT = _env_bool("NO_PRICE_ALLOW_MARKET_EXIT", True)
+
+    # --- ADOPCIÓN DE HUÉRFANOS ---
+    ORPHAN_ADOPTION_MIN_SIZE_USD = float(os.getenv("ORPHAN_ADOPTION_MIN_SIZE_USD", "10.0"))
+    ORPHAN_ADOPTION_MAX_SIZE_USD = float(os.getenv("ORPHAN_ADOPTION_MAX_SIZE_USD", "10000.0"))
+    ORPHAN_SL_ATR_MULTIPLIER = float(os.getenv("ORPHAN_SL_ATR_MULTIPLIER", "2.0"))
+    ORPHAN_SL_PERCENTAGE = float(os.getenv("ORPHAN_SL_PERCENTAGE", "0.02"))
 
     # Aliases para compatibilidad heredada
     API_KEY = BINANCE_API_KEY

@@ -291,7 +291,12 @@ class Brain:
                 tp_client_order_id TEXT,
                 entry_exchange_order_id TEXT,
                 sl_exchange_order_id TEXT,
-                tp_exchange_order_id TEXT
+                tp_exchange_order_id TEXT,
+                exit_reason TEXT,
+                is_adopted INTEGER DEFAULT 0,
+                is_dirty INTEGER DEFAULT 0,
+                mae_at_sl REAL,
+                mfe_at_sl REAL
             )
         """)
 
@@ -633,9 +638,10 @@ class Brain:
                     entry_ob, dist_ema, z_score, bb_pos, ob_status, mae_percent, mfe_percent,
                     market_regime, entry_confidence, exit_confidence, entry_shock_level, entry_atr,
                     breakout_origin, entry_client_order_id, sl_client_order_id, tp_client_order_id,
-                    entry_exchange_order_id, sl_exchange_order_id, tp_exchange_order_id
+                    entry_exchange_order_id, sl_exchange_order_id, tp_exchange_order_id,
+                    exit_reason, is_adopted, is_dirty, mae_at_sl, mfe_at_sl
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     datetime.now().isoformat(),
@@ -673,6 +679,11 @@ class Brain:
                     trade_data.get("entry_exchange_order_id"),
                     trade_data.get("sl_exchange_order_id"),
                     trade_data.get("tp_exchange_order_id"),
+                    trade_data.get("exit_reason", "UNKNOWN"),
+                    trade_data.get("is_adopted", 0),
+                    trade_data.get("is_dirty", 0),
+                    trade_data.get("mae_at_sl", 0.0),
+                    trade_data.get("mfe_at_sl", 0.0),
                 ),
             )
             trade_id = c.lastrowid

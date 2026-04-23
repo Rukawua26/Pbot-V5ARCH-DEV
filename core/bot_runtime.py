@@ -34,7 +34,7 @@ def run_initial_load(bot, dashboard_module):
             except Exception as error:
                 bot.log(f"⚠️ Error Dashboard: {error}")
 
-        if Config.MAX_SHADOW_TRADES <= 5:
+        if Config.MAX_SHADOW_TRADES <= 5 and not Config.PAPER_MODE:
             bot.log(
                 f"⚠️ ADVERTENCIA DE CONFIGURACIÓN: MAX_SHADOW_TRADES está en {Config.MAX_SHADOW_TRADES}. "
                 "Esto limita severamente la capacidad de exploración. Considere un valor >= 20."
