@@ -1,5 +1,6 @@
 import hashlib
 
+from config import Config
 from core.execution_telemetry import append_execution_event
 from notifier import send_telegram_msg
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso

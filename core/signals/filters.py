@@ -47,8 +47,8 @@ def _evaluate_bootstrap_heuristic(audit_signal, ctx):
     return {
         "heuristic_hits": hits,
         "heuristic_confidence": min(90.0, 48.0 + (hit_count * 8.0)),
-        "bootstrap_ready_shadow": hit_count >= 3,
-        "bootstrap_ready_real": hit_count >= 4,
+        "bootstrap_ready_shadow": hit_count >= 4,
+        "bootstrap_ready_real": hit_count >= 5,
     }
 
 

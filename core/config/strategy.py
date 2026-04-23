@@ -12,9 +12,9 @@ class StrategyConfig:
     MAX_RISK_USD = 2.0
     MIN_NOTIONAL_VALUE = 12.0
     MAX_NOTIONAL_MULTIPLIER = 5.0  # Cap de seguridad (Balance * Multiplier)
-    MAX_OPEN_TRADES = 1
-    MAX_SHADOW_TRADES = 150
-    MAX_DIRECTIONAL_TRADES = 3
+    MAX_OPEN_TRADES = 3
+    MAX_SHADOW_TRADES = 2
+    MAX_DIRECTIONAL_TRADES = 2
     LEVERAGE = 10
     IS_DEBUG = False
 
