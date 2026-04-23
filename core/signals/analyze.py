@@ -91,8 +91,8 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
 
         with bot.db_lock:
             res = Strategy.analyze(
-                df_main,
-                df_main,
+                df_main.copy(),
+                df_main.copy(),
                 bot.brain,
                 symbol=symbol,
                 order_book=None,
@@ -117,8 +117,8 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
 
             with bot.db_lock:
                 res = Strategy.analyze(
-                    df_main,
-                    df_main,
+                    df_main.copy(),
+                    df_main.copy(),
                     bot.brain,
                     symbol=symbol,
                     order_book=order_book,

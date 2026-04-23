@@ -1,3 +1,4 @@
+import asyncio
 import concurrent.futures
 import time
 from datetime import datetime
@@ -186,30 +187,38 @@ def prepare_top_triage(bot, triage_snapshot):
     return top_triage
 
 
-def fetch_triage_data_parallel(bot, top_triage):
+async def _fetch_triage_data_async(bot, top_triage):
     results = {}
-    max_workers = max(3, min(8, len(top_triage)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_sym = {
-            executor.submit(
-                bot._fetch_pair_data, item.get("symbol_raw", item["symbol"])
-            ): item["symbol"]
-            for item in top_triage
-        }
+    timeout_s = float(getattr(Config, "TRIAGE_TIMEOUT_SECONDS", 4)) + 1.0
+    max_workers = max(4, min(12, len(top_triage)))
+    semaphore = asyncio.Semaphore(max_workers)
 
-        done, not_done = concurrent.futures.wait(
-            future_to_sym,
-            timeout=Config.TRIAGE_TIMEOUT_SECONDS + 2,
-            return_when=concurrent.futures.ALL_COMPLETED,
-        )
-
-        for future in done:
-            sym_map = future_to_sym[future]
+    async def _fetch_one(item):
+        symbol_raw = item.get("symbol_raw", item["symbol"])
+        sym_map = item["symbol"]
+        async with semaphore:
             try:
-                _, data, elapsed = future.result()
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(bot._fetch_pair_data, symbol_raw),
+                    timeout=timeout_s,
+                )
+                await asyncio.sleep(0)
+                return sym_map, result, None
+            except asyncio.TimeoutError:
+                return sym_map, None, "TIMEOUT"
+            except Exception as error:
+                return sym_map, None, error
+
+    fetched = await asyncio.gather(*[_fetch_one(item) for item in top_triage])
+
+    timeout_count = 0
+    for sym_map, result, error in fetched:
+        if error is None and result is not None:
+            try:
+                _, data, elapsed = result
                 results[sym_map] = {"data": data, "elapsed": elapsed}
             except Exception as e_thread:
-                bot.log(f"⚠️ Error devuelto por el hilo para {sym_map}: {e_thread}")
+                bot.log(f"⚠️ Error devuelto por tarea async para {sym_map}: {e_thread}")
                 results[sym_map] = {"data": (None, None), "elapsed": -1}
                 bot.update_radar(
                     sym_map,
@@ -220,25 +229,73 @@ def fetch_triage_data_parallel(bot, top_triage):
                     {"tier": "IRON"},
                     response_ms=-1,
                 )
-
-        if not_done:
-            bot.log(
-                f"⏱️ TRIAJE TIMEOUT: {len(not_done)} (of {len(future_to_sym)}) hilos no terminaron a tiempo."
+        elif error == "TIMEOUT":
+            timeout_count += 1
+            results[sym_map] = {"data": (None, None), "elapsed": -1}
+            bot.update_radar(
+                sym_map,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⏱️",
+                "⏱️ TIMEOUT HILO",
+                {"tier": "IRON"},
+                response_ms=-1,
             )
-            for future in not_done:
-                sym_map = future_to_sym[future]
-                future.cancel()
-                results[sym_map] = {"data": (None, None), "elapsed": -1}
-                bot.update_radar(
-                    sym_map,
-                    {"signal": "WAIT", "mode": "NONE"},
-                    0.0,
-                    "⏱️",
-                    "⏱️ TIMEOUT HILO",
-                    {"tier": "IRON"},
-                    response_ms=-1,
-                )
+        else:
+            bot.log(f"⚠️ Error async en fetch para {sym_map}: {error}")
+            results[sym_map] = {"data": (None, None), "elapsed": -1}
+            bot.update_radar(
+                sym_map,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "❌",
+                "❌ ERROR HILO",
+                {"tier": "IRON"},
+                response_ms=-1,
+            )
 
+    if timeout_count > 0:
+        bot.log(
+            f"⏱️ TRIAJE TIMEOUT: {timeout_count} (of {len(top_triage)}) tareas no terminaron a tiempo."
+        )
+
+    return results
+
+
+def fetch_triage_data_parallel(bot, top_triage):
+    if getattr(bot, "main_loop", None) is not None and bot.main_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(
+            _fetch_triage_data_async(bot, top_triage),
+            bot.main_loop,
+        )
+        return future.result(timeout=float(getattr(Config, "TRIAGE_TIMEOUT_SECONDS", 4)) + 3.0)
+
+    # Fallback defensivo si el loop global no estuviera listo.
+    results = {}
+    max_workers = max(4, min(12, len(top_triage)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_sym = {
+            executor.submit(
+                bot._fetch_pair_data, item.get("symbol_raw", item["symbol"])
+            ): item["symbol"]
+            for item in top_triage
+        }
+        done, not_done = concurrent.futures.wait(
+            future_to_sym,
+            timeout=Config.TRIAGE_TIMEOUT_SECONDS + 1,
+            return_when=concurrent.futures.ALL_COMPLETED,
+        )
+        for future in done:
+            sym_map = future_to_sym[future]
+            try:
+                _, data, elapsed = future.result()
+                results[sym_map] = {"data": data, "elapsed": elapsed}
+            except Exception:
+                results[sym_map] = {"data": (None, None), "elapsed": -1}
+        for future in not_done:
+            sym_map = future_to_sym[future]
+            future.cancel()
+            results[sym_map] = {"data": (None, None), "elapsed": -1}
     return results
 
 

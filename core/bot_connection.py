@@ -34,7 +34,7 @@ def connect_to_binance(bot):
         # [V118-PRO] Session pooling para evitar fugas de sockets
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=10, pool_maxsize=10, max_retries=3, pool_block=False
+            pool_connections=100, pool_maxsize=100, max_retries=3, pool_block=False
         )
         session.mount("https://", adapter)
         session.mount("http://", adapter)
@@ -71,6 +71,16 @@ def connect_to_binance(bot):
                 raise
 
         if Config.PAPER_MODE:
+            if not float(getattr(bot, "balance", 0.0) or 0.0):
+                bot.balance = float(getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0))
+            if not float(getattr(bot, "available_balance", 0.0) or 0.0):
+                bot.available_balance = float(
+                    getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
+                )
+            if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
+                bot.daily_initial_balance = float(
+                    getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
+                )
             if Config.BINANCE_API_KEY and Config.BINANCE_API_SECRET:
                 try:
                     bot.execution.fetch_balance()
@@ -83,6 +93,9 @@ def connect_to_binance(bot):
             else:
                 bot.log("ℹ️ PAPER_MODE: sin API keys, usando solo endpoints públicos.")
             bot.is_hedge_mode = False
+            bot.log(
+                f"🧾 PAPER capital virtual inicializado en ${float(getattr(Config, 'PAPER_INITIAL_BALANCE', 1000.0)):.2f}"
+            )
         else:
             # Verificación explícita de permisos
             try:

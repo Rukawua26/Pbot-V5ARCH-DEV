@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import pandas as pd
@@ -227,25 +228,45 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
             )
 
             if audit_signal in ["BUY", "SELL"] and not should_execute:
-                with bot.db_lock:
-                    bot.brain.log_signal_alert(
-                        symbol=symbol,
-                        alert_type=audit_signal,
-                        execution_mode=(
-                            "BOOTSTRAP_NONE" if bot.bootstrap_heuristic_mode else "NONE"
+                payload = bot.data_service.sanitize_context(
+                    {
+                        **(ctx or {}),
+                        "audit_verdict": audit_verdict,
+                        "filter_passed": filter_passed,
+                        "filter_reason": filter_reason,
+                        "votos": votos,
+                        "prob_final": prob_final,
+                    }
+                )
+                if getattr(bot, "main_loop", None) is not None and bot.main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        asyncio.to_thread(
+                            bot.brain.log_signal_alert,
+                            symbol=symbol,
+                            alert_type=audit_signal,
+                            execution_mode=(
+                                "BOOTSTRAP_NONE"
+                                if bot.bootstrap_heuristic_mode
+                                else "NONE"
+                            ),
+                            status="DISCARDED",
+                            features=payload,
                         ),
-                        status="DISCARDED",
-                        features=bot.data_service.sanitize_context(
-                            {
-                                **(ctx or {}),
-                                "audit_verdict": audit_verdict,
-                                "filter_passed": filter_passed,
-                                "filter_reason": filter_reason,
-                                "votos": votos,
-                                "prob_final": prob_final,
-                            }
-                        ),
+                        bot.main_loop,
                     )
+                else:
+                    with bot.db_lock:
+                        bot.brain.log_signal_alert(
+                            symbol=symbol,
+                            alert_type=audit_signal,
+                            execution_mode=(
+                                "BOOTSTRAP_NONE"
+                                if bot.bootstrap_heuristic_mode
+                                else "NONE"
+                            ),
+                            status="DISCARDED",
+                            features=payload,
+                        )
 
             # EJECUCIÓN FINAL + REFRESCO DE RADAR
             bot._execute_and_update_symbol(

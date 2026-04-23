@@ -293,6 +293,10 @@ class Strategy:
         return StrategyUtils.detect_order_block(df, symbol)
 
     @classmethod
+    def compute_runtime_snapshot(cls, df):
+        return StrategyUtils.compute_runtime_snapshot(df)
+
+    @classmethod
     def prepare_ghost_features(cls, rsi, adx, vol_rel):
         """Retro-compatibilidad para el módulo Trailing Dinámico en main.py."""
         import numpy as np

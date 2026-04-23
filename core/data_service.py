@@ -244,7 +244,11 @@ class DataService:
             return False
 
     def fetch_and_update_data(
-        self, symbol: str, timeframe: str, pairs_to_scan: Optional[List[str]] = None
+        self,
+        symbol: str,
+        timeframe: str,
+        pairs_to_scan: Optional[List[str]] = None,
+        fast_mode: bool = False,
     ) -> Optional[pd.DataFrame]:
         cache_key = f"{symbol}_{timeframe}"
         since, limit = None, Config.CANDLE_FETCH_LIMIT
@@ -273,7 +277,7 @@ class DataService:
 
         try:
             ohlcv = []
-            retries = 2
+            retries = 1 if fast_mode else 2
             for i in range(retries):
                 try:
                     ohlcv = self.exchange.fetch_ohlcv(
@@ -287,7 +291,7 @@ class DataService:
                             f"🚫 Error fatal fetch {symbol} ({timeframe}): {e}"
                         )
                         return prev_df
-                    time.sleep((i + 1) ** 2)
+                    time.sleep(0.15 if fast_mode else (i + 1) ** 2)
 
             if not ohlcv:
                 return prev_df

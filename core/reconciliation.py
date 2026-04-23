@@ -328,6 +328,18 @@ def reconcile_bootstrap_state(bot):
                     del bot.active_trades[symbol]
             lost += 1
 
+        # En PAPER_MODE el balance es virtual; no se compara contra custodia real.
+        if bool(getattr(Config, "PAPER_MODE", False)):
+            paper_balance = float(getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0))
+            if not float(getattr(bot, "balance", 0.0) or 0.0):
+                bot.balance = paper_balance
+            if not float(getattr(bot, "available_balance", 0.0) or 0.0):
+                bot.available_balance = paper_balance
+            if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
+                bot.daily_initial_balance = paper_balance
+            bot.integrity_lock_active = False
+            return
+
         # Integrity lock por discrepancia de balance
         try:
             exchange_balance = float(bot.get_current_balance() or 0.0)

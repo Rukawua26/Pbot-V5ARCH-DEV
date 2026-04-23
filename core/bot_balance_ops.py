@@ -7,6 +7,20 @@ def start_silent_sync(bot):
     """Bucle que sincroniza el balance con Binance cada 1 hora."""
     while bot.is_running:
         try:
+            if Config.PAPER_MODE:
+                if not float(getattr(bot, "balance", 0.0) or 0.0):
+                    bot.balance = float(getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0))
+                if not float(getattr(bot, "available_balance", 0.0) or 0.0):
+                    bot.available_balance = float(
+                        getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
+                    )
+                if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
+                    bot.daily_initial_balance = float(
+                        getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
+                    )
+                time.sleep(3600)
+                continue
+
             with bot.lock:
                 # Obtener balance real de la API (ATÓMICO)
                 actual_balance = get_current_balance(bot)

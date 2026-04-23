@@ -18,6 +18,75 @@ class StrategyUtils:
     _ob_cache: Dict[str, str] = {}
 
     @staticmethod
+    def compute_runtime_snapshot(df: pd.DataFrame) -> Optional[Dict[str, float]]:
+        """Calcula indicadores raw sin defaults mágicos. Si falla, retorna None."""
+        if df is None or df.empty:
+            return None
+
+        required_cols = ["open", "high", "low", "close", "volume"]
+        if any(col not in df.columns for col in required_cols):
+            return None
+
+        try:
+            work = df[required_cols].copy()
+            work = work.dropna(subset=required_cols)
+            if len(work) < 100:
+                return None
+
+            work.ta.ema(length=50, append=True)
+            work.ta.rsi(length=14, append=True)
+            work.ta.atr(length=14, append=True)
+            work.ta.adx(length=14, append=True)
+            work.ta.bbands(length=20, append=True)
+            work["volume_ma"] = work["volume"].rolling(window=20, min_periods=20).mean()
+
+            needed = [
+                "EMA_50",
+                "RSI_14",
+                "ATRr_14",
+                "ADX_14",
+                "BBL_20_2.0",
+                "BBU_20_2.0",
+                "volume_ma",
+            ]
+            work = work.dropna(subset=needed)
+            if work.empty:
+                return None
+
+            last = work.iloc[-1]
+            ema = float(last["EMA_50"])
+            rsi = float(last["RSI_14"])
+            atr = float(last["ATRr_14"])
+            adx = float(last["ADX_14"])
+            bb_lower = float(last["BBL_20_2.0"])
+            bb_upper = float(last["BBU_20_2.0"])
+            volume_ma = float(last["volume_ma"])
+            close = float(last["close"])
+
+            if any(pd.isna(v) for v in [ema, rsi, atr, adx, bb_lower, bb_upper, volume_ma, close]):
+                return None
+            if ema <= 0 or close <= 0 or volume_ma <= 0 or atr < 0 or adx < 0:
+                return None
+            if bb_upper <= bb_lower:
+                return None
+
+            return {
+                "rows": float(len(work)),
+                "ema": ema,
+                "rsi": rsi,
+                "atr": atr,
+                "adx": adx,
+                "volume_ma": volume_ma,
+                "dist_ema": (close - ema) / ema,
+                "bb_lower": bb_lower,
+                "bb_upper": bb_upper,
+                "bb_pos": (close - bb_lower) / (bb_upper - bb_lower),
+                "bb_width": (bb_upper - bb_lower) / close,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
     def calculate_z_score(df: pd.DataFrame, window: int = 20) -> float:
         """Calcula el Z-Score de la volatilidad para detectar irracionalidad."""
         if df is None or len(df) < window:
@@ -203,6 +272,16 @@ class StrategyUtils:
                 df["rsi_raw"] = df["rsi"]
             if "adx" in df.columns:
                 df["adx_raw"] = df["adx"]
+            if "atr" in df.columns:
+                df["atr_raw"] = df["atr"]
+            if "volume" in df.columns:
+                df["volume_raw"] = df["volume"]
+            if "dist_ema" in df.columns:
+                df["dist_ema_raw"] = df["dist_ema"]
+            if "bb_pos" in df.columns:
+                df["bb_pos_raw"] = df["bb_pos"]
+            if "bb_width" in df.columns:
+                df["bb_width_raw"] = df["bb_width"]
 
             # --- [SRE] NORMALIZACIÓN DINÁMICA Z-SCORE (Anti-Feature Drift) ---
             # Definimos las features que la IA consume (basado en GhostAgent)

@@ -178,7 +178,7 @@ class Brain:
         conn = sqlite3.connect(self.db_name, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")  # Mejor concurrencia
-        conn.execute("PRAGMA synchronous=NORMAL")  # Balance velocidad/seguridad
+        conn.execute("PRAGMA synchronous=OFF")  # Fase PAPER/cosecha: priorizar baja latencia
         conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
         return conn
 
