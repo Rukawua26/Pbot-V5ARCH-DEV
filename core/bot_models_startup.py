@@ -39,6 +39,7 @@ def init_models_and_startup_tasks(
                 with open(advanced_model_path, "rb") as file_obj:
                     bot.ghost_model = pickle.load(file_obj)
                 bot.ghost_model_type = "ADVANCED_ENSEMBLE"
+                bot.bootstrap_heuristic_mode = False
                 bot.log(
                     "👻 Agente Ghost (Advanced Ensemble v118): Sistema avanzado cargado."
                 )
@@ -59,6 +60,7 @@ def init_models_and_startup_tasks(
                 with open(pro_model_path, "rb") as file_obj:
                     bot.ghost_model = pickle.load(file_obj)
                 bot.ghost_model_type = "PRO_ENSEMBLE"
+                bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (PRO v2): Ensemble cargado.")
                 send_telegram_msg("🧠 *IA Nivel 6 (Ghost Pro Ensemble) operativa*")
             elif (
@@ -67,12 +69,14 @@ def init_models_and_startup_tasks(
                 bot.ghost_model = tf_module.keras.models.load_model(model_path)
                 bot.scaler = joblib.load(scaler_path)
                 bot.ghost_model_type = "LSTM"
+                bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (LSTM): Red Neuronal cargada.")
                 send_telegram_msg("🧠 *IA Nivel 5 (LSTM Neural Network) operativa*")
             elif os.path.exists("ghost_brain.pkl"):
                 with open("ghost_brain.pkl", "rb") as file_obj:
                     bot.ghost_model = pickle.load(file_obj)
                 bot.ghost_model_type = "RF"
+                bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (Random Forest): Cerebro cargado.")
                 send_telegram_msg("🧠 *IA Nivel 4 (Random Forest) operativa*")
             elif os.path.exists("agent_models.pkl"):
@@ -80,6 +84,7 @@ def init_models_and_startup_tasks(
                     with open("agent_models.pkl", "rb") as file_obj:
                         bot.ghost_model = pickle.load(file_obj)
                     bot.ghost_model_type = "AGENT_MODELS"
+                    bot.bootstrap_heuristic_mode = False
                     bot.log(
                         "👻 Agente Ghost (Agent Models): Modelos de agentes cargados."
                     )
@@ -87,9 +92,15 @@ def init_models_and_startup_tasks(
                 except Exception as error:
                     bot.log(f"⚠️ Error cargando agent_models.pkl: {error}")
             else:
-                bot.log("⚠️ Agente Ghost: No se encontró modelo, usando modo neutral.")
+                bot.bootstrap_heuristic_mode = True
+                bot.ai_status_msg = "BOOTSTRAP_HEURISTIC"
+                bot.log(
+                    "⚠️ Agente Ghost: modelo ausente. ML deshabilitado; activando Modo Heurístico (Bootstrap)."
+                )
     except Exception as error:
         bot.log(f"❌ Error cargando Agente Ghost: {error}")
+        bot.bootstrap_heuristic_mode = True
+        bot.ai_status_msg = "BOOTSTRAP_HEURISTIC"
 
     if export_dataset_fn:
         try:

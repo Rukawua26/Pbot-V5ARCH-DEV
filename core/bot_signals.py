@@ -117,8 +117,12 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
 
             # --- Telemetría ML UI ---
             bot.last_ml_confidence = prob_final
-            ml_pure_prob = votos.get("G", 50.0)
-            bot.last_ghost_weight = getattr(bot, "ghost_weight_override", 35.0)
+            ml_pure_prob = 0.0 if bot.bootstrap_heuristic_mode else votos.get("G", 0.0)
+            bot.last_ghost_weight = (
+                0.0
+                if bot.bootstrap_heuristic_mode
+                else getattr(bot, "ghost_weight_override", 35.0)
+            )
 
             audit_verdict = bot._resolve_audit_verdict_and_stats(
                 symbol=symbol,
@@ -221,6 +225,27 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 filter_reason=filter_reason,
                 ctx=ctx,
             )
+
+            if audit_signal in ["BUY", "SELL"] and not should_execute:
+                with bot.db_lock:
+                    bot.brain.log_signal_alert(
+                        symbol=symbol,
+                        alert_type=audit_signal,
+                        execution_mode=(
+                            "BOOTSTRAP_NONE" if bot.bootstrap_heuristic_mode else "NONE"
+                        ),
+                        status="DISCARDED",
+                        features=bot.data_service.sanitize_context(
+                            {
+                                **(ctx or {}),
+                                "audit_verdict": audit_verdict,
+                                "filter_passed": filter_passed,
+                                "filter_reason": filter_reason,
+                                "votos": votos,
+                                "prob_final": prob_final,
+                            }
+                        ),
+                    )
 
             # EJECUCIÓN FINAL + REFRESCO DE RADAR
             bot._execute_and_update_symbol(

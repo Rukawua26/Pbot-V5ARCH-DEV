@@ -107,14 +107,11 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-### Modo servicio (systemd)
+### Modo servicio (systemd user)
 
 ```bash
-sudo cp sniper-ai.service /etc/systemd/system/sniper-ai.service
-sudo systemctl daemon-reload
-sudo systemctl enable sniper-ai.service
-sudo systemctl restart sniper-ai.service
-sudo systemctl status sniper-ai.service --no-pager
+bash tools/install_watchdog_systemd.sh
+systemctl --user status sniper-ai.service --no-pager
 ```
 
 Plantillas portables (recomendado para VPS multi-entorno):
@@ -143,13 +140,35 @@ sudo systemctl status sniper-ai-watchdog.timer --no-pager
 
 | Tarea | Comando |
 |---|---|
-| Ver estado del servicio | `sudo systemctl status sniper-ai.service --no-pager` |
-| Reiniciar bot | `sudo systemctl restart sniper-ai.service` |
-| Detener bot | `sudo systemctl stop sniper-ai.service` |
-| Logs systemd en vivo | `journalctl -u sniper-ai.service -f` |
+| Instalar o reinstalar servicio user | `bash tools/install_watchdog_systemd.sh` |
+| Ver estado del servicio | `systemctl --user status sniper-ai.service --no-pager` |
+| Iniciar bot | `systemctl --user start sniper-ai.service` |
+| Detener bot | `systemctl --user stop sniper-ai.service` |
+| Reiniciar bot | `systemctl --user restart sniper-ai.service` |
+| Recargar units user | `systemctl --user daemon-reload` |
+| Habilitar arranque automatico | `systemctl --user enable sniper-ai.service` |
+| Deshabilitar arranque automatico | `systemctl --user disable sniper-ai.service` |
+| Logs systemd en vivo | `journalctl --user -u sniper-ai.service -f` |
+| Ultimos logs systemd | `journalctl --user -u sniper-ai.service -n 100 --no-pager` |
 | Logs del bot en vivo | `tail -f sniper.log` |
-| Estado timer watchdog | `sudo systemctl status sniper-ai-watchdog.timer --no-pager` |
-| Últimos eventos watchdog | `journalctl -u sniper-ai-watchdog.service -n 50 --no-pager` |
+| Actualizar codigo | `git pull --ff-only` |
+| Aplicar update del servicio tras cambios | `bash tools/install_watchdog_systemd.sh && systemctl --user restart sniper-ai.service` |
+| Estado timer watchdog | `systemctl --user status sniper-ai-watchdog.timer --no-pager` |
+| Últimos eventos watchdog | `journalctl --user -u sniper-ai-watchdog.service -n 50 --no-pager` |
+
+### Secuencia rapida de update
+
+```bash
+git pull --ff-only
+source .venv/bin/activate
+pip install -r requirements.txt
+./.venv/bin/python -m compileall -q main.py core
+PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_imports.sh
+./.venv/bin/python tools/regression_contracts.py
+bash tools/install_watchdog_systemd.sh
+systemctl --user restart sniper-ai.service
+systemctl --user status sniper-ai.service --no-pager
+```
 
 ## 📊 Lectura rapida del radar
 

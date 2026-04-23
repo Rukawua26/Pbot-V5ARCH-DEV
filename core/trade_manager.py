@@ -1,5 +1,6 @@
 import importlib.util
 import time
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -42,6 +43,36 @@ def _fail_safe_close_when_sl_missing(
             if attempt < 3:
                 time.sleep(2 ** (attempt - 1))
     return False
+
+
+def _safe_log_signal_alert(bot, **kwargs) -> None:
+    brain = getattr(bot, "brain", None)
+    method = getattr(brain, "log_signal_alert", None)
+    lock = getattr(bot, "db_lock", None)
+    if not callable(method):
+        return
+    with (lock or nullcontext()):
+        method(**kwargs)
+
+
+def _safe_update_signal_alert_status(bot, entry_client_order_id, status) -> None:
+    brain = getattr(bot, "brain", None)
+    method = getattr(brain, "update_signal_alert_status", None)
+    lock = getattr(bot, "db_lock", None)
+    if not callable(method):
+        return
+    with (lock or nullcontext()):
+        method(entry_client_order_id, status)
+
+
+def _sanitize_context(bot, context):
+    data_service = getattr(bot, "data_service", None)
+    sanitizer = getattr(data_service, "sanitize_context", None)
+    if callable(sanitizer):
+        return sanitizer(context)
+    if isinstance(context, dict):
+        return dict(context)
+    return {}
 
 
 def execute_order(
@@ -120,6 +151,17 @@ def execute_order(
                 f"🚫 SYMBOL_QUARANTINE_ACTIVE {symbol}: bloqueada apertura real por degradación cancel_all ({remaining_s}s restantes)."
             )
             return "SYMBOL_QUARANTINED"
+
+    execution_mode = "SHADOW" if is_shadow else ("PAPER" if Config.PAPER_MODE else "REAL")
+    _safe_log_signal_alert(
+        bot,
+        symbol=symbol,
+        alert_type=side,
+        execution_mode=execution_mode,
+        status="PENDING",
+        entry_client_order_id=entry_client_order_id,
+        features=_sanitize_context(bot, context),
+    )
 
     atr_pct = context.get("atr_pct", 0) if context else 0.02
     min_notional = Config.MIN_NOTIONAL_VALUE
@@ -381,6 +423,7 @@ def execute_order(
                             "ask": ask,
                         },
                     )
+                    _safe_update_signal_alert_status(bot, entry_client_order_id, "VETOED")
                     _drop_pending_intent()
                     return f"HIGH_SPREAD_VETO ({current_spread * 100:.3f}%)"
         except Exception as spread_err:
@@ -444,6 +487,7 @@ def execute_order(
                 )
                 if filled_amount <= 0:
                     bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol} sin fills confirmados")
+                    _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
                     _drop_pending_intent()
                     return "EXECUTION_NO_FILL"
 
@@ -519,6 +563,7 @@ def execute_order(
                                 "sl_error": sl_error[:180],
                             },
                         )
+                    _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
                     _drop_pending_intent()
                     return "ENTRY_ABORTED_NO_HARD_SL"
 
@@ -553,6 +598,7 @@ def execute_order(
                         )[:220],
                     },
                 )
+                _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
                 _drop_pending_intent()
                 return "EXECUTION_FAILED"
         elif not is_shadow and Config.PAPER_MODE:
@@ -572,6 +618,8 @@ def execute_order(
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"   SL: {sl_val:.4f} | TP: {tp_val:.4f}"
             )
+
+        _safe_update_signal_alert_status(bot, entry_client_order_id, "EXECUTED")
 
         with bot.lock:
             clean_snapshot = (context or {}).copy()
@@ -653,6 +701,7 @@ def execute_order(
             send_telegram_msg(
                 f"❌ *FALLO DE EJECUCIÓN (REAL)*\n{symbol} no pudo abrirse.\nError: {str(e)[:100]}"
             )
+        _safe_update_signal_alert_status(bot, entry_client_order_id, "ERROR")
         with bot.db_lock:
             bot.brain.save_error_snapshot(
                 symbol,

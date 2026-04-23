@@ -142,6 +142,7 @@ class Strategy:
             "ob_status": ob_status,
             "brain_instance": brain_instance,
             "model": ghost_model,  # Para GhostAgent
+            "bootstrap_heuristic_mode": bool(ghost_model is None),
             "scaler": scaler,
             "regime": regime,
             "z_score": StrategyUtils.calculate_z_score(base_df),

@@ -37,6 +37,7 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
         "rsi": current_rsi,
         "adx": current_adx,
         "close": price,
+        "ema": float(ema_ref),
         "df_1h": df_main,
         "atr": df_main["atr"].iloc[-1] if "atr" in df_main.columns else 0.0,
         "atr_pct": (df_main["atr"].iloc[-1] / price)
@@ -55,6 +56,7 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
         else 0.0,
         "tier": ind.get("tier", "IRON"),
         "spread": ind.get("spread", 0.0),
+        "vol_rel": float(vol_rel),
     }
 
     ob_status = Strategy.detect_order_block(df_main, symbol)

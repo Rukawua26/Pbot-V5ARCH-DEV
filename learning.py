@@ -410,6 +410,26 @@ class Brain:
         """)
 
         c.execute("""
+            CREATE TABLE IF NOT EXISTS signal_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                execution_mode TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                entry_client_order_id TEXT,
+                trade_id INTEGER,
+                features_json TEXT
+            )
+        """)
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_signal_alerts_ts_status ON signal_alerts(ts, status)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_signal_alerts_entry_client_oid ON signal_alerts(entry_client_order_id)"
+        )
+
+        c.execute("""
             CREATE TABLE IF NOT EXISTS error_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT,
@@ -713,6 +733,90 @@ class Brain:
             except Exception as e:
                 print(f"❌ Error inesperado en save_error_snapshot: {e}")
                 return
+
+    def log_signal_alert(
+        self,
+        symbol,
+        alert_type,
+        execution_mode,
+        status="PENDING",
+        entry_client_order_id=None,
+        trade_id=None,
+        features=None,
+        ts=None,
+    ):
+        try:
+            clean_features = {}
+            if isinstance(features, dict):
+                clean_features = {
+                    k: v for k, v in features.items() if not isinstance(v, pd.DataFrame)
+                }
+            elif features is not None:
+                clean_features = features
+
+            conn = self._get_conn()
+            c = conn.cursor()
+            c.execute(
+                """
+                INSERT INTO signal_alerts (
+                    ts, symbol, alert_type, execution_mode, status,
+                    entry_client_order_id, trade_id, features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts or datetime.now().isoformat(),
+                    symbol,
+                    str(alert_type or "UNKNOWN"),
+                    str(execution_mode or "NONE"),
+                    str(status or "PENDING"),
+                    entry_client_order_id,
+                    trade_id,
+                    json.dumps(clean_features or {}),
+                ),
+            )
+            alert_id = c.lastrowid
+            conn.commit()
+            conn.close()
+            return alert_id
+        except Exception as e:
+            print(f"⚠️ Error guardando signal_alert: {e}")
+            return None
+
+    def update_signal_alert_status(
+        self, entry_client_order_id, status, trade_id=None, symbol=None
+    ):
+        try:
+            conn = self._get_conn()
+            c = conn.cursor()
+            if entry_client_order_id:
+                c.execute(
+                    """
+                    UPDATE signal_alerts
+                    SET status = ?, trade_id = COALESCE(?, trade_id)
+                    WHERE entry_client_order_id = ?
+                    """,
+                    (str(status or "UNKNOWN"), trade_id, entry_client_order_id),
+                )
+            elif symbol:
+                c.execute(
+                    """
+                    UPDATE signal_alerts
+                    SET status = ?, trade_id = COALESCE(?, trade_id)
+                    WHERE id = (
+                        SELECT id FROM signal_alerts
+                        WHERE symbol = ?
+                        ORDER BY id DESC LIMIT 1
+                    )
+                    """,
+                    (str(status or "UNKNOWN"), trade_id, symbol),
+                )
+            updated = c.rowcount
+            conn.commit()
+            conn.close()
+            return updated
+        except Exception as e:
+            print(f"⚠️ Error actualizando signal_alert: {e}")
+            return 0
 
     def get_recent_vetos(self, limit=3):
         """Recupera los últimos rechazos de la IA para el comando /thinking."""

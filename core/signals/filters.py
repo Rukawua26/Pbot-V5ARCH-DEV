@@ -11,6 +11,47 @@ def _normalize_filter_reason(reason):
     return text
 
 
+def _evaluate_bootstrap_heuristic(audit_signal, ctx):
+    if audit_signal not in ["BUY", "SELL"] or not isinstance(ctx, dict):
+        return {
+            "heuristic_hits": [],
+            "heuristic_confidence": 0.0,
+            "bootstrap_ready_shadow": False,
+            "bootstrap_ready_real": False,
+        }
+
+    rsi = float(ctx.get("rsi", 50.0) or 50.0)
+    adx = float(ctx.get("adx", 0.0) or 0.0)
+    vol_rel = float(ctx.get("vol_rel", 0.0) or 0.0)
+    atr_pct = float(ctx.get("atr_pct", 0.0) or 0.0)
+    close = float(ctx.get("close", 0.0) or 0.0)
+    ema = float(ctx.get("ema", close) or close)
+
+    hits = []
+    if (audit_signal == "BUY" and close >= ema) or (
+        audit_signal == "SELL" and close <= ema
+    ):
+        hits.append("EMA_ALIGN")
+    if adx >= 18.0:
+        hits.append("ADX_OK")
+    if (audit_signal == "BUY" and 52.0 <= rsi <= 68.0) or (
+        audit_signal == "SELL" and 32.0 <= rsi <= 48.0
+    ):
+        hits.append("RSI_OK")
+    if vol_rel >= 1.05:
+        hits.append("VOL_OK")
+    if 0.0 < atr_pct <= 0.05:
+        hits.append("ATR_OK")
+
+    hit_count = len(hits)
+    return {
+        "heuristic_hits": hits,
+        "heuristic_confidence": min(90.0, 48.0 + (hit_count * 8.0)),
+        "bootstrap_ready_shadow": hit_count >= 3,
+        "bootstrap_ready_real": hit_count >= 4,
+    }
+
+
 def _apply_entry_filters_and_adjust_prob(
     bot, symbol, symbol_raw, df_main, audit_signal, prob_final, ctx, vol_rel
 ):
@@ -191,6 +232,12 @@ def _apply_entry_filters_and_adjust_prob(
             f"⚖️ {symbol}: Prob {original_prob:.1f} → {prob_final:.1f} (x{final_weight:.2f})"
         )
 
+    if bool(getattr(bot, "bootstrap_heuristic_mode", False)):
+        bootstrap = _evaluate_bootstrap_heuristic(audit_signal, ctx)
+        ctx.update(bootstrap)
+        ctx["execution_mode"] = "BOOTSTRAP"
+        prob_final = float(bootstrap["heuristic_confidence"])
+
     return prob_final, filter_passed, filter_reason, ctx
 
 
@@ -319,6 +366,22 @@ def _plan_execution_mode(
                         bot.log(
                             f"👁️ [ACECHO:COHERENCIA] {symbol} side={audit_signal} IA={prob_final:.1f}% sentiment={sentiment_label}"
                         )
+
+    if bool(getattr(bot, "bootstrap_heuristic_mode", False)):
+        if audit_signal != "NEUTRAL" and filter_passed:
+            hit_count = len(ctx.get("heuristic_hits", []))
+            if bool(ctx.get("bootstrap_ready_real", False)):
+                is_shadow_exec = False
+                should_execute = True
+                audit_verdict = f"🛠️ BOOTSTRAP REAL ({hit_count}/5 reglas)"
+            elif bool(ctx.get("bootstrap_ready_shadow", False)):
+                is_shadow_exec = True
+                should_execute = True
+                audit_verdict = f"🛠️ BOOTSTRAP SHADOW ({hit_count}/5 reglas)"
+            else:
+                should_execute = False
+                audit_verdict = f"⏭️ BOOTSTRAP NO_FIRE ({hit_count}/5 reglas)"
+        return should_execute, is_shadow_exec, audit_verdict, filter_passed, filter_reason
 
     if not breakout_shadow_override and audit_signal != "NEUTRAL" and filter_passed:
         if prob_final >= REAL_THRESHOLD:

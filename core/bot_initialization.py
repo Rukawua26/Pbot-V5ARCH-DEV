@@ -59,6 +59,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.is_hedge_mode = False
     bot.ghost_model = None
     bot.ghost_model_type = "OFF"
+    bot.bootstrap_heuristic_mode = False
     bot.scaler = None
     bot.risk_multiplier = 1.0
     bot.blacklist = {}

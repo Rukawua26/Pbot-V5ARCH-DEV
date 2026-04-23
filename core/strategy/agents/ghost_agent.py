@@ -198,7 +198,7 @@ class GhostAgent(BaseAgent):
     def vote(self, context: Dict[str, Any]) -> float:
         model = context.get("model")
         if model is None:
-            return 50.0
+            return 0.0
 
         rsi = context.get("rsi", 50.0)
         adx = context.get("adx", 20.0)
@@ -233,7 +233,7 @@ class GhostAgent(BaseAgent):
         except Exception as e:
             logger.error(f"⚠️ Error en votación Ghost: {e}")
 
-        return 50.0
+        return 0.0
 
     def _predict_advanced_ensemble(
         self, model: Any, context: Dict[str, Any], ai_boost: float
@@ -241,7 +241,7 @@ class GhostAgent(BaseAgent):
         try:
             return 50.0 + ai_boost
         except Exception:
-            return 50.0
+            return 0.0
 
     def _predict_lstm(
         self,
@@ -253,7 +253,7 @@ class GhostAgent(BaseAgent):
         ai_boost: float,
     ) -> float:
         if df is None or scaler is None:
-            return 50.0
+            return 0.0
         return 50.0 + ai_boost
 
     def _predict_v111_ultimate(

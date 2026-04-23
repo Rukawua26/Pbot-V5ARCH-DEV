@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${BOT_DIR}/.venv/bin/python"
 UNIT_DIR="${HOME}/.config/systemd/user"
 UNIT_FILE="${UNIT_DIR}/sniper-ai.service"
 
@@ -15,8 +16,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env bash -lc 'cd "${BOT_DIR}" && exec python3 main.py'
-ExecStop=/usr/bin/env bash -lc 'pkill -f "python3 main.py" || true'
+ExecStart=/usr/bin/env bash -lc 'cd "${BOT_DIR}" && exec "${PYTHON_BIN}" main.py'
+ExecStop=/usr/bin/env bash -lc 'pkill -f "${PYTHON_BIN} main.py" || true'
 Restart=always
 RestartSec=5
 KillSignal=SIGINT
