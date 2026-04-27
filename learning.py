@@ -24,9 +24,13 @@ import threading
 import time
 from queue import Empty, Queue
 
-# [v118] Ruta absoluta de la DB anclada al directorio del módulo.
-# Garantiza que el proceso encuentre la BD sin importar el CWD desde donde se lance.
-_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sniper_brain.db")
+# [v118] Ruta de la DB con soporte para inyección por ENV (Docker/OCI).
+# Si no hay ENV, usa la ruta por defecto anclada al directorio del módulo.
+_ENV_DB_PATH = os.getenv("SNIPER_DB_PATH")
+if _ENV_DB_PATH:
+    _DB_PATH = _ENV_DB_PATH
+else:
+    _DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sniper_brain.db")
 
 
 class AsyncShadowLogger:
@@ -252,6 +256,26 @@ class Brain:
                 "ALTER TABLE trades ADD COLUMN tp_exchange_order_id TEXT",
                 "tp_exchange_order_id",
             ),
+            (
+                "ALTER TABLE trades ADD COLUMN exit_reason TEXT",
+                "exit_reason",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN is_adopted INTEGER DEFAULT 0",
+                "is_adopted",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN is_dirty INTEGER DEFAULT 0",
+                "is_dirty",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN mae_at_sl REAL",
+                "mae_at_sl",
+            ),
+            (
+                "ALTER TABLE trades ADD COLUMN mfe_at_sl REAL",
+                "mfe_at_sl",
+            ),
         ]
 
         for sql, column_name in migration_columns:
@@ -312,6 +336,41 @@ class Brain:
                 state_data TEXT
             )
         """)
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS confidence_exit_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_client_order_id TEXT UNIQUE,
+                symbol TEXT,
+                side TEXT,
+                is_shadow BOOLEAN DEFAULT 0,
+                entry_price REAL,
+                amount REAL,
+                entry_time TEXT,
+                entry_confidence REAL,
+                floor_confidence REAL,
+                confidence_drop_pct REAL,
+                floor_price REAL,
+                gross_pnl_at_conf_drop_usd REAL,
+                gross_pnl_at_conf_drop_pct REAL,
+                fee_floor_usd REAL,
+                fee_floor_pct REAL,
+                fee_noise_zone INTEGER DEFAULT 0,
+                guard_reason TEXT,
+                trigger_reason TEXT,
+                votes_json TEXT,
+                dominant_killer TEXT,
+                first_floor_ts TEXT,
+                defer_count INTEGER DEFAULT 0,
+                last_defer_ts TEXT,
+                final_trade_id INTEGER,
+                final_ts TEXT,
+                final_reason TEXT,
+                final_pnl_usd REAL,
+                final_pnl_percent REAL
+            )
+        """
+        )
         c.execute("""
             CREATE TABLE IF NOT EXISTS hourly_blacklist (
                 hour INTEGER PRIMARY KEY,
@@ -641,7 +700,7 @@ class Brain:
                     entry_exchange_order_id, sl_exchange_order_id, tp_exchange_order_id,
                     exit_reason, is_adopted, is_dirty, mae_at_sl, mfe_at_sl
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     datetime.now().isoformat(),
@@ -1827,6 +1886,158 @@ class Brain:
             except Exception as e:
                 print(f"❌ Error eliminando estado de trade activo: {e}")
                 return
+
+    def upsert_confidence_exit_audit(self, event_data: dict):
+        try:
+            conn = self._get_conn()
+            c = conn.cursor()
+            now_iso = datetime.now().isoformat()
+            entry_client_order_id = event_data.get("entry_client_order_id")
+            if not entry_client_order_id:
+                conn.close()
+                return None
+
+            current = c.execute(
+                "SELECT id, defer_count, first_floor_ts FROM confidence_exit_audit WHERE entry_client_order_id = ?",
+                (entry_client_order_id,),
+            ).fetchone()
+            defer_increment = int(event_data.get("defer_increment", 0) or 0)
+            defer_count = int((current[1] if current else 0) or 0) + defer_increment
+            first_floor_ts = event_data.get("first_floor_ts") or (
+                current[2] if current and current[2] else now_iso
+            )
+
+            c.execute(
+                """
+                INSERT INTO confidence_exit_audit (
+                    entry_client_order_id, symbol, side, is_shadow, entry_price, amount,
+                    entry_time, entry_confidence, floor_confidence, confidence_drop_pct,
+                    floor_price, gross_pnl_at_conf_drop_usd, gross_pnl_at_conf_drop_pct,
+                    fee_floor_usd, fee_floor_pct, fee_noise_zone, guard_reason,
+                    trigger_reason, votes_json, dominant_killer, first_floor_ts,
+                    defer_count, last_defer_ts
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entry_client_order_id) DO UPDATE SET
+                    floor_confidence = excluded.floor_confidence,
+                    confidence_drop_pct = excluded.confidence_drop_pct,
+                    floor_price = excluded.floor_price,
+                    gross_pnl_at_conf_drop_usd = excluded.gross_pnl_at_conf_drop_usd,
+                    gross_pnl_at_conf_drop_pct = excluded.gross_pnl_at_conf_drop_pct,
+                    fee_floor_usd = excluded.fee_floor_usd,
+                    fee_floor_pct = excluded.fee_floor_pct,
+                    fee_noise_zone = excluded.fee_noise_zone,
+                    guard_reason = excluded.guard_reason,
+                    trigger_reason = excluded.trigger_reason,
+                    votes_json = excluded.votes_json,
+                    dominant_killer = excluded.dominant_killer,
+                    defer_count = excluded.defer_count,
+                    last_defer_ts = excluded.last_defer_ts
+                """,
+                (
+                    entry_client_order_id,
+                    event_data.get("symbol"),
+                    event_data.get("side"),
+                    1 if event_data.get("is_shadow") else 0,
+                    event_data.get("entry_price"),
+                    event_data.get("amount"),
+                    event_data.get("entry_time"),
+                    event_data.get("entry_confidence"),
+                    event_data.get("floor_confidence"),
+                    event_data.get("confidence_drop_pct"),
+                    event_data.get("floor_price"),
+                    event_data.get("gross_pnl_at_conf_drop_usd"),
+                    event_data.get("gross_pnl_at_conf_drop_pct"),
+                    event_data.get("fee_floor_usd"),
+                    event_data.get("fee_floor_pct"),
+                    1 if event_data.get("fee_noise_zone") else 0,
+                    event_data.get("guard_reason"),
+                    event_data.get("trigger_reason"),
+                    json.dumps(event_data.get("votes") or {}),
+                    event_data.get("dominant_killer"),
+                    first_floor_ts,
+                    defer_count,
+                    now_iso if defer_increment > 0 else event_data.get("last_defer_ts"),
+                ),
+            )
+            audit_id = c.execute(
+                "SELECT id FROM confidence_exit_audit WHERE entry_client_order_id = ?",
+                (entry_client_order_id,),
+            ).fetchone()[0]
+            conn.commit()
+            conn.close()
+            return audit_id
+        except Exception as e:
+            print(f"❌ Error upsert confidence exit audit: {e}")
+            return None
+
+    def finalize_confidence_exit_audit(
+        self,
+        entry_client_order_id: str,
+        trade_id: int,
+        final_reason: str,
+        final_pnl_usd: float,
+        final_pnl_percent: float,
+    ):
+        try:
+            if not entry_client_order_id:
+                return
+            conn = self._get_conn()
+            c = conn.cursor()
+            c.execute(
+                """
+                UPDATE confidence_exit_audit
+                SET final_trade_id = ?,
+                    final_ts = ?,
+                    final_reason = ?,
+                    final_pnl_usd = ?,
+                    final_pnl_percent = ?
+                WHERE entry_client_order_id = ?
+                """,
+                (
+                    trade_id,
+                    datetime.now().isoformat(),
+                    final_reason,
+                    final_pnl_usd,
+                    final_pnl_percent,
+                    entry_client_order_id,
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"❌ Error finalizando confidence exit audit: {e}")
+
+    def get_recent_exit_confidence_stagnation(self, limit: int = 10):
+        try:
+            conn = self._get_conn()
+            c = conn.cursor()
+            rows = c.execute(
+                """
+                SELECT exit_confidence
+                FROM trades
+                WHERE exit_confidence IS NOT NULL
+                  AND exit_confidence > 0
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            conn.close()
+            values = [float(r["exit_confidence"] or 0.0) for r in rows]
+            if len(values) < limit:
+                return None
+            arr = np.array(values, dtype=float)
+            return {
+                "count": len(values),
+                "mean": float(arr.mean()),
+                "stddev": float(arr.std()),
+                "min": float(arr.min()),
+                "max": float(arr.max()),
+            }
+        except Exception as e:
+            print(f"❌ Error leyendo estancamiento de confianza: {e}")
+            return None
 
     def get_recent_performance(self, last_n=5):
         try:

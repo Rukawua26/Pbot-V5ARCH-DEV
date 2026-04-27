@@ -150,6 +150,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         bot.instance_uuid = "test-inst"
         bot._symbol_reduced_size_mult = 1.0
         bot.market_btc_change_tf = 0.0
+        bot.ghost_model = object()
         bot._load_runtime_symbol_controls = lambda: {
             "blocked": set(),
             "reduced": set(),
@@ -245,6 +246,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         bot.instance_uuid = "test-inst"
         bot._symbol_reduced_size_mult = 1.0
         bot.market_btc_change_tf = 0.0
+        bot.ghost_model = object()
         bot._load_runtime_symbol_controls = lambda: {"blocked": set(), "reduced": set()}
         bot._get_base_coin = lambda s: s.split("/")[0]
         bot.get_current_balance = lambda: 500.0

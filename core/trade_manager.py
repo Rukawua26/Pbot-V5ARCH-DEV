@@ -15,7 +15,7 @@ from core.reconciliation import (
 )
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 from learning import shadow_logger
-from notifier import send_telegram_msg, send_telegram_photo
+from notifier import Priority, send_telegram_msg, send_telegram_photo
 
 
 def _module_available(module_name: str) -> bool:
@@ -164,6 +164,12 @@ def execute_order(
         bot.log("🛑 HALT_SYSTEM activo: bloqueando nuevas posiciones reales.")
         return "HALT_SYSTEM_ACTIVE"
 
+    if bool(getattr(bot, "confidence_stagnation_lock_active", False)):
+        bot.log(
+            f"🛑 CONFIDENCE_STAGNATION_LOCK activo: bloqueando nueva entrada {symbol}."
+        )
+        return "CONFIDENCE_STAGNATION_LOCK"
+
     req_shadow = is_shadow
     degradation_reason = "UNKNOWN"
     signal_ts = allocate_signal_timestamp()
@@ -222,6 +228,14 @@ def execute_order(
         )
         return "INSUFFICIENT_BALANCE_MIN_NOTIONAL"
 
+    if bool(getattr(Config, "REQUIRE_GHOST_MODEL_FOR_TRADING", True)) and getattr(
+        bot, "ghost_model", None
+    ) is None:
+        bot.log(
+            f"🛑 GHOST_MODEL_MISSING: bloqueando nueva entrada {symbol} hasta restaurar modelo IA."
+        )
+        return "GHOST_MODEL_MISSING"
+
     amount, calculated_position_size = bot.risk_engine.calculate_position_size(
         balance=bot.balance,
         symbol=symbol,
@@ -256,12 +270,15 @@ def execute_order(
     trend = (context or {}).get("trend", "RANGO")
     spread = (context or {}).get("spread", 0.0)
     with bot.db_lock:
-        genes = bot.brain.get_genetic_params(symbol)
-        sl_modifier = 1.0
+        genes = (context or {}).get("sl_genes")
+        sl_modifier = float((context or {}).get("sl_modifier", 1.0) or 1.0)
         try:
-            stats = bot.brain.get_stats_by_trend()
-            if trend in stats and stats[trend].get("winrate", 50.0) < 45.0:
-                sl_modifier = 0.80
+            if genes is None:
+                genes = bot.brain.get_genetic_params(symbol)
+            if "sl_modifier" not in (context or {}):
+                stats = bot.brain.get_stats_by_trend()
+                if trend in stats and stats[trend].get("winrate", 50.0) < 45.0:
+                    sl_modifier = 0.80
         except Exception as error:
             bot.log(f"⚠️ No se pudo ajustar SL por tendencia en {symbol}: {error}")
 
@@ -714,6 +731,7 @@ def execute_order(
                 "market_snapshot": clean_snapshot,
                 "entry_ob": ob_status,
                 "entry_confidence": (context or {}).get("prob_final", 75.0),
+                "current_confidence": (context or {}).get("prob_final", 75.0),
                 "entry_shock_level": (context or {}).get("shock_level"),
                 "entry_atr": (context or {}).get("atr", 0.0),
                 "breakout_origin": bool((context or {}).get("breakout_ready", False)),
@@ -740,7 +758,26 @@ def execute_order(
             if symbol not in bot.active_trades:
                 bot.active_trades[symbol] = trade_state
                 with bot.db_lock:
-                    bot.brain.save_active_trade_state(symbol, trade_state)
+                    persisted = bot.brain.save_active_trade_state(symbol, trade_state)
+                if not persisted:
+                    bot.integrity_lock_active = True
+                    bot.log(
+                        f"🛑 PERSISTENCE_GUARD {symbol}: orden aceptada pero estado activo no persistió. Integrity lock activado."
+                    )
+                    append_execution_event(
+                        bot,
+                        "ACTIVE_STATE_PERSIST_FAILED",
+                        {
+                            "symbol": symbol,
+                            "entry_client_order_id": entry_client_order_id,
+                            "status": trade_state.get("status"),
+                        },
+                    )
+                    send_telegram_msg(
+                        f"🚨 *PERSISTENCE GUARD*\n{symbol}: orden aceptada pero DB no persistió el estado activo. Integrity lock activado.",
+                        Priority.CRITICAL,
+                    )
+                    return "PERSISTENCE_GUARD_ACTIVE"
                 bot.log(
                     f"💾 CARTERA: {symbol} registrado ({'SHADOW' if is_shadow else 'REAL'})."
                 )
@@ -963,6 +1000,13 @@ def close_trade(
                     f"💾 Trade guardado #{trade_id if trade_id else 'N/A'}: {symbol} | "
                     f"is_shadow={trade.get('is_shadow', False)} | PnL={pnl_neto_percent:.2f}% | ${pnl_neto_usd:+.4f}"
                 )
+                bot.brain.finalize_confidence_exit_audit(
+                    trade.get("entry_client_order_id"),
+                    trade_id or 0,
+                    reason,
+                    pnl_neto_usd,
+                    pnl_neto_percent,
+                )
 
                 votos = trade.get("market_snapshot", {}).get("votos", {})
                 if votos:
@@ -982,6 +1026,21 @@ def close_trade(
                     )
         except Exception as e:
             bot.log(f"⚠️ Error guardando trade o reputación {symbol}: {e}")
+
+        recent_trade = {
+            "symbol": symbol,
+            "side": trade.get("side", "?"),
+            "entry": trade.get("entry", 0.0),
+            "exit": exit_price,
+            "pnl": pnl_neto_percent,
+            "is_shadow": trade.get("is_shadow", False),
+            "reason": reason,
+            "closing_in_progress": False,
+        }
+        with bot.lock:
+            recent = list(getattr(bot, "recent_closed_trades", []) or [])
+            recent.insert(0, recent_trade)
+            bot.recent_closed_trades = recent[:6]
 
         with bot.lock:
             if symbol in bot.active_trades:
@@ -1107,7 +1166,33 @@ def close_trade(
             f"💸 Exit: ${exit_price:.6f}\n"
             f"⏱️ Duración: {duration}"
         )
-        send_telegram_msg(msg_telegram)
+        msg_priority = Priority.INFO
+        reason_upper = str(reason or "").upper()
+        if "CIRCUIT BREAKER" in reason_upper:
+            msg_priority = Priority.CRITICAL
+        elif "DEGRADED" in reason_upper or "BAILOUT" in reason_upper:
+            msg_priority = Priority.ERROR
+        elif pnl_neto_percent < 0:
+            msg_priority = Priority.WARNING
+        send_telegram_msg(msg_telegram, msg_priority)
+
+        with bot.db_lock:
+            stagnation = bot.brain.get_recent_exit_confidence_stagnation(limit=10)
+        if stagnation and float(stagnation.get("stddev", 99.0)) < 1.0:
+            bot.confidence_stagnation_lock_active = True
+            bot.log(
+                f"⚠️ CONFIDENCE_STAGNATION: last10 std={stagnation['stddev']:.3f} "
+                f"mean={stagnation['mean']:.2f} range=[{stagnation['min']:.2f},{stagnation['max']:.2f}]"
+            )
+            send_telegram_msg(
+                (
+                    "⚠️ *CONFIDENCE STAGNATION*\n"
+                    f"Últimos {stagnation['count']} cierres con exit_conf muy comprimida.\n"
+                    f"StdDev: {stagnation['stddev']:.3f} | Media: {stagnation['mean']:.2f}\n"
+                    f"Rango: {stagnation['min']:.2f} - {stagnation['max']:.2f}"
+                ),
+                Priority.WARNING,
+            )
         bot._check_recent_mfe_health()
 
         now = utc_now()

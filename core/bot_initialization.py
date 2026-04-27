@@ -10,6 +10,7 @@ from core.time_utils import monotonic_now
 
 def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.active_trades = {}
+    bot.recent_closed_trades = []
     bot.scanner_history = []
     bot.logs = []
     bot.balance = 0.0
@@ -91,6 +92,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     )
     bot.last_entry_open_ts = 0.0
     bot.last_shadow_signal_ts = 0.0
+    bot.confidence_stagnation_lock_active = False
 
 
 def init_realtime_and_monitoring(

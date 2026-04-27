@@ -50,9 +50,13 @@ class TimedRLock:
 
 
 class SqliteStressBrain:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, commit_delay_min: float = 0.0, commit_delay_max: float = 0.0):
         self.db_path = db_path
+        self.commit_delay_min = max(0.0, float(commit_delay_min))
+        self.commit_delay_max = max(self.commit_delay_min, float(commit_delay_max))
         self.sqlite_locked_errors = 0
+        self.sqlite_backoff_executions = 0
+        self.sqlite_hard_failures = 0
         self.db_write_over_100ms = 0
         self.db_write_max_ms = 0.0
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -82,6 +86,28 @@ class SqliteStressBrain:
         conn.commit()
         conn.close()
 
+    def _commit(self, conn):
+        if self.commit_delay_max > 0.0:
+            time.sleep(random.uniform(self.commit_delay_min, self.commit_delay_max))
+        conn.commit()
+
+    def _with_backoff(self, write_fn):
+        last_error = None
+        for attempt in range(3):
+            try:
+                return write_fn()
+            except sqlite3.OperationalError as error:
+                last_error = error
+                if "locked" in str(error).lower():
+                    self.sqlite_locked_errors += 1
+                    if attempt < 2:
+                        self.sqlite_backoff_executions += 1
+                        time.sleep(0.05 * (2**attempt))
+                        continue
+                break
+        self.sqlite_hard_failures += 1
+        return False
+
     def _conn(self):
         return sqlite3.connect(self.db_path, timeout=1.0)
 
@@ -100,7 +126,7 @@ class SqliteStressBrain:
 
     def save_active_trade_state(self, symbol, state):
         started = time.perf_counter()
-        try:
+        def _write():
             conn = self._conn()
             conn.execute(
                 """
@@ -110,41 +136,39 @@ class SqliteStressBrain:
                 """,
                 (symbol, json.dumps(state, default=str, ensure_ascii=False)),
             )
-            conn.commit()
+            self._commit(conn)
             conn.close()
             self._track_write_duration(started)
             return True
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error).lower():
-                self.sqlite_locked_errors += 1
-            return False
+
+        return bool(self._with_backoff(_write))
 
     def delete_active_trade_state(self, symbol):
         started = time.perf_counter()
-        try:
+        def _write():
             conn = self._conn()
             conn.execute("DELETE FROM active_trades_state WHERE symbol=?", (symbol,))
-            conn.commit()
+            self._commit(conn)
             conn.close()
             self._track_write_duration(started)
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error).lower():
-                self.sqlite_locked_errors += 1
+            return True
+
+        return bool(self._with_backoff(_write))
 
     def save_error_snapshot(self, symbol, reason, ctx):
         started = time.perf_counter()
-        try:
+        def _write():
             conn = self._conn()
             conn.execute(
                 "INSERT INTO error_log(symbol, reason, payload) VALUES (?, ?, ?)",
                 (symbol, reason, json.dumps(ctx or {}, ensure_ascii=False)),
             )
-            conn.commit()
+            self._commit(conn)
             conn.close()
             self._track_write_duration(started)
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error).lower():
-                self.sqlite_locked_errors += 1
+            return True
+
+        return bool(self._with_backoff(_write))
 
 
 class _LiveTickerStub:
@@ -302,6 +326,8 @@ def main():
     parser.add_argument("--minutes", type=float, default=15.0)
     parser.add_argument("--orders-per-minute", type=int, default=30)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--commit-delay-min", type=float, default=0.0)
+    parser.add_argument("--commit-delay-max", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--symbol-focus", type=str, default="BTC/USDT")
     args = parser.parse_args()
@@ -310,9 +336,12 @@ def main():
     os.environ["TRADE_COOLDOWN_MINUTES"] = "0"
     Config.PARTIAL_FILL_TIMEOUT_SECONDS = 30
     setattr(Config, "TRADE_COOLDOWN_MINUTES", 0)
+    setattr(Config, "GLOBAL_ENTRY_COOLDOWN_SECONDS", 0)
+    setattr(Config, "SIGNAL_COOLDOWN_SHADOW_SECONDS", 0)
     setattr(Config, "MAX_SECTOR_EXPOSURE", 10000)
     setattr(Config, "MAX_OPEN_TRADES", 10000)
     setattr(Config, "MAX_DIRECTIONAL_TRADES", 10000)
+    setattr(Config, "REQUIRE_GHOST_MODEL_FOR_TRADING", False)
 
     rng = random.Random(args.seed)
     live_stub = _LiveTickerStub(seed=args.seed)
@@ -327,7 +356,11 @@ def main():
     )
 
     db_path = os.path.join(ROOT_DIR, "logs", "shadow_stress.db")
-    brain = SqliteStressBrain(db_path)
+    brain = SqliteStressBrain(
+        db_path,
+        commit_delay_min=args.commit_delay_min,
+        commit_delay_max=args.commit_delay_max,
+    )
     bot = _build_bot(shadow_exec, brain)
 
     guardian_thread = threading.Thread(
@@ -439,6 +472,11 @@ def main():
     print(f"db_write_commit_over_100ms={brain.db_write_over_100ms}")
     print(f"db_write_commit_max_ms={brain.db_write_max_ms:.3f}")
     print(f"sqlite_database_locked_errors={brain.sqlite_locked_errors}")
+    print(f"sqlite_backoff_executions={brain.sqlite_backoff_executions}")
+    print(f"sqlite_hard_failures={brain.sqlite_hard_failures}")
+    print(
+        f"sqlite_commit_delay_range_s={brain.commit_delay_min:.3f}-{brain.commit_delay_max:.3f}"
+    )
 
     print("=== METRIC 2: TIMELINE FOCUS ===")
     for label in ("T0", "T1", "T2", "T3"):

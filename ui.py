@@ -68,6 +68,7 @@ class UI:
         st = self.state
         scanner = st.get("scanner", [])
         trades = st.get("trades", [])
+        recent_closed_trades = st.get("recent_closed_trades", [])
         balance = st.get("balance", 0)
         db_stats = st.get("db_stats", {})
         sentiment = st.get("sentiment", ("NEUTRAL", "white"))
@@ -75,6 +76,16 @@ class UI:
         # Contar trades reales vs shadow
         real_active = sum(1 for t in trades if not t.get("is_shadow"))
         shadow_active = sum(1 for t in trades if t.get("is_shadow"))
+        real_closing = sum(
+            1
+            for t in trades
+            if not t.get("is_shadow") and t.get("closing_in_progress", False)
+        )
+        shadow_closing = sum(
+            1
+            for t in trades
+            if t.get("is_shadow") and t.get("closing_in_progress", False)
+        )
 
         # Stats de la DB
         total_real = db_stats.get("total_real_trades", 0) if db_stats else 0
@@ -103,7 +114,10 @@ class UI:
         print(f"   Real Trades Totales: {total_real} | Shadow Totales: {total_shadow}")
 
         # Trades activos
-        print(f"\n🔴 TRADES REALES ABIERTOS: {real_active}")
+        real_header = f"\n🔴 TRADES REALES ABIERTOS: {real_active}"
+        if real_closing:
+            real_header += f" | cerrando: {real_closing}"
+        print(real_header)
         real_trades = [t for t in trades if not t.get("is_shadow")]
         if real_trades:
             for t in real_trades:
@@ -111,12 +125,16 @@ class UI:
                 side = t.get("side", "?")
                 entry = t.get("entry", 0) or t.get("entry_price", 0)
                 pnl = t.get("pnl", 0)
-                print(f"   - {sym} {side}")
+                suffix = " [CERRANDO]" if t.get("closing_in_progress", False) else ""
+                print(f"   - {sym} {side}{suffix}")
                 print(f"     Entry: ${entry:.6f} | PnL: {pnl:+.2f}%")
         else:
             print("   (ninguno)")
 
-        print(f"\n🟡 TRADES SHADOW ABIERTOS: {shadow_active}")
+        shadow_header = f"\n🟡 TRADES SHADOW ABIERTOS: {shadow_active}"
+        if shadow_closing:
+            shadow_header += f" | cerrando: {shadow_closing}"
+        print(shadow_header)
         shadow_trades = [t for t in trades if t.get("is_shadow")]
         if shadow_trades:
             for t in shadow_trades:
@@ -124,8 +142,22 @@ class UI:
                 side = t.get("side", "?")
                 entry = t.get("entry", 0) or t.get("entry_price", 0)
                 pnl = t.get("pnl", 0)
-                print(f"   - {sym} {side}")
+                suffix = " [CERRANDO]" if t.get("closing_in_progress", False) else ""
+                print(f"   - {sym} {side}{suffix}")
                 print(f"     Entry: ${entry:.6f} | PnL: {pnl:+.2f}%")
+        else:
+            print("   (ninguno)")
+
+        print("\n🧾 ÚLTIMOS TRADES CERRADOS")
+        if recent_closed_trades:
+            for t in recent_closed_trades[:6]:
+                sym = t.get("symbol", "?")
+                side = t.get("side", "?")
+                pnl = t.get("pnl", 0)
+                reason = self._fit_text(t.get("reason", ""), 44)
+                tag = "SHADOW" if t.get("is_shadow") else "REAL"
+                print(f"   - {sym} {side} [{tag}] | PnL: {pnl:+.2f}%")
+                print(f"     Reason: {reason}")
         else:
             print("   (ninguno)")
 

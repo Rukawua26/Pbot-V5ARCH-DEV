@@ -1,8 +1,83 @@
 import time
+from contextlib import nullcontext
 from datetime import timedelta
 
+from config import Config
 from core.time_utils import parse_datetime_utc, utc_now
 from strategy import Strategy
+
+
+def _derive_dominant_killer(side, votes):
+    if not isinstance(votes, dict) or not votes:
+        return "UNKNOWN"
+    normalized_side = str(side or "BUY").upper()
+    if normalized_side == "SELL":
+        return max(votes.items(), key=lambda item: float(item[1] or 0.0))[0]
+    return min(votes.items(), key=lambda item: float(item[1] or 0.0))[0]
+
+
+def _record_confidence_floor_event(
+    bot,
+    trade,
+    symbol,
+    prob_final,
+    current_price,
+    deg_reason,
+    votos,
+    defer_exit,
+    defer_reason,
+):
+    entry_price = float(trade.get("entry") or 0.0)
+    amount = float(trade.get("amount") or 0.0)
+    if entry_price <= 0 or amount <= 0:
+        return
+
+    side = str(trade.get("side") or "BUY").upper()
+    gross_usd = (current_price - entry_price) * amount
+    if side == "SELL":
+        gross_usd *= -1
+    notional = entry_price * amount
+    gross_pct = (gross_usd / notional) * 100.0 if notional > 0 else 0.0
+    fee_floor_usd = (
+        (entry_price * amount * Config.VIRTUAL_FEE)
+        + (current_price * amount * Config.VIRTUAL_FEE)
+    )
+    fee_floor_pct = (fee_floor_usd / notional) * 100.0 if notional > 0 else 0.0
+    entry_conf = float(trade.get("entry_confidence") or 0.0)
+    confidence_drop_pct = (
+        ((entry_conf - float(prob_final)) / entry_conf) * 100.0 if entry_conf > 0 else 0.0
+    )
+    defer_increment = 1 if defer_exit else 0
+
+    db_lock = getattr(bot, "db_lock", None)
+    with (db_lock or nullcontext()):
+        audit_id = bot.brain.upsert_confidence_exit_audit(
+            {
+                "entry_client_order_id": trade.get("entry_client_order_id"),
+                "symbol": symbol,
+                "side": side,
+                "is_shadow": bool(trade.get("is_shadow", False)),
+                "entry_price": entry_price,
+                "amount": amount,
+                "entry_time": trade.get("open_time"),
+                "entry_confidence": entry_conf,
+                "floor_confidence": float(prob_final),
+                "confidence_drop_pct": confidence_drop_pct,
+                "floor_price": current_price,
+                "gross_pnl_at_conf_drop_usd": gross_usd,
+                "gross_pnl_at_conf_drop_pct": gross_pct,
+                "fee_floor_usd": fee_floor_usd,
+                "fee_floor_pct": fee_floor_pct,
+                "fee_noise_zone": defer_exit,
+                "guard_reason": defer_reason if defer_exit else "NO_DEFER",
+                "trigger_reason": deg_reason,
+                "votes": votos,
+                "dominant_killer": _derive_dominant_killer(side, votos),
+                "defer_increment": defer_increment,
+            }
+        )
+    if audit_id:
+        trade["confidence_exit_audit_id"] = audit_id
 
 
 def monitor_open_trades(bot):
@@ -58,16 +133,68 @@ def monitor_open_trades(bot):
 
             # res return: (signal, mode, exit_price, prob_final, indicators, votos)
             prob_final = res[3]
+            indicators = res[4] if len(res) > 4 else {}
+            votos = res[5] if len(res) > 5 else {}
+            trade["current_confidence"] = prob_final
+            trade["last_confidence_trace"] = {
+                "prob_final": float(prob_final),
+                "votes": dict(votos or {}),
+                "regime": indicators.get("regime") if isinstance(indicators, dict) else None,
+                "trend": indicators.get("trend") if isinstance(indicators, dict) else None,
+                "bootstrap_mode": bool(getattr(bot, "bootstrap_heuristic_mode", False)),
+            }
             duration = utc_now() - open_time
             elapsed_mins = duration.total_seconds() / 60
 
+            if prob_final <= 30.0:
+                bot.log(
+                    f"🧠 CONF_AUDIT {symbol}: prob={prob_final:.1f}% "
+                    f"MT={float((votos or {}).get('MT', 0.0)):.1f} "
+                    f"SR={float((votos or {}).get('SR', 0.0)):.1f} "
+                    f"G={float((votos or {}).get('G', 0.0)):.1f} "
+                    f"bootstrap={int(bool(getattr(bot, 'bootstrap_heuristic_mode', False)))}"
+                )
+
             # --- [V118] SMART EXIT: SALIDA POR DEGRADACIÓN ---
+            if getattr(bot, "ghost_model", None) is None or bool(
+                getattr(bot, "bootstrap_heuristic_mode", False)
+            ):
+                if prob_final <= 30.0:
+                    bot.log(
+                        f"🛑 CONF_EXIT_DISABLED {symbol}: Ghost ausente/bootstrap; "
+                        f"prob={prob_final:.1f}% no se usa para cerrar."
+                    )
+                continue
+
             is_degraded, deg_reason = bot.risk_engine.check_signal_integrity(
                 trade, prob_final, elapsed_mins
             )
 
             if is_degraded:
                 entry_conf = trade.get("entry_confidence", 0)
+                current_price = float(df_main["close"].iloc[-1])
+                defer_exit, defer_reason = bot.risk_engine.should_defer_confidence_exit_for_fee_noise(
+                    trade,
+                    current_price,
+                    elapsed_mins,
+                    deg_reason,
+                )
+                _record_confidence_floor_event(
+                    bot,
+                    trade,
+                    symbol,
+                    prob_final,
+                    current_price,
+                    deg_reason,
+                    votos,
+                    defer_exit,
+                    defer_reason,
+                )
+                if defer_exit:
+                    bot.log(
+                        f"🪙 FEE_NOISE_GUARD ({symbol}): deferido smart-exit | {defer_reason}"
+                    )
+                    continue
                 bot.log(
                     f"🚨 DEGRADED EXIT ({symbol}): {deg_reason} | EntryConf: {entry_conf:.1f} -> ExitConf: {prob_final:.1f}"
                 )
@@ -76,7 +203,7 @@ def monitor_open_trades(bot):
                 bot.close_trade(
                     symbol,
                     reason=f"DEGRADED_{deg_reason}",
-                    exit_price=float(df_main["close"].iloc[-1]),
+                    exit_price=current_price,
                     exit_confidence=prob_final,
                     latency_context={
                         "trigger": "DEGRADED_EXIT",

@@ -33,6 +33,10 @@ def init_models_and_startup_tasks(
         scaler_path = os.path.join("models", "scaler.pkl")
         pro_model_path = "ghost_brain_pro.pkl"
         advanced_model_path = "ghost_brain_advanced.pkl"
+        agent_models_path = "agent_models.pkl"
+        model_dir_agent_path = os.path.join("models", "agent_models.pkl")
+        if os.path.exists(model_dir_agent_path):
+            agent_models_path = model_dir_agent_path
 
         if os.path.exists(advanced_model_path):
             try:
@@ -79,9 +83,9 @@ def init_models_and_startup_tasks(
                 bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (Random Forest): Cerebro cargado.")
                 send_telegram_msg("🧠 *IA Nivel 4 (Random Forest) operativa*")
-            elif os.path.exists("agent_models.pkl"):
+            elif os.path.exists(agent_models_path):
                 try:
-                    with open("agent_models.pkl", "rb") as file_obj:
+                    with open(agent_models_path, "rb") as file_obj:
                         bot.ghost_model = pickle.load(file_obj)
                     bot.ghost_model_type = "AGENT_MODELS"
                     bot.bootstrap_heuristic_mode = False
@@ -90,7 +94,7 @@ def init_models_and_startup_tasks(
                     )
                     send_telegram_msg("🧠 *IA (Agent Models) operativa*")
                 except Exception as error:
-                    bot.log(f"⚠️ Error cargando agent_models.pkl: {error}")
+                    bot.log(f"⚠️ Error cargando {agent_models_path}: {error}")
             else:
                 bot.bootstrap_heuristic_mode = True
                 bot.ai_status_msg = "BOOTSTRAP_HEURISTIC"

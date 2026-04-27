@@ -1,8 +1,9 @@
 import io
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from notifier import NotificationQueue, send_telegram_photo
+from notifier import NotificationQueue, Priority, send_telegram_photo
 
 
 class _Response:
@@ -35,7 +36,7 @@ class BootAndNotifierTest(unittest.TestCase):
 
         ok = queue._send_with_retry(
             "sendMessage",
-            {"chat_id": "1", "text": "BTC_[test]", "parse_mode": "Markdown"},
+            {"json": {"chat_id": "1", "text": "BTC_[test]", "parse_mode": "Markdown"}},
             1,
         )
 
@@ -46,17 +47,80 @@ class BootAndNotifierTest(unittest.TestCase):
 
     @patch("notifier.Config.TELEGRAM_CHAT_ID", "1")
     @patch("notifier.Config.TELEGRAM_TOKEN", "token")
+    def test_send_telegram_photo_enqueues_shared_queue(self):
+        queue = MagicMock()
+        with patch("notifier.get_queue", return_value=queue):
+            send_telegram_photo("caption_[x]", io.BytesIO(b"png"))
+
+        queue.send_photo.assert_called_once_with(
+            "caption_[x]", b"png", priority=Priority.INFO
+        )
+
     @patch("notifier.telegram_post")
-    def test_send_telegram_photo_falls_back_without_markdown(self, mocked_post):
+    def test_notification_queue_photo_falls_back_without_markdown(self, mocked_post):
         mocked_post.side_effect = [
             _Response(400, "Bad Request: can't parse entities"),
             _Response(200, "ok"),
         ]
+        queue = NotificationQueue(max_retries=1, rate_limit_seconds=0)
+        queue.running = False
 
-        send_telegram_photo("caption_[x]", io.BytesIO(b"png"))
+        ok = queue._send_with_retry(
+            "sendPhoto",
+            {
+                "data": {"chat_id": "1", "caption": "caption_[x]", "parse_mode": "Markdown"},
+                "files": {"photo": ("sniper.png", b"png", "image/png")},
+            },
+            1,
+        )
 
+        self.assertTrue(ok)
         self.assertEqual(mocked_post.call_count, 2)
         self.assertNotIn("parse_mode", mocked_post.call_args_list[1].kwargs["data"])
+        queue.stop()
+
+    @patch("notifier.telegram_post", return_value=_Response(200, "ok"))
+    def test_notification_queue_rate_limits_messages_and_photos(self, mocked_post):
+        queue = NotificationQueue(max_retries=1, rate_limit_seconds=0.05)
+        queue.running = False
+
+        start = time.time()
+        first = queue._send_with_retry(
+            "sendMessage",
+            {"json": {"chat_id": "1", "text": "hello", "parse_mode": "Markdown"}},
+            1,
+        )
+        second = queue._send_with_retry(
+            "sendPhoto",
+            {
+                "data": {"chat_id": "1", "caption": "cap", "parse_mode": "Markdown"},
+                "files": {"photo": ("sniper.png", b"png", "image/png")},
+            },
+            1,
+        )
+        elapsed = time.time() - start
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertGreaterEqual(elapsed, 0.05)
+        queue.stop()
+
+    def test_notification_queue_keeps_fifo_inside_priority(self):
+        queue = NotificationQueue(max_retries=1, rate_limit_seconds=0)
+        queue.running = False
+        queue.send("first", Priority.INFO)
+        queue.send("critical", Priority.CRITICAL)
+        queue.send("second", Priority.INFO)
+
+        first_item = queue.queue.get_nowait()
+        second_item = queue.queue.get_nowait()
+        third_item = queue.queue.get_nowait()
+
+        self.assertEqual(first_item[2], "sendMessage")
+        self.assertEqual(first_item[3]["json"]["text"], "critical")
+        self.assertEqual(second_item[3]["json"]["text"], "first")
+        self.assertEqual(third_item[3]["json"]["text"], "second")
+        queue.stop()
 
 
 if __name__ == "__main__":

@@ -326,16 +326,27 @@ class Strategy:
         atr = kwargs.get("atr", 0)
         side = kwargs.get("side", "BUY")
         trend = kwargs.get("regime", "RANGE")
+        modifier = kwargs.get("modifier")
+        genes = kwargs.get("genes") or {}
 
         if entry_price > 0 and atr > 0:
-            sl_price = cls.get_stop_loss(entry_price, side, atr, trend, is_shadow)
+            sl_price = cls.get_stop_loss(
+                entry_price,
+                side,
+                atr,
+                trend,
+                is_shadow,
+                modifier=modifier,
+                genes=genes,
+            )
             sl_dist_pct = abs(entry_price - sl_price) / entry_price * 100
+            max_entry_sl_pct = float(getattr(Config, "MAX_ENTRY_SL_PCT", 1.2) or 1.2)
 
-            # --- VETO KAVA: Hard-Cap 1.2% ---
-            if sl_dist_pct > 1.2:
+            # --- VETO KAVA: Hard-Cap configurable ---
+            if sl_dist_pct > max_entry_sl_pct:
                 return (
                     False,
-                    f"VETO_KAVA: RIESGO EXCESIVO ({sl_dist_pct:.2f}% > 1.20%)",
+                    f"VETO_KAVA: RIESGO EXCESIVO ({sl_dist_pct:.2f}% > {max_entry_sl_pct:.2f}%)",
                     "HIGH_RISK",
                     {},
                 )

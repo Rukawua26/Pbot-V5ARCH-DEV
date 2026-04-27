@@ -7,6 +7,7 @@ Módulo de notificaciones para Telegram con reintentos y cola.
 import time
 import threading
 import queue
+import itertools
 from enum import Enum
 from config import Config
 from core.telegram_api import sanitize_telegram_error, telegram_post
@@ -24,11 +25,12 @@ class NotificationQueue:
     """Cola de notificaciones con rate limiting."""
 
     def __init__(self, max_retries=3, rate_limit_seconds=1):
-        self.queue = queue.Queue()
+        self.queue = queue.PriorityQueue()
         self.max_retries = max_retries
         self.rate_limit = rate_limit_seconds
         self.last_sent = 0
         self.running = True
+        self._sequence = itertools.count()
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
 
@@ -36,22 +38,31 @@ class NotificationQueue:
         while self.running:
             try:
                 item = self.queue.get(timeout=0.5)
-                if item is None:
+                if item is None or item[2] is None:
                     break
-                self._send_with_retry(*item)
+                _, _, method, payload, retries, priority = item
+                self._send_with_retry(method, payload, retries, priority)
             except queue.Empty:
                 continue
 
-    def _send_with_retry(self, method, payload, retries):
+    def _send_with_retry(self, method, payload, retries, priority=Priority.INFO):
         for attempt in range(retries):
             try:
                 # Rate limiting
                 now = time.time()
                 elapsed = now - self.last_sent
-                if elapsed < self.rate_limit:
+                if priority.value < Priority.ERROR.value and elapsed < self.rate_limit:
                     time.sleep(self.rate_limit - elapsed)
 
-                response = telegram_post(method, json=payload, timeout=10)
+                request_kwargs = {"timeout": 10}
+                if "json" in payload:
+                    request_kwargs["json"] = payload["json"]
+                else:
+                    request_kwargs["data"] = payload.get("data", {})
+                    request_kwargs["files"] = payload.get("files", {})
+                    request_kwargs["timeout"] = 15
+
+                response = telegram_post(method, **request_kwargs)
                 if response.status_code == 200:
                     self.last_sent = time.time()
                     return True
@@ -59,11 +70,24 @@ class NotificationQueue:
                     time.sleep(2**attempt)  # Exponential backoff
                 elif (
                     response.status_code == 400
-                    and payload.get("parse_mode") == "Markdown"
+                    and (
+                        payload.get("json", {}).get("parse_mode") == "Markdown"
+                        or payload.get("data", {}).get("parse_mode") == "Markdown"
+                    )
                 ):
-                    fallback_payload = dict(payload)
-                    fallback_payload.pop("parse_mode", None)
-                    response = telegram_post(method, json=fallback_payload, timeout=10)
+                    if "json" in payload:
+                        fallback_json = dict(payload["json"])
+                        fallback_json.pop("parse_mode", None)
+                        response = telegram_post(method, json=fallback_json, timeout=10)
+                    else:
+                        fallback_data = dict(payload.get("data", {}))
+                        fallback_data.pop("parse_mode", None)
+                        response = telegram_post(
+                            method,
+                            data=fallback_data,
+                            files=payload.get("files", {}),
+                            timeout=15,
+                        )
                     if response.status_code == 200:
                         self.last_sent = time.time()
                         return True
@@ -86,11 +110,47 @@ class NotificationQueue:
             "text": message,
             "parse_mode": "Markdown",
         }
-        self.queue.put(("sendMessage", payload, self.max_retries))
+        self.queue.put(
+            (
+                -priority.value,
+                next(self._sequence),
+                "sendMessage",
+                {"json": payload},
+                self.max_retries,
+                priority,
+            )
+        )
+
+    def send_photo(
+        self,
+        caption,
+        photo_bytes,
+        filename="sniper.png",
+        priority=Priority.INFO,
+    ):
+        if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
+            return
+
+        data = {
+            "chat_id": Config.TELEGRAM_CHAT_ID,
+            "caption": caption,
+            "parse_mode": "Markdown",
+        }
+        files = {"photo": (filename, photo_bytes, "image/png")}
+        self.queue.put(
+            (
+                -priority.value,
+                next(self._sequence),
+                "sendPhoto",
+                {"data": data, "files": files},
+                self.max_retries,
+                priority,
+            )
+        )
 
     def stop(self):
         self.running = False
-        self.queue.put(None)
+        self.queue.put((0, next(self._sequence), None, None, 0, Priority.INFO))
         self.thread.join()
 
 
@@ -101,7 +161,11 @@ _notifier_queue = None
 def get_queue():
     global _notifier_queue
     if _notifier_queue is None:
-        _notifier_queue = NotificationQueue()
+        _notifier_queue = NotificationQueue(
+            rate_limit_seconds=float(
+                getattr(Config, "TELEGRAM_RATE_LIMIT_SECONDS", 1.2) or 1.2
+            )
+        )
     return _notifier_queue
 
 
@@ -113,29 +177,16 @@ def send_telegram_msg(message, priority=Priority.INFO):
         print(f"⚠️ Telegram Error: {sanitize_telegram_error(e)}")
 
 
-def send_telegram_photo(caption, photo_buffer):
+def send_telegram_photo(caption, photo_buffer, priority=Priority.INFO):
     """Envía una foto a Telegram."""
     try:
         if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
             return
-
-        files = {"photo": ("sniper.png", photo_buffer, "image/png")}
-        data = {
-            "chat_id": Config.TELEGRAM_CHAT_ID,
-            "caption": caption,
-            "parse_mode": "Markdown",
-        }
-        response = telegram_post("sendPhoto", data=data, files=files, timeout=15)
-
-        if response.status_code == 400 and data.get("parse_mode") == "Markdown":
-            fallback_data = dict(data)
-            fallback_data.pop("parse_mode", None)
-            response = telegram_post(
-                "sendPhoto", data=fallback_data, files=files, timeout=15
-            )
-
-        if response.status_code != 200:
-            print(f"⚠️ Telegram Photo Error: {response.text}")
+        if hasattr(photo_buffer, "getvalue"):
+            photo_bytes = photo_buffer.getvalue()
+        else:
+            photo_bytes = photo_buffer.read()
+        get_queue().send_photo(caption, photo_bytes, priority=priority)
     except Exception as e:
         print(f"⚠️ Telegram Photo Error: {sanitize_telegram_error(e)}")
 

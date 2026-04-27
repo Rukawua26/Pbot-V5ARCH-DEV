@@ -61,6 +61,23 @@ def _apply_entry_filters_and_adjust_prob(
     adx_val = ctx.get("adx", 20)
     current_time = utc_now()
     volatility_val = ctx.get("atr_pct", 0)
+    genes = None
+    sl_modifier = 1.0
+
+    try:
+        with bot.db_lock:
+            genes = bot.brain.get_genetic_params(symbol)
+            stats = bot.brain.get_stats_by_trend()
+        trend = str(ctx.get("trend", "RANGO"))
+        if trend in stats and stats[trend].get("winrate", 50.0) < 45.0:
+            sl_modifier = 0.80
+    except Exception as error:
+        bot.log(f"⚠️ No se pudo preparar contexto SL para {symbol}: {error}")
+        genes = None
+        sl_modifier = 1.0
+
+    ctx["sl_modifier"] = sl_modifier
+    ctx["sl_genes"] = genes or {}
 
     # [v118] Determinar prospecto de modo (Shadow/Real) para bypass de filtros
     prob_prospect = prob_final
@@ -79,6 +96,12 @@ def _apply_entry_filters_and_adjust_prob(
         volatility_val,
         vol_rel,
         is_shadow=is_shadow_prospect,
+        price=ctx.get("close", 0.0),
+        atr=ctx.get("atr", 0.0),
+        side=audit_signal,
+        regime=ctx.get("trend", "RANGO"),
+        modifier=sl_modifier,
+        genes=genes,
     )
 
     # [SHOCK MAP] Veto por falta de espacio operativo

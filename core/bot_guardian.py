@@ -1,4 +1,5 @@
 import time
+from contextlib import nullcontext
 
 from config import Config
 from core.execution_telemetry import append_execution_event
@@ -64,7 +65,11 @@ def run_guardian_loop(bot):
                         current_conf = t.get("current_confidence", 50.0)
                         entry_conf = t.get("entry_confidence", 75.0)
                         is_shadow = t.get("is_shadow", False)
-                        threshold = 0.30 if is_shadow else 0.70
+                        threshold = (
+                            Config.SMART_EXIT_THRESHOLD_SHADOW
+                            if is_shadow
+                            else Config.SMART_EXIT_THRESHOLD_REAL
+                        )
                         abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
                             entry_conf, current_conf, threshold
                         )
@@ -103,16 +108,117 @@ def run_guardian_loop(bot):
                         )
                         continue
 
-                    # --- [v118-PRO] PRIORIDAD ABSOLUTA: SMART EXIT (BAILOUT) ---
-                    # Si la confianza actual < 70% de la inicial, cerrar de inmediato.
-                    # Este chequeo ocurre ANTES de cualquier actualización de precios o UI.
-                    current_conf = t.get("current_confidence", 50.0)
-                    entry_conf = t.get("entry_confidence", 75.0)
-                    abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
-                        entry_conf, current_conf
+                    # Armamos el bailout de confianza solo cuando ya existe una lectura válida.
+                    # Antes de eso usamos la confianza de entrada como baseline para no abortar con un fallback ficticio.
+                    ot = t.get("open_time")
+                    if isinstance(ot, str):
+                        ot = parse_datetime_utc(ot)
+                    elif ot is not None:
+                        ot = parse_datetime_utc(ot)
+                    else:
+                        ot = utc_now()
+
+                    current_conf = t.get(
+                        "current_confidence", t.get("entry_confidence", 75.0)
                     )
+                    entry_conf = t.get("entry_confidence", 75.0)
+                    bailout_armed = (utc_now() - ot).total_seconds() >= (15 * 60)
+                    abort_needed = False
+                    abort_reason = "CONF_BAILOUT_COOLDOWN"
+                    if bailout_armed:
+                        abort_needed, abort_reason = bot.risk_engine.should_abort_trade(
+                            entry_conf,
+                            current_conf,
+                            (
+                                Config.SMART_EXIT_THRESHOLD_SHADOW
+                                if t.get("is_shadow", False)
+                                else Config.SMART_EXIT_THRESHOLD_REAL
+                            ),
+                        )
 
                     if abort_needed:
+                        binance_symbol = s.replace("/", "")
+                        abort_price = float(t.get("last_price") or 0.0)
+                        if abort_price <= 0 and binance_symbol in price_map:
+                            abort_price = float(price_map[binance_symbol])
+                        if abort_price <= 0:
+                            try:
+                                abort_price = float(bot.execution.fetch_ticker(s)["last"])
+                            except Exception:
+                                abort_price = float(t.get("entry") or 0.0)
+                        elapsed_mins = max(0.0, (utc_now() - ot).total_seconds() / 60.0)
+                        defer_exit, defer_reason = bot.risk_engine.should_defer_confidence_exit_for_fee_noise(
+                            t,
+                            abort_price,
+                            elapsed_mins,
+                            abort_reason,
+                        )
+                        entry_price = float(t.get("entry") or 0.0)
+                        amount = float(t.get("amount") or 0.0)
+                        if entry_price > 0 and amount > 0:
+                            gross_usd = (abort_price - entry_price) * amount
+                            if str(t.get("side") or "BUY").upper() == "SELL":
+                                gross_usd *= -1
+                            notional = entry_price * amount
+                            gross_pct = (gross_usd / notional) * 100.0 if notional > 0 else 0.0
+                            fee_floor_usd = (
+                                (entry_price * amount * Config.VIRTUAL_FEE)
+                                + (abort_price * amount * Config.VIRTUAL_FEE)
+                            )
+                            fee_floor_pct = (
+                                (fee_floor_usd / notional) * 100.0 if notional > 0 else 0.0
+                            )
+                            votes = dict((t.get("last_confidence_trace") or {}).get("votes") or {})
+                            side_key = str(t.get("side") or "BUY").upper()
+                            dominant_killer = (
+                                max(votes.items(), key=lambda item: float(item[1] or 0.0))[0]
+                                if votes and side_key == "SELL"
+                                else (
+                                    min(votes.items(), key=lambda item: float(item[1] or 0.0))[0]
+                                    if votes
+                                    else "UNKNOWN"
+                                )
+                            )
+                            db_lock = getattr(bot, "db_lock", None)
+                            with (db_lock or nullcontext()):
+                                audit_id = bot.brain.upsert_confidence_exit_audit(
+                                    {
+                                        "entry_client_order_id": t.get("entry_client_order_id"),
+                                        "symbol": s,
+                                        "side": side_key,
+                                        "is_shadow": bool(t.get("is_shadow", False)),
+                                        "entry_price": entry_price,
+                                        "amount": amount,
+                                        "entry_time": t.get("open_time"),
+                                        "entry_confidence": float(t.get("entry_confidence") or 0.0),
+                                        "floor_confidence": float(current_conf or 0.0),
+                                        "confidence_drop_pct": (
+                                            ((float(t.get("entry_confidence") or 0.0) - float(current_conf or 0.0))
+                                            / float(t.get("entry_confidence") or 1.0)
+                                            * 100.0)
+                                            if float(t.get("entry_confidence") or 0.0) > 0
+                                            else 0.0
+                                        ),
+                                        "floor_price": abort_price,
+                                        "gross_pnl_at_conf_drop_usd": gross_usd,
+                                        "gross_pnl_at_conf_drop_pct": gross_pct,
+                                        "fee_floor_usd": fee_floor_usd,
+                                        "fee_floor_pct": fee_floor_pct,
+                                        "fee_noise_zone": defer_exit,
+                                        "guard_reason": defer_reason if defer_exit else "NO_DEFER",
+                                        "trigger_reason": abort_reason,
+                                        "votes": votes,
+                                        "dominant_killer": dominant_killer,
+                                        "defer_increment": 1 if defer_exit else 0,
+                                    }
+                                )
+                            if audit_id:
+                                t["confidence_exit_audit_id"] = audit_id
+                        if defer_exit:
+                            bot.log(
+                                f"🪙 FEE_NOISE_GUARD {s}: bailout diferido | {defer_reason}"
+                            )
+                            continue
                         bot.log(
                             f"🚨 [v118-BAILOUT] {s}: Abortando por degradación de señal."
                         )
@@ -120,7 +226,7 @@ def run_guardian_loop(bot):
                         bot.close_trade(
                             s,
                             abort_reason,
-                            t.get("last_price", 0),
+                            abort_price,
                             latency_context={
                                 "trigger": "BAILOUT_GUARDIAN",
                                 "signal_ts": time.perf_counter(),
@@ -187,7 +293,11 @@ def run_guardian_loop(bot):
                             trade=t,
                             current_price=curr,
                             current_atr=current_atr,
-                            threshold_factor=0.30 if t.get("is_shadow", False) else 0.70,
+                            threshold_factor=(
+                                Config.SMART_EXIT_THRESHOLD_SHADOW
+                                if t.get("is_shadow", False)
+                                else Config.SMART_EXIT_THRESHOLD_REAL
+                            ),
                         )
                         now_ts = monotonic_now()
                         last_log_ts = float(bot._exit_eval_last_log.get(s, 0.0))
@@ -248,13 +358,6 @@ def run_guardian_loop(bot):
                             t["trailing_activated_logged"] = True
 
                     # Time Limit
-                    ot = t.get("open_time")
-                    if isinstance(ot, str):
-                        ot = parse_datetime_utc(ot)
-                    elif ot is not None:
-                        ot = parse_datetime_utc(ot)
-                    else:
-                        ot = utc_now()
                     # Time limit controlado por Config
                     # [SMART TIME LIMIT v118] No cerrar si va ganando (PnL > 0)
                     duration_mins = (utc_now() - ot).total_seconds() / 60

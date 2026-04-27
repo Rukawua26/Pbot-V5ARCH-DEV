@@ -63,6 +63,13 @@ class OperationalConfig:
         os.getenv("NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", "45")
     )
     NO_PRICE_ALLOW_MARKET_EXIT = _env_bool("NO_PRICE_ALLOW_MARKET_EXIT", True)
+    SMART_EXIT_THRESHOLD_REAL = float(os.getenv("SMART_EXIT_THRESHOLD_REAL", "0.70"))
+    SMART_EXIT_THRESHOLD_SHADOW = float(
+        os.getenv("SMART_EXIT_THRESHOLD_SHADOW", "0.30")
+    )
+    MAX_ENTRY_SL_PCT = float(os.getenv("MAX_ENTRY_SL_PCT", "1.20"))
+    STOP_LOSS_ATR_MODIFIER = float(os.getenv("STOP_LOSS_ATR_MODIFIER", "1.5"))
+    ATR_SL_MULTIPLIER = STOP_LOSS_ATR_MODIFIER
 
     # --- ADOPCIÓN DE HUÉRFANOS ---
     ORPHAN_ADOPTION_MIN_SIZE_USD = float(os.getenv("ORPHAN_ADOPTION_MIN_SIZE_USD", "10.0"))
@@ -82,6 +89,16 @@ class OperationalConfig:
 
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    TELEGRAM_RATE_LIMIT_SECONDS = float(
+        os.getenv("TELEGRAM_RATE_LIMIT_SECONDS", "1.2")
+    )
+    SMART_EXIT_FEE_NOISE_MAX_MINUTES = float(
+        os.getenv("SMART_EXIT_FEE_NOISE_MAX_MINUTES", "45")
+    )
+    SMART_EXIT_FEE_GUARD_ENABLED = _env_bool("SMART_EXIT_FEE_GUARD_ENABLED", False)
+    REQUIRE_GHOST_MODEL_FOR_TRADING = _env_bool(
+        "REQUIRE_GHOST_MODEL_FOR_TRADING", True
+    )
 
     # --- [DEPRECADO] Lista estática de pares — YA NO SE USA ---
     # El bot ahora escanea TODO el mercado dinámicamente en cada ciclo.

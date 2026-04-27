@@ -86,7 +86,7 @@ class UltimateMLSystem:
 
         return f
 
-    def train(self, X, y_class, y_regress):
+    def train(self, X, y_class, y_regress, positive_class_weight=3.0):
         """Entrena sistema dual: clasificación + regresión.
         Recibe X ya normalizado (Z-Score dinámico).
         """
@@ -98,6 +98,7 @@ class UltimateMLSystem:
         print(f"📊 Dataset: {len(X)} samples")
         print(f"   Win Rate: {y_class.mean() * 100:.1f}%")
         print(f"   Avg PnL: {y_regress.mean():.2f}%")
+        pos_weight = max(float(positive_class_weight), 1.0)
 
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -110,6 +111,7 @@ class UltimateMLSystem:
             random_state=42,
             use_label_encoder=False,
             eval_metric="logloss",
+            scale_pos_weight=pos_weight,
         )
         scores = cross_val_score(xgb_c, X, y_class, cv=cv, scoring="f1")
         print(f"   XGBoost F1: {scores.mean():.3f}")
@@ -122,6 +124,7 @@ class UltimateMLSystem:
             learning_rate=0.05,
             random_state=42,
             verbose=-1,
+            class_weight={0: 1.0, 1: pos_weight},
         )
         scores = cross_val_score(lgb_c, X, y_class, cv=cv, scoring="f1")
         print(f"   LightGBM F1: {scores.mean():.3f}")
@@ -131,7 +134,7 @@ class UltimateMLSystem:
         rf_c = RandomForestClassifier(
             n_estimators=200,
             max_depth=10,
-            class_weight="balanced",
+            class_weight={0: 1.0, 1: pos_weight},
             random_state=42,
             n_jobs=-1,
         )

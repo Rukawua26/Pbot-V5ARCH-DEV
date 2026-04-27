@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from config import Config
 from core.time_utils import parse_datetime_utc, utc_now
 
 
@@ -239,7 +240,11 @@ class ExitEngineV1:
         threshold_factor: float = None,
     ) -> Dict[str, Any]:
         if threshold_factor is None:
-            threshold_factor = 0.30 if trade.get("is_shadow", False) else 0.70
+            threshold_factor = (
+                Config.SMART_EXIT_THRESHOLD_SHADOW
+                if trade.get("is_shadow", False)
+                else Config.SMART_EXIT_THRESHOLD_REAL
+            )
         # Prioridad: invalidación estructural -> trailing ATR -> flat volatility -> time decay
         result = self.check_structural_invalidation_exit(
             trade, current_price, current_atr

@@ -1,21 +1,27 @@
 import sqlite3
 import time
+from datetime import datetime, timedelta
 
 from notifier import send_telegram_msg
 
 
 def send_daily_exit_scorecard(bot):
     try:
+        day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
         conn = sqlite3.connect(bot.brain.db_name)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT id, timestamp, symbol, side, exit_price, pnl_percent, mfe_percent, reason
+            SELECT id, timestamp, symbol, side, exit_price, pnl_percent, mfe_percent, reason, exit_reason
             FROM trades
             WHERE is_shadow = 1
+              AND timestamp >= ?
+              AND timestamp < ?
             ORDER BY id DESC
-            LIMIT 500
             """
+            ,
+            (day_start.isoformat(), day_end.isoformat()),
         ).fetchall()
         conn.close()
 
@@ -23,6 +29,7 @@ def send_daily_exit_scorecard(bot):
             "STRUCTURAL_INVALIDATION",
             "TIME_DECAY_ESCAPE_VELOCITY",
             "ATR_TRAILING_HIT",
+            "OTHER",
         ]
         buckets = {
             key: {
@@ -37,7 +44,15 @@ def send_daily_exit_scorecard(bot):
             for key in reason_keys
         }
 
-        total_trades = 0
+        def map_reason(row):
+            raw_reason = str(row["reason"] or "")
+            normalized_reason = str(row["exit_reason"] or "")
+            for reason_key in reason_keys[:-1]:
+                if reason_key in raw_reason or reason_key == normalized_reason:
+                    return reason_key
+            return "OTHER"
+
+        total_trades = len(rows)
         wins = 0
         losses = 0
         avg_win_sum = 0.0
@@ -46,18 +61,9 @@ def send_daily_exit_scorecard(bot):
         gl_all = 0.0
 
         for row in rows:
-            reason = str(row["reason"] or "")
-            key = None
-            for reason_key in reason_keys:
-                if reason_key in reason:
-                    key = reason_key
-                    break
-            if key is None:
-                continue
-
+            key = map_reason(row)
             pnl = float(row["pnl_percent"] or 0.0)
             mfe = float(row["mfe_percent"] or 0.0)
-            total_trades += 1
             if pnl > 0:
                 wins += 1
                 avg_win_sum += pnl
@@ -120,6 +126,7 @@ def send_daily_exit_scorecard(bot):
         message = (
             "📊 *SCORECARD DIARIO DE EFICIENCIA (v118)*\n"
             "---------------------------------------\n"
+            f"Fecha: {day_start.strftime('%Y-%m-%d')}\n"
             f"Total Trades (Shadow): {total_trades}\n"
             f"Win Rate: {wr:.2f}%\n"
             f"Expectancy: {expectancy:+.4f}%\n"
@@ -128,6 +135,7 @@ def send_daily_exit_scorecard(bot):
             f"1) INVALIDACIÓN (Structural)\n{row_text('', 'STRUCTURAL_INVALIDATION')}\n\n"
             f"2) ESCAPE (Time Decay)\n{row_text('', 'TIME_DECAY_ESCAPE_VELOCITY')}\n\n"
             f"3) CAZA (ATR Trailing)\n{row_text('', 'ATR_TRAILING_HIT')}\n\n"
+            f"4) OTRAS SALIDAS\n{row_text('', 'OTHER')}\n\n"
             "🚀 *BREAKOUTS:*\n"
             f"- Watchlist actual: {wl_txt}\n"
             f"- Fuentes watchlist: {wl_sources_txt}\n"

@@ -108,6 +108,9 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
                     trades=list(bot.active_trades.values())
                     if hasattr(bot, "active_trades")
                     else [],
+                    recent_closed_trades=list(bot.recent_closed_trades)
+                    if hasattr(bot, "recent_closed_trades")
+                    else [],
                     scanner=bot.scanner_history[:50]
                     if hasattr(bot, "scanner_history")
                     else [],

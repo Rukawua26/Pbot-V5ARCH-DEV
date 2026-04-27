@@ -350,3 +350,50 @@ class RiskEngine:
             return True, reason
 
         return False, "CONF_OK"
+
+    def should_defer_confidence_exit_for_fee_noise(
+        self,
+        trade: dict,
+        current_price: float,
+        elapsed_mins: float,
+        reason: str,
+    ) -> tuple[bool, str]:
+        """
+        Evita cierres por degradación cuando el trade apenas está sobre entrada
+        y el movimiento todavía no cubre el coste estimado de ida y vuelta.
+        """
+        if not bool(getattr(Config, "SMART_EXIT_FEE_GUARD_ENABLED", False)):
+            return False, "FEE_GUARD_DISABLED"
+
+        if current_price <= 0 or elapsed_mins <= 0:
+            return False, "PRICE_OR_TIME_UNAVAILABLE"
+
+        reason_text = str(reason or "")
+        if "CONFIDENCE_FLOOR_VIOLATED" not in reason_text:
+            return False, "NOT_FEE_NOISE_REASON"
+
+        max_minutes = float(
+            getattr(Config, "SMART_EXIT_FEE_NOISE_MAX_MINUTES", 45.0) or 45.0
+        )
+        if elapsed_mins > max_minutes:
+            return False, "FEE_NOISE_WINDOW_EXPIRED"
+
+        entry = float(trade.get("entry") or 0.0)
+        if entry <= 0:
+            return False, "NO_ENTRY_PRICE"
+
+        side = str(trade.get("side") or "BUY").upper()
+        gross_move_pct = (
+            ((current_price - entry) / entry) * 100.0
+            if side == "BUY"
+            else ((entry - current_price) / entry) * 100.0
+        )
+        fee_floor_pct = float(getattr(Config, "VIRTUAL_FEE", 0.001) or 0.001) * 2.0 * 100.0
+
+        if 0.0 <= gross_move_pct < fee_floor_pct:
+            return (
+                True,
+                f"FEE_NOISE_GROSS={gross_move_pct:.3f}%_FLOOR={fee_floor_pct:.3f}%",
+            )
+
+        return False, "FEE_NOISE_NOT_APPLICABLE"

@@ -1,0 +1,18 @@
+# .dockerignore
+
+.git
+.venv
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+tests/
+tools/
+*.log
+.DS_Store

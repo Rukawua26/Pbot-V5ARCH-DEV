@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  sniper-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sniper-ai
+    restart: unless-stopped
+    
+    # Inyectar variables desde el archivo .env del host
+    env_file:
+      - .env
+
+    # Persistencia de datos crítica (DB + WAL + SHM + Models)
+    # Montamos el directorio completo para evitar corrupción de SQLite
+    volumes:
+      - ./data/db:/app/data
+      - ./data/models:/app/models
+
+    # Configuración de logs para evitar desbordamiento de disco en el VPS
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Limitación de recursos para estabilidad de la instancia OCI
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          memory: 512M
+
+networks:
+  default:
+    name: sniper-network
