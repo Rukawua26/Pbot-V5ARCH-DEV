@@ -12,7 +12,8 @@ class ReconciliationTest(unittest.TestCase):
         a = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "abc123")
         b = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "abc123")
         self.assertEqual(a, b)
-        self.assertTrue(a.startswith("sai-v118-"))
+        # Nuevo formato: E_{hash}
+        self.assertTrue(a.startswith("E_"), f"Expected 'E_' prefix, got: {a}")
 
     @patch("core.reconciliation.Config")
     @patch("core.reconciliation.send_telegram_msg")
@@ -78,6 +79,9 @@ class ReconciliationTest(unittest.TestCase):
         mocked_tg.assert_called()
 
     def test_keeps_pending_trade_if_open_order_exists_by_client_order_id(self):
+        # Generar ID con nuevo formato
+        entry_coid = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "abc123")
+
         bot = SimpleNamespace()
         bot.lock = RLock()
         bot.db_lock = RLock()
@@ -87,7 +91,7 @@ class ReconciliationTest(unittest.TestCase):
                 "side": "BUY",
                 "is_shadow": False,
                 "status": "PENDING_SEND",
-                "entry_client_order_id": "sai-v118-abc123",
+                "entry_client_order_id": entry_coid,
             }
         }
         bot.balance = 100.0
@@ -101,7 +105,7 @@ class ReconciliationTest(unittest.TestCase):
                     "id": "12345",
                     "symbol": "BTC/USDT",
                     "status": "open",
-                    "clientOrderId": "sai-v118-abc123",
+                    "clientOrderId": entry_coid,
                 }
             ],
             fetch_order_by_client_id=lambda _symbol, _coid: None,
@@ -125,6 +129,9 @@ class ReconciliationTest(unittest.TestCase):
 
     def test_marks_lost_when_no_position_and_no_open_order(self):
         stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
+        # Generar ID con nuevo formato
+        missing_coid = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "missing")
+
         bot = SimpleNamespace()
         bot.lock = RLock()
         bot.db_lock = RLock()
@@ -134,7 +141,7 @@ class ReconciliationTest(unittest.TestCase):
                 "side": "BUY",
                 "is_shadow": False,
                 "status": "PENDING_SEND",
-                "entry_client_order_id": "sai-v118-missing",
+                "entry_client_order_id": missing_coid,
                 "intent_created_at_utc": stale_ts,
             }
         }
@@ -166,6 +173,9 @@ class ReconciliationTest(unittest.TestCase):
 
     def test_keeps_recent_pending_send_when_exchange_still_has_no_order(self):
         fresh_ts = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+        # Generar ID con nuevo formato
+        fresh_coid = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "fresh")
+
         bot = SimpleNamespace()
         bot.lock = RLock()
         bot.db_lock = RLock()
@@ -175,7 +185,7 @@ class ReconciliationTest(unittest.TestCase):
                 "side": "BUY",
                 "is_shadow": False,
                 "status": "PENDING_SEND",
-                "entry_client_order_id": "sai-v118-fresh",
+                "entry_client_order_id": fresh_coid,
                 "intent_created_at_utc": fresh_ts,
             }
         }

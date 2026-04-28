@@ -10,8 +10,7 @@ from core.execution_telemetry import append_execution_event
 from core.postmortem import label_exit_reason
 from core.reconciliation import (
     allocate_signal_timestamp,
-    generate_child_client_order_id,
-    generate_client_order_id,
+    generate_order_ids,
 )
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 from learning import shadow_logger
@@ -174,11 +173,9 @@ def execute_order(
     degradation_reason = "UNKNOWN"
     signal_ts = allocate_signal_timestamp()
     instance_id = getattr(bot, "instance_uuid", "default")
-    entry_client_order_id = generate_client_order_id(
+    entry_client_order_id, sl_client_order_id, tp_client_order_id = generate_order_ids(
         symbol, side, signal_ts, instance_id
     )
-    sl_client_order_id = generate_child_client_order_id(entry_client_order_id, "SL")
-    tp_client_order_id = generate_child_client_order_id(entry_client_order_id, "TP")
     symbol_base = symbol.split("/")[0]
     controls = bot._load_runtime_symbol_controls()
     if symbol_base in controls.get("blocked", set()):

@@ -6,18 +6,99 @@ from core.execution_telemetry import append_execution_event
 from notifier import send_telegram_msg
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 
-
-CLIENT_ORDER_PREFIX = "sai-v118"
 PENDING_SEND_STALE_SECONDS = 30
+
+# Prefixes cortos para cada tipo de orden (2 caracteres cada uno)
+_ENTRY_PFIX = "E_"
+_SL_PFIX = "S_"
+_TP_PFIX = "T_"
+_MAX_BINANCE_ID_LEN = 36
+_MAX_SAFE_ID_LEN = 32  # Margen de 4 caracteres para emergencias
+
+
+def _make_hash(seed: str, length: int) -> str:
+    """Genera un hex digest truncado de longitud fija."""
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:length]
+
+
+def generate_order_ids(
+    symbol: str, side: str, signal_ts: float, instance_id: str
+) -> tuple[str, str, str]:
+    """Genera IDs para entry, SL y TP desde una semilla común.
+
+    Formato: {prefijo}{hash_truncado}
+    - Entry: E_{20 chars} = 22 caracteres
+    - SL: S_{20 chars} = 22 caracteres
+    - TP: T_{20 chars} = 22 caracteres
+
+    Todos son deterministas, trazables y <= _MAX_SAFE_ID_LEN.
+    """
+    base_seed = f"{signal_ts:.6f}|{symbol}|{side}|{instance_id}"
+    hash_len = 20  # 2 (prefijo) + 1 (separador implícito en prefijo) + 20 = 23 máximo
+
+    entry_hash = _make_hash(f"{base_seed}|entry", hash_len)
+    sl_hash = _make_hash(f"{base_seed}|sl", hash_len)
+    tp_hash = _make_hash(f"{base_seed}|tp", hash_len)
+
+    entry_id = f"{_ENTRY_PFIX}{entry_hash}"
+    sl_id = f"{_SL_PFIX}{sl_hash}"
+    tp_id = f"{_TP_PFIX}{tp_hash}"
+
+    # Validación estructural
+    for name, val in [("entry", entry_id), ("sl", sl_id), ("tp", tp_id)]:
+        if len(val) > _MAX_SAFE_ID_LEN:
+            raise ValueError(
+                f"CRITICAL: {name} ID '{val}' exceeds {_MAX_SAFE_ID_LEN} chars limit. "
+                f"Length: {len(val)}"
+            )
+        if len(val) > _MAX_BINANCE_ID_LEN:
+            raise ValueError(
+                f"CRITICAL: {name} ID '{val}' exceeds Binance 36 chars limit. "
+                f"Length: {len(val)}"
+            )
+
+    return entry_id, sl_id, tp_id
+
+
+def validate_binance_limits(order_id: str) -> None:
+    """Valida que el ID cumpla con los límites de Binance.
+
+    Raises:
+        ValueError: Si el ID excede 36 caracteres.
+    """
+    if len(order_id) > _MAX_BINANCE_ID_LEN:
+        raise ValueError(
+            f"CRITICAL: ClientOrderId '{order_id}' exceeds "
+            f"{_MAX_BINANCE_ID_LEN} chars limit. Length: {len(order_id)}"
+        )
+
+
+# --- Funciones legacy (deprecadas) ---
+# Mantenidas solo para compatibilidad con código existente.
+# NO USAR en nuevo código. Usar generate_order_ids() en su lugar.
 
 
 def generate_client_order_id(
     symbol: str, side: str, signal_ts: float, instance_id: str
 ) -> str:
-    """Genera un client_order_id determinista y trazable."""
-    raw = f"{signal_ts:.6f}|{symbol}|{side}|{instance_id}"
-    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
-    return f"{CLIENT_ORDER_PREFIX}-{digest}"
+    """DEPRECADO: Usar generate_order_ids().
+
+    Genera un client_order_id para entrada (formato legacy).
+    """
+    entry_id, _, _ = generate_order_ids(symbol, side, signal_ts, instance_id)
+    return entry_id
+
+
+def generate_child_client_order_id(entry_client_order_id: str, leg: str) -> str:
+    """DEPRECADO: Usar generate_order_ids().
+
+    Esta función generaba IDs concatenando el ID de entrada completo,
+    lo cual excedía el límite de 36 caracteres de Binance.
+    """
+    raise NotImplementedError(
+        "generate_child_client_order_id está deprecada. "
+        "Usar generate_order_ids() para generar todos los IDs desde una semilla común."
+    )
 
 
 def _normalize_position_symbol(pos_symbol: str) -> str:
@@ -277,6 +358,7 @@ def reconcile_bootstrap_state(bot):
                 continue
 
             status = str(state.get("status") or "").upper()
+            
             intent_created = state.get("intent_created_at_utc") or state.get(
                 "open_time"
             )
