@@ -20,7 +20,6 @@ from sklearn.metrics import (
     recall_score,
     r2_score,
 )
-from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
@@ -37,6 +36,7 @@ class DatasetBundle:
     x_consensus: np.ndarray
     y_class: np.ndarray
     y_reg: np.ndarray
+    timestamps: np.ndarray
     rows: int
     filtered_noise_rows: int
     valid_ghost: int
@@ -67,7 +67,7 @@ def load_trade_rows(db_path: Path, min_abs_pnl: float) -> tuple[list[sqlite3.Row
     ).fetchone()[0]
     rows = conn.execute(
         """
-        SELECT id, symbol, pnl_percent, market_snapshot
+        SELECT id, timestamp, symbol, pnl_percent, market_snapshot
         FROM trades
         WHERE market_snapshot IS NOT NULL
           AND market_snapshot != ''
@@ -91,6 +91,7 @@ def build_dataset(rows: list[sqlite3.Row], filtered_noise_rows: int) -> DatasetB
     consensus_features = []
     y_class = []
     y_reg = []
+    timestamps = []
     valid_consensus = 0
 
     for row in rows:
@@ -110,6 +111,10 @@ def build_dataset(rows: list[sqlite3.Row], filtered_noise_rows: int) -> DatasetB
             )
             y_class.append(1 if pnl > 0 else 0)
             y_reg.append(pnl)
+            ts = pd.to_datetime(row["timestamp"], utc=True, errors="coerce")
+            timestamps.append(
+                ts.to_datetime64() if not pd.isna(ts) else np.datetime64("NaT")
+            )
         except Exception:
             continue
 
@@ -118,6 +123,7 @@ def build_dataset(rows: list[sqlite3.Row], filtered_noise_rows: int) -> DatasetB
         x_consensus=np.array(consensus_features, dtype=float),
         y_class=np.array(y_class, dtype=int),
         y_reg=np.array(y_reg, dtype=float),
+        timestamps=np.array(timestamps, dtype="datetime64[ns]"),
         rows=len(rows),
         filtered_noise_rows=filtered_noise_rows,
         valid_ghost=len(ghost_features),
@@ -137,6 +143,8 @@ def validate_dataset(bundle: DatasetBundle, min_samples: int) -> None:
         raise SystemExit("Features Ghost inválidas: NaN o dataset vacío.")
     if not np.isfinite(bundle.x_consensus).all():
         raise SystemExit("Features Consensus inválidas: valores no finitos.")
+    if len(bundle.timestamps) != len(bundle.y_class) or np.isnat(bundle.timestamps).any():
+        raise SystemExit("Timestamps inválidos: walk-forward requiere fechas válidas.")
 
 
 def train_ghost(bundle: DatasetBundle, output_path: Path, positive_class_weight: float) -> dict:
@@ -181,22 +189,65 @@ def _oversample_positive_class(
     return X[final_idx], y[final_idx]
 
 
-def train_consensus(
-    bundle: DatasetBundle,
-    output_path: Path,
-    positive_class_weight: float,
-    min_val_f1: float,
-    min_recall: float,
-) -> dict:
-    AgentConsensusNN, _ = _load_runtime_classes()
-    X_train, X_val, y_train, y_val = train_test_split(
-        bundle.x_consensus,
-        bundle.y_class,
-        test_size=0.2,
-        random_state=42,
-        stratify=bundle.y_class,
-    )
+def build_walk_forward_windows(
+    timestamps: np.ndarray,
+    train_months: int = 3,
+    val_months: int = 1,
+) -> list[dict]:
+    """Construye ventanas rolling por mes: train N meses, valida M meses."""
+    if train_months <= 0 or val_months <= 0:
+        raise ValueError("train_months y val_months deben ser positivos")
 
+    ts = pd.Series(pd.to_datetime(timestamps, utc=True, errors="coerce"))
+    if ts.isna().any():
+        return []
+
+    periods = ts.dt.tz_convert(None).dt.to_period("M")
+    months = sorted(periods.unique())
+    windows = []
+    last_start = len(months) - train_months - val_months + 1
+    for start in range(max(0, last_start)):
+        train_periods = months[start : start + train_months]
+        val_periods = months[start + train_months : start + train_months + val_months]
+        train_idx = np.flatnonzero(periods.isin(train_periods).to_numpy())
+        val_idx = np.flatnonzero(periods.isin(val_periods).to_numpy())
+        if len(train_idx) == 0 or len(val_idx) == 0:
+            continue
+        windows.append(
+            {
+                "name": f"{train_periods[0]}..{train_periods[-1]}_to_{val_periods[0]}..{val_periods[-1]}",
+                "train_idx": train_idx,
+                "val_idx": val_idx,
+                "train_months": [str(p) for p in train_periods],
+                "val_months": [str(p) for p in val_periods],
+                "type": "rolling_month",
+            }
+        )
+    return windows
+
+
+def _chronological_holdout_window(
+    timestamps: np.ndarray, train_ratio: float = 0.8
+) -> list[dict]:
+    ts = pd.Series(pd.to_datetime(timestamps, utc=True, errors="coerce"))
+    if ts.isna().any() or len(ts) < 2:
+        return []
+    ordered = np.argsort(ts.to_numpy())
+    split = int(len(ordered) * train_ratio)
+    split = max(1, min(split, len(ordered) - 1))
+    return [
+        {
+            "name": "chronological_holdout_insufficient_months",
+            "train_idx": ordered[:split],
+            "val_idx": ordered[split:],
+            "train_months": [],
+            "val_months": [],
+            "type": "chronological_holdout",
+        }
+    ]
+
+
+def _fit_consensus_classifier(X_train, y_train, positive_class_weight: float):
     X_train_balanced, y_train_balanced = _oversample_positive_class(
         X_train,
         y_train,
@@ -205,8 +256,6 @@ def train_consensus(
 
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train_balanced)
-    X_val_s = scaler.transform(X_val)
-
     clf = MLPClassifier(
         hidden_layer_sizes=(24, 12),
         activation="tanh",
@@ -221,8 +270,10 @@ def train_consensus(
         verbose=False,
     )
     clf.fit(X_train_s, y_train_balanced)
+    return clf, scaler, len(X_train_balanced)
 
-    proba = clf.predict_proba(X_val_s)[:, 1]
+
+def _select_consensus_threshold(proba, y_val, min_recall: float) -> tuple[dict, list[dict]]:
     actual_wins = int(y_val.sum())
     max_predicted_wins = min(
         len(y_val) - 1,
@@ -242,6 +293,8 @@ def train_consensus(
             "recall": recall,
             "f1": f1,
             "predicted_wins": predicted_wins,
+            "actual_wins": actual_wins,
+            "max_predicted_wins": int(max_predicted_wins),
         }
         threshold_rows.append(row)
         if recall < min_recall:
@@ -254,35 +307,106 @@ def train_consensus(
             -best["predicted_wins"],
         ):
             best = row
+    return best, threshold_rows
 
-    if best is None:
-        fallback = max(threshold_rows, key=lambda item: (item["f1"], item["precision"]))
-        raise SystemExit(
-            "Consensus no discrimina bajo restricciones: "
-            f"best_any_threshold={fallback}, actual_wins={actual_wins}, "
-            f"max_predicted_wins={max_predicted_wins}. No se publica artefacto."
-        )
 
-    preds = (proba >= best["threshold"]).astype(int)
-    val_f1 = float(f1_score(y_val, preds, zero_division=0))
-    if val_f1 < min_val_f1:
-        raise SystemExit(
-            f"Consensus val_f1={val_f1:.4f} < mínimo requerido {min_val_f1:.4f}; no se publica artefacto."
+def train_consensus(
+    bundle: DatasetBundle,
+    output_path: Path,
+    positive_class_weight: float,
+    min_val_f1: float,
+    min_recall: float,
+    train_months: int = 3,
+    val_months: int = 1,
+    min_walk_forward_windows: int = 1,
+) -> dict:
+    AgentConsensusNN, _ = _load_runtime_classes()
+    windows = build_walk_forward_windows(bundle.timestamps, train_months, val_months)
+    if len(windows) < min_walk_forward_windows:
+        windows = _chronological_holdout_window(bundle.timestamps)
+    if len(windows) < min_walk_forward_windows:
+        raise SystemExit("No hay ventanas temporales suficientes para validar consensus.")
+
+    window_metrics = []
+    thresholds = []
+    for idx, window in enumerate(windows, start=1):
+        train_idx = window["train_idx"]
+        val_idx = window["val_idx"]
+        X_train = bundle.x_consensus[train_idx]
+        y_train = bundle.y_class[train_idx]
+        X_val = bundle.x_consensus[val_idx]
+        y_val = bundle.y_class[val_idx]
+
+        if len(np.unique(y_train)) < 2:
+            raise SystemExit(f"Walk-forward ventana {window['name']} sin ambas clases en train.")
+        if len(np.unique(y_val)) < 2:
+            raise SystemExit(f"Walk-forward ventana {window['name']} sin ambas clases en validación.")
+
+        clf, scaler, balanced_n = _fit_consensus_classifier(
+            X_train,
+            y_train,
+            positive_class_weight=positive_class_weight,
         )
+        proba = clf.predict_proba(scaler.transform(X_val))[:, 1]
+        best, threshold_rows = _select_consensus_threshold(proba, y_val, min_recall)
+        if best is None:
+            fallback = max(threshold_rows, key=lambda item: (item["f1"], item["precision"]))
+            raise SystemExit(
+                f"Consensus no robusto en ventana {window['name']}: "
+                f"best_any_threshold={fallback}. No se publica artefacto."
+            )
+
+        preds = (proba >= best["threshold"]).astype(int)
+        val_f1 = float(f1_score(y_val, preds, zero_division=0))
+        val_recall = float(recall_score(y_val, preds, zero_division=0))
+        val_precision = float(precision_score(y_val, preds, zero_division=0))
+        metric = {
+            "window": idx,
+            "name": window["name"],
+            "type": window["type"],
+            "train_samples": int(len(train_idx)),
+            "balanced_train_samples": int(balanced_n),
+            "val_samples": int(len(val_idx)),
+            "threshold": float(best["threshold"]),
+            "precision": val_precision,
+            "recall": val_recall,
+            "f1": val_f1,
+            "val_predicted_wins": int(preds.sum()),
+            "val_actual_wins": int(y_val.sum()),
+            "train_months": window.get("train_months", []),
+            "val_months": window.get("val_months", []),
+        }
+        if val_f1 < min_val_f1 or val_recall < min_recall:
+            raise SystemExit(
+                f"Consensus no robusto en ventana {window['name']}: "
+                f"f1={val_f1:.4f}, recall={val_recall:.4f}; no se publica artefacto."
+            )
+        window_metrics.append(metric)
+        thresholds.append(float(best["threshold"]))
+
+    final_threshold = float(np.median(thresholds))
+    clf, scaler, balanced_train_samples = _fit_consensus_classifier(
+        bundle.x_consensus,
+        bundle.y_class,
+        positive_class_weight=positive_class_weight,
+    )
 
     output_path.write_bytes(
         pickle.dumps(
             {
                 "model": clf,
                 "scaler": scaler,
-                "n_samples": int(len(X_train_balanced)),
-                "source_train_samples": int(len(X_train)),
+                "n_samples": int(balanced_train_samples),
+                "source_train_samples": int(len(bundle.x_consensus)),
                 "positive_class_weight": float(positive_class_weight),
-                "probability_threshold": float(best["threshold"]),
+                "probability_threshold": final_threshold,
                 "threshold_policy": {
                     "range": "0.50..0.90 step 0.01",
                     "min_recall": float(min_recall),
-                    "max_predicted_wins": int(max_predicted_wins),
+                    "validation": "walk_forward_monthly",
+                    "train_months": int(train_months),
+                    "val_months": int(val_months),
+                    "windows": window_metrics,
                 },
                 "agent_names": AgentConsensusNN.AGENT_NAMES,
             }
@@ -290,19 +414,19 @@ def train_consensus(
     )
     return {
         "samples": int(len(bundle.x_consensus)),
-        "train_samples": int(len(X_train)),
-        "balanced_train_samples": int(len(X_train_balanced)),
-        "val_samples": int(len(X_val)),
+        "train_samples": int(len(bundle.x_consensus)),
+        "balanced_train_samples": int(balanced_train_samples),
+        "val_samples": int(sum(row["val_samples"] for row in window_metrics)),
         "valid_vote_rows": int(bundle.valid_consensus),
         "positive_class_weight": float(positive_class_weight),
-        "probability_threshold": float(best["threshold"]),
-        "threshold_precision": float(best["precision"]),
-        "threshold_recall": float(best["recall"]),
-        "max_allowed_predicted_wins": int(max_predicted_wins),
-        "val_accuracy": float(accuracy_score(y_val, preds)),
-        "val_f1": val_f1,
-        "val_predicted_wins": int(preds.sum()),
-        "val_actual_wins": int(y_val.sum()),
+        "probability_threshold": final_threshold,
+        "walk_forward_windows": window_metrics,
+        "val_f1_min": float(min(row["f1"] for row in window_metrics)),
+        "val_f1_mean": float(np.mean([row["f1"] for row in window_metrics])),
+        "val_recall_min": float(min(row["recall"] for row in window_metrics)),
+        "val_precision_mean": float(
+            np.mean([row["precision"] for row in window_metrics])
+        ),
     }
 
 
@@ -325,6 +449,9 @@ def main() -> None:
     parser.add_argument("--positive-class-weight", type=float, default=3.0)
     parser.add_argument("--min-consensus-f1", type=float, default=0.35)
     parser.add_argument("--min-consensus-recall", type=float, default=0.30)
+    parser.add_argument("--walk-forward-train-months", type=int, default=3)
+    parser.add_argument("--walk-forward-val-months", type=int, default=1)
+    parser.add_argument("--min-walk-forward-windows", type=int, default=1)
     parser.add_argument("--no-legacy-copy", action="store_true")
     args = parser.parse_args()
 
@@ -338,19 +465,26 @@ def main() -> None:
 
     ghost_path = args.models_dir / "agent_models.pkl"
     consensus_path = args.models_dir / "v118_1H_consensus.pkl"
-    ghost_metrics = train_ghost(bundle, ghost_path, args.positive_class_weight)
-    if consensus_path.exists():
-        consensus_path.unlink()
-    legacy_consensus_path = ROOT / "v118_1H_consensus.pkl"
-    if legacy_consensus_path.exists():
-        legacy_consensus_path.unlink()
+    ghost_tmp_path = args.models_dir / "agent_models.pkl.tmp"
+    consensus_tmp_path = args.models_dir / "v118_1H_consensus.pkl.tmp"
+    for tmp_path in (ghost_tmp_path, consensus_tmp_path):
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+    ghost_metrics = train_ghost(bundle, ghost_tmp_path, args.positive_class_weight)
     consensus_metrics = train_consensus(
         bundle,
-        consensus_path,
+        consensus_tmp_path,
         positive_class_weight=args.positive_class_weight,
         min_val_f1=args.min_consensus_f1,
         min_recall=args.min_consensus_recall,
+        train_months=args.walk_forward_train_months,
+        val_months=args.walk_forward_val_months,
+        min_walk_forward_windows=args.min_walk_forward_windows,
     )
+
+    ghost_tmp_path.replace(ghost_path)
+    consensus_tmp_path.replace(consensus_path)
 
     manifest = {
         "db": str(args.db),
