@@ -1,22 +1,54 @@
 # Pbot V5ARCH DEV
 
-Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, filtros estructurales, ejecucion segura y operacion en modos `PAPER`, `REAL` y `shadow_live`.
+> Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, filtros estructurales, reconciliacion segura y operacion en modos `PAPER`, `REAL` y `shadow_live`.
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-22c55e)
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
+![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
+![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
+![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
+![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 
-## Resumen
+## Visión General
 
-- Entrypoint minimalista en `main.py`; el bootstrap real vive en `core/bot_app.py`.
-- Configuracion real centralizada en `core/config/manager.py` y `core/config/operational.py`.
-- Escaneo de mercado 1H con filtro macro 4H, triaje dinamico por liquidez y veto por latencia.
-- Pipeline de senales por agentes (`MT`, `SR`, `G`) con watchlist de breakout y filtro `SHOCK`.
-- Runtime con reconciliacion de arranque, adopcion de huerfanas, `HARD SL` y cierre de emergencia si el estado live queda ambiguo.
-- Adaptadores de ejecucion `live` y `shadow_live` para simular rechazos, latencia y fills parciales sin contaminar la logica de negocio.
-- Operacion asistida por Telegram, watchdog, telemetria runtime y suite de regresion en CI.
+`Pbot V5ARCH DEV` esta orientado a operar Binance Futures con un enfoque de seguridad runtime primero:
 
-## Capacidades actuales
+- analiza mercado en `1H` con contexto macro `4H`
+- filtra oportunidades por liquidez, spread, latencia y estructura
+- separa claramente la logica de decision de la logica de ejecucion
+- protege posiciones reales con reconciliacion, `HARD SL` y cierres de emergencia
+- expone operacion y auditoria por Telegram, logs y telemetria estructurada
+
+## Lo Más Destacado
+
+| Area | Que aporta |
+|---|---|
+| 📡 Triage dinamico | Escanea pares por liquidez, spread, volumen y latencia |
+| 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decision final |
+| 🛡️ Seguridad runtime | Reconciliacion, `HARD SL`, guardrails y cierre de emergencia |
+| 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado |
+| 📲 Operacion remota | Control, auditoria y diagnostico via comandos Telegram |
+| 🐳 Despliegue | Ejecucion local, `systemd` user y Docker |
+
+## Flujo De Alto Nivel
+
+```mermaid
+flowchart LR
+    A[Binance Futures] --> B[Data Service]
+    B --> C[Triage Dinamico]
+    C --> D[Analisis 1H + Contexto 4H]
+    D --> E[Agentes MT SR G]
+    E --> F[Filtros y Guardrails]
+    F --> G{Decision}
+    G -->|PAPER / REAL| H[Execution Service]
+    G -->|shadow_live| I[Shadow Execution Adapter]
+    H --> J[Trades y Telemetria]
+    I --> J
+    J --> K[Telegram / Logs / Runtime Monitor]
+```
+
+## Capacidades Actuales
 
 | Area | Estado | Detalle |
 |---|---|---|
@@ -31,7 +63,7 @@ Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, 
 | Operacion remota | Activo | Comandos Telegram para auditoria, inteligencia y control |
 | Docker/systemd | Disponible | Despliegue en VPS o contenedor |
 
-## Modos operativos
+## Modos Operativos
 
 | Modo | Configuracion | Comportamiento |
 |---|---|---|
@@ -51,7 +83,7 @@ main.py
         -> bootstrap de servicios, modelos, runtime state y loops
 ```
 
-### Modulos clave
+### Modulos Clave
 
 | Ruta | Rol |
 |---|---|
@@ -69,7 +101,7 @@ main.py
 | `core/strategy/` | Agentes, consenso y filtros de estrategia |
 | `tests/` | Regresiones runtime, guardrails y contratos |
 
-## Seguridad runtime
+## Seguridad Runtime
 
 - El exchange manda sobre la DB para exposicion real y estado de ordenes/posiciones.
 - No se dejan posiciones reales sin `HARD SL`.
@@ -78,7 +110,7 @@ main.py
 - Si el estado live queda ambiguo, el comportamiento esperado es `HALT` o reconciliacion antes de continuar.
 - Hay guardrail para bloquear `pass` silenciosos en `core/` mediante CI.
 
-### Estados runtime de orden/trade
+### Estados Runtime De Orden/Trade
 
 - `PENDING_SEND`
 - `PENDING_EXCHANGE_OPEN`
@@ -90,7 +122,7 @@ main.py
 
 `.env` se carga automaticamente desde `core/config/operational.py`.
 
-### Variables importantes
+### Variables Importantes
 
 | Variable | Uso |
 |---|---|
@@ -107,7 +139,7 @@ main.py
 | `HARD_SL_ATTACH_MAX_RETRIES` | Reintentos para adjuntar stop loss |
 | `WATCHDOG_HEARTBEAT_PATH` | Ruta del heartbeat del watchdog |
 
-### Variables para `shadow_live`
+### Variables Para `shadow_live`
 
 - `SHADOW_SIM_LATENCY_MIN_MS`
 - `SHADOW_SIM_LATENCY_MAX_MS`
@@ -125,7 +157,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Dependencias principales actuales:
+### Stack Principal
 
 - `ccxt`
 - `pandas`
@@ -134,7 +166,7 @@ Dependencias principales actuales:
 - `requests`, `websockets`, `websocket-client`
 - `optuna`
 
-## Ejecucion
+## Puesta En Marcha
 
 ### Local
 
@@ -142,7 +174,7 @@ Dependencias principales actuales:
 ./.venv/bin/python main.py
 ```
 
-### systemd user
+### systemd User
 
 ```bash
 bash tools/install_watchdog_systemd.sh
@@ -167,7 +199,18 @@ Notas del despliegue Docker actual:
 - Persistencia en `./data/db` y `./data/models`
 - `SNIPER_DB_PATH=/app/data/sniper_brain.db`
 
-## Operacion diaria
+## Quick Start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+./.venv/bin/python main.py
+```
+
+Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales segun el modo que vayas a usar.
+
+## Operacion Diaria
 
 | Tarea | Comando |
 |---|---|
@@ -180,7 +223,7 @@ Notas del despliegue Docker actual:
 | Reinstalar servicio | `bash tools/install_watchdog_systemd.sh` |
 | Actualizar dependencias | `source .venv/bin/activate && pip install -r requirements.txt` |
 
-## Telemetria y observabilidad
+## Telemetria Y Observabilidad
 
 - `sniper.log`: log operativo principal.
 - `logs/execution_events.jsonl`: eventos estructurados de ejecucion.
@@ -188,7 +231,7 @@ Notas del despliegue Docker actual:
 - Scorecards y reportes de rendimiento diarios.
 - `watchdog` y heartbeat para supervision externa.
 
-Eventos de ejecucion relevantes:
+### Eventos De Ejecucion Relevantes
 
 - `ENTRY_ORDER_ACK`
 - `PARTIAL_FILL_COMPLETED`
@@ -197,7 +240,7 @@ Eventos de ejecucion relevantes:
 - `EMERGENCY_CLOSE_EXECUTED`
 - `EMERGENCY_CLOSE_FAILED_HALT`
 
-## Comandos Telegram utiles
+## Comandos Telegram Utiles
 
 ### Control
 
@@ -220,7 +263,7 @@ Eventos de ejecucion relevantes:
 - `/tiers`
 - `/top`
 
-### Analisis e inteligencia
+### Analisis E Inteligencia
 
 - `/trade_detail <symbol>`
 - `/trade <id>`
@@ -236,7 +279,7 @@ Eventos de ejecucion relevantes:
 
 Algunos comandos heredados o remotos fueron deshabilitados a proposito en este despliegue para evitar ejecuciones falsas o dependencias ausentes.
 
-## Validacion minima
+## Validacion Minima
 
 Orden base alineado con CI:
 
@@ -249,7 +292,7 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 ./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-Cobertura destacada en `tests/`:
+### Cobertura Destacada En `tests/`
 
 - reconciliacion y wallet sync
 - contratos de adaptadores de ejecucion
@@ -258,7 +301,7 @@ Cobertura destacada en `tests/`:
 - guardrails de riesgo, leverage y smart exit
 - invariancia temporal y seguridad runtime
 
-## Estructura del proyecto
+## Estructura Del Proyecto
 
 ```text
 .
@@ -279,7 +322,7 @@ Cobertura destacada en `tests/`:
 `-- docker-compose.yml
 ```
 
-## Documentacion adicional
+## Documentacion Adicional
 
 - `CONTRIBUTING.md`
 - `SECURITY.md`
@@ -288,7 +331,13 @@ Cobertura destacada en `tests/`:
 - `RELEASE_FREEZE_REPORT_2026-04-01.md`
 - `docs/runbooks/sre-intent-recovery.md`
 
-## Seguridad del repo
+## Notas De Render Para GitHub
+
+- El diagrama Mermaid se renderiza de forma nativa en GitHub.
+- Si mas adelante agregas capturas reales del dashboard o reportes, la ruta natural seria `docs/images/`.
+- Conviene evitar imagenes inventadas o enlaces rotos en portada; por eso este README usa badges y Mermaid como base visual.
+
+## Seguridad Del Repo
 
 - No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales.
 - Usa secretos de entorno o gestor de secretos del servidor para credenciales.
