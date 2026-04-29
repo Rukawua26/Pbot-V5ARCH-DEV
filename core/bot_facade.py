@@ -218,11 +218,18 @@ class BotFacade:
         """
         return self._get_active_market_snapshot()
 
-    def save_cache(self):
-        """Guarda el caché de velas del DataService en disco (llamado cada 5 minutos y al apagar)."""
+    def save_cache(self, blocking=False):
+        """Guarda caché de velas y estado runtime.
+
+        El ciclo periódico usa guardado asíncrono de velas para no bloquear el
+        scanner; shutdown puede pasar blocking=True para persistencia final.
+        """
         try:
             if hasattr(self, "data_service") and self.data_service:
-                self.data_service.save_cache()
+                if blocking or not hasattr(self.data_service, "save_cache_async"):
+                    self.data_service.save_cache()
+                else:
+                    self.data_service.save_cache_async()
             persist_execution_runtime_state(self)
         except Exception as error:
             self.log(f"⚠️ Error al guardar caché: {error}")

@@ -111,7 +111,7 @@ def _shutdown_sequence(bot, reason: str, logger):
     # 4) Persistencia final y cierre ordenado.
     try:
         if hasattr(bot, "save_cache"):
-            bot.save_cache()
+            bot.save_cache(blocking=True)
     except Exception as error:
         bot.log(f"⚠️ SHUTDOWN: save_cache falló: {error}")
 

@@ -1,13 +1,103 @@
 import asyncio
 import concurrent.futures
+import os
 import time
 from datetime import datetime
 
 import ccxt
 import pandas as pd
+import ta.trend as ta_trend
 
 from config import Config
 from notifier import send_telegram_msg
+
+
+def _btc_cache_marker(df):
+    if df is None or df.empty:
+        return None
+    if "time" in df.columns:
+        return df["time"].iloc[-1]
+    return len(df)
+
+
+def _log_indicator_fallback_error(bot, indicator: str, error) -> None:
+    if time.time() - float(getattr(bot, "_sentiment_fallback_log_ts", 0.0)) > 300:
+        bot._sentiment_fallback_log_ts = time.time()
+        bot.log(f"⚠️ Fallback {indicator} falló: {error}")
+
+
+def _get_cached_btc_indicator(bot, btc_1h, indicator: str):
+    cache = getattr(bot, "_btc_indicator_fallback_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        bot._btc_indicator_fallback_cache = cache
+
+    marker = _btc_cache_marker(btc_1h)
+    key = (indicator, marker)
+    if key in cache:
+        return cache[key]
+
+    if indicator == "EMA_200":
+        close_vals = btc_1h["close"].dropna()
+        if len(close_vals) < 200:
+            return None
+        value = ta_trend.EMAIndicator(close_vals, window=200).ema_indicator().iloc[-1]
+    elif indicator == "ADX_14":
+        high_vals = btc_1h["high"].dropna()
+        low_vals = btc_1h["low"].dropna()
+        close_vals = btc_1h["close"].dropna()
+        if len(high_vals) < 14 or len(low_vals) < 14 or len(close_vals) < 14:
+            return None
+        min_len = min(len(high_vals), len(low_vals), len(close_vals))
+        value = (
+            ta_trend.ADXIndicator(
+                high_vals.iloc[-min_len:],
+                low_vals.iloc[-min_len:],
+                close_vals.iloc[-min_len:],
+                window=14,
+            )
+            .adx()
+            .iloc[-1]
+        )
+    else:
+        return None
+
+    for old_key in [old_key for old_key in cache if old_key[0] == indicator]:
+        cache.pop(old_key, None)
+    cache[key] = value
+    return value
+
+
+def _resolve_btc_market_indicators(bot, btc_1h):
+    ema_200 = btc_1h["EMA_200"].iloc[-1] if "EMA_200" in btc_1h.columns else None
+    adx_14 = btc_1h["ADX_14"].iloc[-1] if "ADX_14" in btc_1h.columns else None
+
+    if ema_200 is None or pd.isna(ema_200):
+        try:
+            if "close" in btc_1h.columns:
+                ema_200 = _get_cached_btc_indicator(bot, btc_1h, "EMA_200")
+        except Exception as error:
+            _log_indicator_fallback_error(bot, "EMA_200", error)
+
+    if adx_14 is None or pd.isna(adx_14):
+        try:
+            if {"high", "low", "close"}.issubset(btc_1h.columns):
+                adx_14 = _get_cached_btc_indicator(bot, btc_1h, "ADX_14")
+        except Exception as error:
+            _log_indicator_fallback_error(bot, "ADX_14", error)
+
+    return ema_200, adx_14
+
+
+def _resolve_triage_worker_count(top_triage_count: int) -> int:
+    if top_triage_count <= 0:
+        return 1
+
+    cpu_count = os.cpu_count() or 2
+    dynamic_default = max(4, min(16, cpu_count * 2))
+    configured_cap = int(getattr(Config, "TRIAGE_MAX_WORKERS", dynamic_default) or dynamic_default)
+    safe_cap = max(1, min(32, configured_cap))
+    return max(1, min(top_triage_count, safe_cap))
 
 
 def run_market_refresh_cycle(bot):
@@ -59,63 +149,7 @@ def run_market_context_cycle(bot, tickers):
             if not has_valid_data:
                 raise ValueError("Datos de BTC no válidos")
 
-            ema_200 = (
-                btc_1h["EMA_200"].iloc[-1] if "EMA_200" in btc_1h.columns else None
-            )
-            adx_14 = btc_1h["ADX_14"].iloc[-1] if "ADX_14" in btc_1h.columns else None
-
-            if ema_200 is None or pd.isna(ema_200):
-                try:
-                    if "close" in btc_1h.columns:
-                        import ta.trend as ta_trend
-
-                        close_vals = btc_1h["close"].dropna()
-                        if len(close_vals) >= 200:
-                            ema_200 = (
-                                ta_trend.EMAIndicator(close_vals, window=200)
-                                .ema_indicator()
-                                .iloc[-1]
-                            )
-                except Exception as error:
-                    if (
-                        time.time()
-                        - float(getattr(bot, "_sentiment_fallback_log_ts", 0.0))
-                        > 300
-                    ):
-                        bot._sentiment_fallback_log_ts = time.time()
-                        bot.log(f"⚠️ Fallback EMA_200 falló: {error}")
-
-            if adx_14 is None or pd.isna(adx_14):
-                try:
-                    high_vals = btc_1h["high"].dropna()
-                    low_vals = btc_1h["low"].dropna()
-                    close_vals = btc_1h["close"].dropna()
-                    if (
-                        len(high_vals) >= 14
-                        and len(low_vals) >= 14
-                        and len(close_vals) >= 14
-                    ):
-                        import ta.trend as ta_trend
-
-                        min_len = min(len(high_vals), len(low_vals), len(close_vals))
-                        adx_14 = (
-                            ta_trend.ADXIndicator(
-                                high_vals.iloc[-min_len:],
-                                low_vals.iloc[-min_len:],
-                                close_vals.iloc[-min_len:],
-                                window=14,
-                            )
-                            .adx()
-                            .iloc[-1]
-                        )
-                except Exception as error:
-                    if (
-                        time.time()
-                        - float(getattr(bot, "_sentiment_fallback_log_ts", 0.0))
-                        > 300
-                    ):
-                        bot._sentiment_fallback_log_ts = time.time()
-                        bot.log(f"⚠️ Fallback ADX_14 falló: {error}")
+            ema_200, adx_14 = _resolve_btc_market_indicators(bot, btc_1h)
 
             if (
                 not isinstance(bot.market_btc_price, (int, float))
@@ -190,7 +224,7 @@ def prepare_top_triage(bot, triage_snapshot):
 async def _fetch_triage_data_async(bot, top_triage):
     results = {}
     timeout_s = float(getattr(Config, "TRIAGE_TIMEOUT_SECONDS", 4)) + 1.0
-    max_workers = max(4, min(12, len(top_triage)))
+    max_workers = _resolve_triage_worker_count(len(top_triage))
     semaphore = asyncio.Semaphore(max_workers)
 
     async def _fetch_one(item):
@@ -272,8 +306,11 @@ def fetch_triage_data_parallel(bot, top_triage):
 
     # Fallback defensivo si el loop global no estuviera listo.
     results = {}
-    max_workers = max(4, min(12, len(top_triage)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    max_workers = _resolve_triage_worker_count(len(top_triage))
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="triage-fetch",
+    ) as executor:
         future_to_sym = {
             executor.submit(
                 bot._fetch_pair_data, item.get("symbol_raw", item["symbol"])

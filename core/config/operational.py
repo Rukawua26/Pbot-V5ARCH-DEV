@@ -122,6 +122,7 @@ class OperationalConfig:
     TOP_TRIAGE_COUNT = 50
     TRIAGE_SPREAD_MAX = 0.0015  # 0.15% max spread (anti-slippage)
     TRIAGE_TIMEOUT_SECONDS = 4
+    TRIAGE_MAX_WORKERS = int(os.getenv("TRIAGE_MAX_WORKERS", "16"))
     TRIAGE_MIN_VOL_24H = 15_000_000  # $15M mínimo (filtro anti-basura)
     TRIAGE_RVOL_EMA_ALPHA = 0.02
     LATENCY_VETO_MS = 4500

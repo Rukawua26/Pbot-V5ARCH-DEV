@@ -133,6 +133,6 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
         bot.is_running = False
         bot.ui.stop()
         bot.log("🛑 Guardando caché y forzando flasheo de Shadow Logs...")
-        bot.save_cache()
+        bot.save_cache(blocking=True)
         shadow_logger.stop()
         bot.log("✅ Caché y Logs guardados.")

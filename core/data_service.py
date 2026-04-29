@@ -1,8 +1,10 @@
 import os
 import time
 import json
+import threading
 import pandas as pd
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, List
 from config import Config
 
@@ -29,6 +31,11 @@ class DataService:
         self.data_cache = {}
         self.last_ohlcv_fetch = {}
         self.maturity_cache = {}
+        self._cache_save_lock = threading.Lock()
+        self._cache_save_future = None
+        self._cache_save_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="cache-save"
+        )
         # [v118] Rutas absolutas ancladas al directorio raíz del proyecto
         self.maturity_file = os.path.join(
             _BASE_DIR, "data_storage", "maturity_cache.json"
@@ -82,14 +89,21 @@ class DataService:
         if count > 0:
             logger.info(f"💾 Caché de datos cargado: {count} archivos.")
 
-    def save_cache(self):
-        """Guarda el caché de datos de forma segura"""
-        for key, df in self.data_cache.items():
+    def _snapshot_cache_for_save(self):
+        snapshot = {}
+        for key, df in list(self.data_cache.items()):
             if df is None or df.empty:
                 continue
             try:
                 # Guardar solo las últimas N velas para ahorrar espacio
-                df_to_save = df.tail(Config.CANDLE_FETCH_LIMIT)
+                snapshot[key] = df.tail(Config.CANDLE_FETCH_LIMIT).copy()
+            except Exception as e:
+                logger.warning(f"⚠️ Error preparando cache {key}: {e}")
+        return snapshot
+
+    def _write_cache_snapshot(self, snapshot):
+        for key, df_to_save in snapshot.items():
+            try:
 
                 # [v118] Sanitizar nombre de archivo (reemplazar / para evitar error de subdirectorio)
                 safe_key = key.replace("/", "_").replace(":", "_")
@@ -101,6 +115,28 @@ class DataService:
                     df_to_save.to_pickle(path)
             except Exception as e:
                 logger.warning(f"⚠️ Error guardando cache {key}: {e}")
+
+    def save_cache(self):
+        """Guarda el caché de datos de forma segura y síncrona."""
+        self._write_cache_snapshot(self._snapshot_cache_for_save())
+
+    def save_cache_async(self) -> bool:
+        """Agenda un guardado de velas sin bloquear el ciclo principal.
+
+        Returns:
+            True si se agendó un nuevo guardado; False si ya había uno en curso.
+        """
+        with self._cache_save_lock:
+            if self._cache_save_future and not self._cache_save_future.done():
+                return False
+            snapshot = self._snapshot_cache_for_save()
+            if not snapshot:
+                self._cache_save_future = None
+                return False
+            self._cache_save_future = self._cache_save_executor.submit(
+                self._write_cache_snapshot, snapshot
+            )
+            return True
 
     def load_maturity_cache(self):
         if os.path.exists(self.maturity_file):
