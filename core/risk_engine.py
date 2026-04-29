@@ -244,6 +244,102 @@ class RiskEngine:
             self.logger.error(f"❌ Error calculate_position_size {symbol}: {e}")
             return 0, -2
 
+    def calculate_position_size_by_stop(
+        self,
+        balance: float,
+        symbol: str,
+        entry_price: float,
+        stop_loss_price: float,
+        leverage: int,
+        is_shadow: bool = False,
+        exchange=None,
+        risk_pct: float | None = None,
+    ) -> tuple[float, float]:
+        """Calcula cantidad por riesgo real: risk_usd / distancia al SL.
+
+        Retorna (amount, final_notional). Si no puede operar, retorna amount=0 y
+        código negativo en final_notional para mantener compatibilidad con el flujo
+        actual de `trade_manager`.
+        """
+        try:
+            balance = float(balance or 0.0)
+            entry = float(entry_price or 0.0)
+            sl = float(stop_loss_price or 0.0)
+            if balance <= 0 or entry <= 0 or sl <= 0:
+                return 0.0, -2
+
+            stop_distance = abs(entry - sl)
+            if stop_distance <= 0:
+                return 0.0, -5
+
+            risk_fraction = float(
+                risk_pct
+                if risk_pct is not None
+                else getattr(Config, "RISK_PER_TRADE_PCT", 0.01)
+            )
+            if risk_fraction <= 0:
+                return 0.0, -2
+
+            risk_budget_usd = balance * risk_fraction
+            max_risk_usd = float(getattr(Config, "MAX_RISK_USD", 0.0) or 0.0)
+            if max_risk_usd > 0:
+                risk_budget_usd = min(risk_budget_usd, max_risk_usd)
+
+            raw_amount = risk_budget_usd / stop_distance
+            if raw_amount <= 0:
+                return 0.0, -2
+
+            margin_fraction = float(getattr(Config, "MAX_MARGIN_PERCENT", 5.0))
+            if margin_fraction > 1.0:
+                margin_fraction = margin_fraction / 100.0
+            lev = max(1, int(float(leverage or 1)))
+            max_notional_allowed = balance * margin_fraction * lev
+
+            raw_notional = raw_amount * entry
+            if max_notional_allowed > 0 and raw_notional > max_notional_allowed:
+                raw_amount = max_notional_allowed / entry
+                raw_notional = raw_amount * entry
+
+            min_notional = float(getattr(Config, "MIN_NOTIONAL_VALUE", 0.0) or 0.0)
+            if raw_notional < min_notional:
+                self.logger.warning(
+                    f"🚫 RISK_SIZE_MIN_NOTIONAL {symbol}: ${raw_notional:.2f} < ${min_notional:.2f}"
+                )
+                return 0.0, -1
+
+            if is_shadow or exchange is None:
+                return raw_amount, raw_notional
+
+            if symbol not in exchange.markets:
+                exchange.load_markets()
+                if symbol not in exchange.markets:
+                    return 0.0, -3
+
+            amount_str = exchange.amount_to_precision(symbol, raw_amount)
+            if not amount_str:
+                return 0.0, -2
+            amount = float(amount_str)
+            final_notional = amount * entry
+
+            if amount <= 0:
+                return 0.0, -2
+            if final_notional < min_notional:
+                self.logger.warning(
+                    f"🚫 RISK_SIZE_MIN_NOTIONAL {symbol}: post-round ${final_notional:.2f} < ${min_notional:.2f}"
+                )
+                return 0.0, -1
+
+            actual_risk = amount * stop_distance
+            self.logger.info(
+                f"📊 RISK SIZING: {symbol} | risk=${actual_risk:.2f} "
+                f"({risk_fraction * 100:.2f}%) | stop_dist=${stop_distance:.6f} | "
+                f"notional=${final_notional:.2f} | amount={amount}"
+            )
+            return amount, final_notional
+        except Exception as e:
+            self.logger.error(f"❌ Error calculate_position_size_by_stop {symbol}: {e}")
+            return 0.0, -2
+
     def check_market_safety(self, df, symbol, funding, side, order_book, btc_delta):
         """
         Consulta al CrashPredictor y aplica filtros de seguridad globales.

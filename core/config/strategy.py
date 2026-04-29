@@ -9,6 +9,7 @@ class StrategyConfig:
     # --- GESTIÓN DE RIESGO ---
     RISK_PER_TRADE_PERCENT = 1.2
     RISK_PER_TRADE = 1.2  # Alias para compatibilidad con reporte
+    RISK_PER_TRADE_PCT = 0.01
     MAX_RISK_USD = 2.0
     MIN_NOTIONAL_VALUE = 12.0
     MAX_NOTIONAL_MULTIPLIER = 5.0  # Cap de seguridad (Balance * Multiplier)

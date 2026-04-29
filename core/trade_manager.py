@@ -233,29 +233,6 @@ def execute_order(
         )
         return "GHOST_MODEL_MISSING"
 
-    amount, calculated_position_size = bot.risk_engine.calculate_position_size(
-        balance=bot.balance,
-        symbol=symbol,
-        price=price,
-        leverage=current_leverage,
-        context=context or {},
-        is_shadow=is_shadow,
-        exchange=bot.execution.exchange,
-    )
-
-    if not is_shadow and symbol_base in controls.get("reduced", set()):
-        reduced_mult = max(0.1, min(bot._symbol_reduced_size_mult, 1.0))
-        calculated_position_size *= reduced_mult
-        amount = calculated_position_size / price if price > 0 else amount
-        bot.log(
-            f"📉 TACTICAL REDUCE {symbol}: size × {reduced_mult:.2f} (decision matrix)"
-        )
-
-    bot.log(
-        f"📊 [KELLY SIZING] Balance: ${bot.balance:.2f} | Conf: {confidence_score:.1f}% | "
-        f"Leverage: {current_leverage}x | Notional: ${calculated_position_size:.2f} | Amount: {amount}"
-    )
-
     atr_pct = context.get("atr_pct", 0) if context else 0
     if atr_pct * 100 > Config.NATR_THRESHOLD:
         bot.log(
@@ -291,6 +268,44 @@ def execute_order(
         fees=0.001,
     )
     bot.log(f"🧩 Exit mode {symbol}: {exit_mode}")
+
+    size_by_stop = getattr(bot.risk_engine, "calculate_position_size_by_stop", None)
+    if callable(size_by_stop):
+        amount, calculated_position_size = size_by_stop(
+            balance=bot.balance,
+            symbol=symbol,
+            entry_price=price,
+            stop_loss_price=sl_val,
+            leverage=current_leverage,
+            is_shadow=is_shadow,
+            exchange=bot.execution.exchange,
+        )
+        sizing_label = "RISK SIZING"
+    else:
+        amount, calculated_position_size = bot.risk_engine.calculate_position_size(
+            balance=bot.balance,
+            symbol=symbol,
+            price=price,
+            leverage=current_leverage,
+            context=context or {},
+            is_shadow=is_shadow,
+            exchange=bot.execution.exchange,
+        )
+        sizing_label = "KELLY SIZING"
+
+    if not is_shadow and symbol_base in controls.get("reduced", set()):
+        reduced_mult = max(0.1, min(bot._symbol_reduced_size_mult, 1.0))
+        calculated_position_size *= reduced_mult
+        amount = calculated_position_size / price if price > 0 else amount
+        bot.log(
+            f"📉 TACTICAL REDUCE {symbol}: size × {reduced_mult:.2f} (decision matrix)"
+        )
+
+    bot.log(
+        f"📊 [{sizing_label}] Balance: ${bot.balance:.2f} | Conf: {confidence_score:.1f}% | "
+        f"Leverage: {current_leverage}x | SL: ${sl_val:.5f} | "
+        f"Notional: ${calculated_position_size:.2f} | Amount: {amount}"
+    )
 
     funding = (context or {}).get("funding_rate", 0)
     ob = bot.ws_manager.get_l2_state(symbol)
