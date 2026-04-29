@@ -149,11 +149,30 @@ def _normalize_order_status(raw_status: str) -> str:
 
 
 def generate_child_client_order_id(entry_client_order_id: str, leg: str) -> str:
+    """Genera ID corto y determinista para legs (SL/TP) de recovery.
+
+    Formato: {leg_prefix}_{hash}
+    - Máximo _MAX_SAFE_ID_LEN (32) caracteres
+    - Valida contra _MAX_BINANCE_ID_LEN (36)
+    """
     leg_safe = str(leg or "LEG").upper()[:6]
-    digest = hashlib.sha256(
-        f"{entry_client_order_id}|{leg_safe}".encode("utf-8")
-    ).hexdigest()[:10]
-    return f"{entry_client_order_id}-{leg_safe}-{digest}"
+    # Hash de la semilla; no concatenar entry_client_order_id completo para evitar exceder limite
+    raw = f"{entry_client_order_id}|{leg_safe}"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+    result = f"{leg_safe}_{digest}"[:_MAX_SAFE_ID_LEN]
+
+    # Validacion estructural
+    if len(result) > _MAX_SAFE_ID_LEN:
+        raise ValueError(
+            f"CRITICAL: child ID '{result}' exceeds {_MAX_SAFE_ID_LEN} chars limit. "
+            f"Length: {len(result)}"
+        )
+    if len(result) > _MAX_BINANCE_ID_LEN:
+        raise ValueError(
+            f"CRITICAL: child ID '{result}' exceeds Binance 36 chars limit. "
+            f"Length: {len(result)}"
+        )
+    return result
 
 
 def _validate_orphan_size(entry: float, amount: float) -> tuple:

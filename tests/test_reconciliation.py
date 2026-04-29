@@ -531,5 +531,44 @@ class OrphanAdoptionTest(unittest.TestCase):
             OperationalConfig.ORPHAN_ADOPTION_MAX_SIZE_USD = original_max
 
 
+class ChildOrderIdTest(unittest.TestCase):
+    def test_child_id_is_deterministic(self):
+        from core.reconciliation import generate_child_client_order_id
+
+        a = generate_child_client_order_id("E_abc123def456abc123de", "SL")
+        b = generate_child_client_order_id("E_abc123def456abc123de", "SL")
+        self.assertEqual(a, b)
+
+    def test_child_id_is_short(self):
+        from core.reconciliation import generate_child_client_order_id
+
+        for leg in ("SL", "TP", "UNKNOWN_LEG"):
+            cid = generate_child_client_order_id("E_abc123def456abc123de", leg)
+            self.assertLessEqual(
+                len(cid),
+                32,
+                f"Child ID for leg {leg} exceeds 32 chars: {cid} (len={len(cid)})",
+            )
+
+    def test_child_id_does_not_exceed_binance_limit(self):
+        from core.reconciliation import generate_child_client_order_id
+
+        cid = generate_child_client_order_id("E_" + "x" * 28, "SL")
+        self.assertLessEqual(
+            len(cid),
+            36,
+            f"Child ID exceeds Binance 36 chars limit: {cid} (len={len(cid)})",
+        )
+
+    def test_child_id_uses_leg_prefix(self):
+        from core.reconciliation import generate_child_client_order_id
+
+        cid_sl = generate_child_client_order_id("E_abc", "SL")
+        cid_tp = generate_child_client_order_id("E_abc", "TP")
+        self.assertNotEqual(cid_sl, cid_tp)
+        self.assertTrue(any(part.startswith("SL") for part in cid_sl.split("_")))
+        self.assertTrue(any(part.startswith("TP") for part in cid_tp.split("_")))
+
+
 if __name__ == "__main__":
     unittest.main()
