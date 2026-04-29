@@ -5,6 +5,7 @@ import pandas as pd
 
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown
+from core.market_breadth import calculate_market_breadth
 from core.signals.analyze import _analyze_symbol_candidate
 from core.signals.context import _build_symbol_context, _update_signal_diagnostics
 from core.signals.execution import _execute_and_update_symbol
@@ -17,6 +18,19 @@ from core.signals.filters import (
 
 def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
     # FASE B: Análisis Secuencial (IA)
+    breadth = calculate_market_breadth(
+        results,
+        fear_threshold=float(getattr(Config, "MARKET_BREADTH_FEAR_THRESHOLD", 0.70)),
+        greed_threshold=float(getattr(Config, "MARKET_BREADTH_GREED_THRESHOLD", 0.70)),
+    )
+    bot.market_breadth = breadth.as_dict()
+    if breadth.total_count > 0:
+        bot.log(
+            f"🌡️ MARKET_BREADTH sentiment={breadth.sentiment} "
+            f"dump={breadth.dump_ratio * 100:.0f}% ({breadth.dump_count}/{breadth.total_count}) "
+            f"pump={breadth.pump_ratio * 100:.0f}% ({breadth.pump_count}/{breadth.total_count})"
+        )
+
     for triage_entry in top_triage:
         symbol_raw = triage_entry["symbol"]
         symbol = symbol_raw.split(":")[0]

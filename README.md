@@ -61,6 +61,15 @@ flowchart LR
 | 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram | Remote control, auditing and diagnostics via Telegram commands |
 | 🐳 Despliegue | Ejecución local, `systemd` user y Docker | Local execution, `systemd` user and Docker |
 
+### 🧱 Fases De Hardening Runtime | Runtime Hardening Phases
+
+| Fase | ES | EN | Estado |
+|---|---|---|---|
+| 1 | Circuit Breaker diario UTC solo para `REAL` | UTC daily circuit breaker for `REAL` only | ✅ Publicado |
+| 2 | Position sizing por distancia al `Stop Loss` | Stop-distance based position sizing | ✅ Publicado |
+| 3 | Validación walk-forward para modelos | Walk-forward model validation | ✅ Publicado |
+| 4 | Market Breadth interno con veto de LONG en `FEAR` | Internal Market Breadth with LONG veto during `FEAR` | ✅ Publicado |
+
 ---
 
 ## 📊 Dashboard Preview

@@ -104,6 +104,12 @@ def _apply_entry_filters_and_adjust_prob(
         genes=genes,
     )
 
+    if audit_signal == "BUY" and str(ctx.get("market_breadth_sentiment", "")).upper() == "FEAR":
+        filter_passed = False
+        dump_ratio = float(ctx.get("market_breadth_dump_ratio", 0.0) or 0.0)
+        filter_reason = f"MARKET_BREADTH_FEAR: FEAR ({dump_ratio * 100:.0f}% dump)"
+        bot.log(f"⛔ {symbol}: veto LONG por Market Breadth FEAR ({dump_ratio * 100:.0f}% dump)")
+
     # [SHOCK MAP] Veto por falta de espacio operativo
     # Regla: si la distancia al próximo SHOCK < 1.0%, no se dispara.
     if filter_passed and audit_signal in ["BUY", "SELL"]:
