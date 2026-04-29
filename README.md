@@ -2,7 +2,8 @@
 
 # Pbot V5ARCH DEV
 
-> Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, filtros estructurales, reconciliacion segura y operacion en modos `PAPER`, `REAL` y `shadow_live`.
+> **ES** Bot cuantitativo para Binance Futures con runtime modular, escaneo dinámico 1H, filtros estructurales, reconciliación segura y operación en modos `PAPER`, `REAL` y `shadow_live`.  
+> **EN** Quantitative trading bot for Binance Futures with modular runtime, dynamic 1H scanning, structural filters, safe reconciliation and operation in `PAPER`, `REAL` and `shadow_live` modes.
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-22c55e)
@@ -12,135 +13,182 @@
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 
-**Trading bot con enfoque runtime-first: decision, ejecucion, reconciliacion y observabilidad en una arquitectura modular.**
+**Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**  
+**Runtime-first trading bot: decision, execution, reconciliation and observability in a modular architecture.**
 
 `1H + 4H macro` • `Binance Futures` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
-## Navegacion Rapida
+---
 
-| Ir a | Seccion |
+## 🚀 Para Inversores y Colaboradores | For Investors and Collaborators
+
+### 📈 Propuesta de Valor | Value Proposition
+
+| ES | EN |
 |---|---|
-| Inicio rapido | [Quick Start](#quick-start) |
-| Modos de operacion | [Modos Operativos](#modos-operativos) |
-| Arquitectura | [Arquitectura](#arquitectura) |
-| Seguridad | [Seguridad Runtime](#seguridad-runtime) |
-| Comandos | [Comandos Telegram Utiles](#comandos-telegram-utiles) |
-| Validacion | [Validacion Minima](#validacion-minima) |
+| Bot de trading cuantitativo diseñado para operar Binance Futures con enfoque en seguridad runtime y arquitectura modular. | Quantitative trading bot designed to operate on Binance Futures with focus on runtime safety and modular architecture. |
+| Escaneo dinámico de mercado en 1H con contexto macro 4H y filtros estructurales. | Dynamic market scanning on 1H with 4H macro context and structural filters. |
+| Separación clara entre lógica de decisión y ejecución, con adaptadores para modos reales y simulados. | Clear separation between decision logic and execution, with adapters for real and simulated modes. |
+| Protección de posiciones reales mediante reconciliación, `HARD SL` y cierres de emergencia. | Real position protection through reconciliation, `HARD SL` and emergency close procedures. |
 
-## Vista Rapida
-
-| Eje | Resumen |
-|---|---|
-| Estrategia | Analisis `1H` con contexto macro `4H` |
-| Decision | Consenso de agentes `MT`, `SR` y `G` |
-| Riesgo | `HARD SL`, guardrails, cooldowns y emergency close |
-| Recovery | Reconciliacion DB/exchange y adopcion de huerfanas |
-| Ejecucion | Backend `live` o `shadow_live` |
-| Operacion | Telegram, watchdog, logs y telemetria estructurada |
-
-## Vision General
-
-`Pbot V5ARCH DEV` esta orientado a operar Binance Futures con un enfoque de seguridad runtime primero:
-
-- analiza mercado en `1H` con contexto macro `4H`
-- filtra oportunidades por liquidez, spread, latencia y estructura
-- separa claramente la logica de decision de la logica de ejecucion
-- protege posiciones reales con reconciliacion, `HARD SL` y cierres de emergencia
-- expone operacion y auditoria por Telegram, logs y telemetria estructurada
-
-## Lo Mas Destacado
-
-| Area | Que aporta |
-|---|---|
-| 📡 Triage dinamico | Escanea pares por liquidez, spread, volumen y latencia |
-| 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decision final |
-| 🛡️ Seguridad runtime | Reconciliacion, `HARD SL`, guardrails y cierre de emergencia |
-| 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado |
-| 📲 Operacion remota | Control, auditoria y diagnostico via comandos Telegram |
-| 🐳 Despliegue | Ejecucion local, `systemd` user y Docker |
-
-## Flujo De Alto Nivel
+### 🏗️ Arquitectura en Resumen | Architecture at a Glance
 
 ```mermaid
 flowchart LR
     A[Binance Futures] --> B[Data Service]
-    B --> C[Triage Dinamico]
-    C --> D[Analisis 1H + Contexto 4H]
+    B --> C[Triage Dinámico]
+    C --> D[Análisis 1H + Contexto 4H]
     D --> E[Agentes MT SR G]
     E --> F[Filtros y Guardrails]
-    F --> G{Decision}
+    F --> G{Decisión}
     G -->|PAPER / REAL| H[Execution Service]
     G -->|shadow_live| I[Shadow Execution Adapter]
-    H --> J[Trades y Telemetria]
+    H --> J[Trades y Telemetría]
     I --> J
     J --> K[Telegram / Logs / Runtime Monitor]
 ```
 
-## Capacidades Actuales
+### 🔍 Lo Más Destacado | Key Highlights
 
-| Area | Estado | Detalle |
+| Area | ES | EN |
 |---|---|---|
-| Runtime modular | Activo | `Bot`, `BotFacade`, ciclos, IO loops y monitorizacion desacoplados |
-| Triage dinamico | Activo | Top pares por liquidez, spread, volumen y latencia |
-| Motor de senales | Activo | Analisis 1H, veto macro 4H, votos de agentes y decision final |
-| Breakout watchlist | Activo | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
-| Exit engine | Activo | Salidas dinamicas, trailing ATR, breakeven y degradacion de confianza |
-| Reconciliacion | Activo | Recovery DB/exchange, intents, orfanas, `LOST_IN_TRANSMISSION` |
-| Ejecucion segura | Activo | `HARD SL`, cierres de emergencia y protecciones de runtime |
-| Telemetria | Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
-| Operacion remota | Activo | Comandos Telegram para auditoria, inteligencia y control |
-| Docker/systemd | Disponible | Despliegue en VPS o contenedor |
+| 📡 Triage dinámico | Escanea pares por liquidez, spread, volumen y latencia | Scans pairs by liquidity, spread, volume and latency |
+| 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final | Combines `MT`, `SR` and `G` agent votes for final decision |
+| 🛡️ Seguridad runtime | Reconciliación, `HARD SL`, guardrails y cierre de emergencia | Reconciliation, `HARD SL`, guardrails and emergency close |
+| 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado | Simulates rejections, slippage and partial fills with separated backend |
+| 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram | Remote control, auditing and diagnostics via Telegram commands |
+| 🐳 Despliegue | Ejecución local, `systemd` user y Docker | Local execution, `systemd` user and Docker |
 
-## Modos Operativos
+---
 
-| Modo | Configuracion | Comportamiento |
+## 📊 Dashboard Preview
+
+![Dashboard](docs/images/dashboard.svg)
+
+---
+
+## 🚀 Quick Start | Inicio Rápido
+
+```bash
+# ES: Clonar, preparar entorno y arrancar
+git clone https://github.com/Rukawua26/Pbot-V5ARCH-DEV.git
+cd Pbot-V5ARCH-DEV
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# Crear .env con tus variables antes de arrancar
+./.venv/bin/python main.py
+
+# EN: Clone, setup environment and run
+git clone https://github.com/Rukawua26/Pbot-V5ARCH-DEV.git
+cd Pbot-V5ARCH-DEV
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# Create .env with your variables before starting
+./.venv/bin/python main.py
+```
+
+Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales según el modo que vayas a usar.  
+Before starting, manually create `.env` with your operational variables and credentials according to the mode you will use.
+
+---
+
+## 🧭 Navegación Rápida | Quick Navigation
+
+| Ir a / Go to | Sección ES | Section EN |
 |---|---|---|
-| `PAPER` | `PAPER_MODE=true` | Usa capital virtual. Si hay credenciales, valida conectividad; si no, puede seguir con endpoints publicos. |
-| `REAL` | `PAPER_MODE=false` | Requiere credenciales y permisos validos de Binance Futures; errores de auth/permisos abortan el arranque. |
-| `shadow_live` | `EXECUTION_BACKEND=shadow_live` | Mantiene runtime real pero simula latencia, rechazo, slippage y fills parciales. |
-| `TESTNET` | `USE_TESTNET=true` | Activa sandbox cuando el backend lo soporta; en `PAPER` puede degradar a mercado publico real para lecturas. |
+| Inicio rápido | [Quick Start](#-quick-start--inicio-rpido) | [Quick Start](#-quick-start--inicio-rpido) |
+| Modos de operación | [Modos Operativos](#-modos-operativos--operating-modes) | [Operating Modes](#-modos-operativos--operating-modes) |
+| Arquitectura | [Arquitectura](#-arquitectura--architecture) | [Architecture](#-arquitectura--architecture) |
+| Seguridad | [Seguridad Runtime](#-seguridad-runtime--runtime-safety) | [Runtime Safety](#-seguridad-runtime--runtime-safety) |
+| Comandos | [Comandos Telegram](#-comandos-telegram-utiles--useful-telegram-commands) | [Telegram Commands](#-comandos-telegram-utiles--useful-telegram-commands) |
+| Validación | [Validación Mínima](#-validacin-mnima--minimum-validation) | [Minimum Validation](#-validacin-mnima--minimum-validation) |
 
-## Arquitectura
+---
+
+## 📡 Capacidades Actuales | Current Capabilities
+
+| Area | Estado / Status | Detalle / Detail |
+|---|---|---|
+| Runtime modular | ✅ Activo / Active | `Bot`, `BotFacade`, ciclos, IO loops y monitorización desacoplados |
+| Triage dinámico | ✅ Activo / Active | Top pares por liquidez, spread, volumen y latencia |
+| Motor de señales | ✅ Activo / Active | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
+| Breakout watchlist | ✅ Activo / Active | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
+| Exit engine | ✅ Activo / Active | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
+| Reconciliación | ✅ Activo / Active | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
+| Ejecución segura | ✅ Activo / Active | `HARD SL`, cierres de emergencia y protecciones de runtime |
+| Telemetría | ✅ Activo / Active | `logs/execution_events.jsonl`, runtime metrics y scorecards |
+| Operación remota | ✅ Activo / Active | Comandos Telegram para auditoría, inteligencia y control |
+| Docker/systemd | ✅ Disponible / Available | Despliegue en VPS o contenedor |
+
+---
+
+## 🎮 Modos Operativos | Operating Modes
+
+| Modo / Mode | Configuración / Configuration | Comportamiento / Behavior |
+|---|---|---|
+| `PAPER` | `PAPER_MODE=true` | **ES:** Usa capital virtual. Si hay credenciales, valida conectividad; si no, puede seguir con endpoints públicos. <br> **EN:** Uses virtual capital. Validates connectivity if credentials exist; otherwise can continue with public endpoints. |
+| `REAL` | `PAPER_MODE=false` | **ES:** Requiere credenciales y permisos válidos de Binance Futures; errores de auth/permisos abortan el arranque. <br> **EN:** Requires valid Binance Futures credentials and permissions; auth/permission errors abort startup. |
+| `shadow_live` | `EXECUTION_BACKEND=shadow_live` | **ES:** Mantiene runtime real pero simula latencia, rechazo, slippage y fills parciales. <br> **EN:** Maintains real runtime but simulates latency, rejection, slippage and partial fills. |
+| `TESTNET` | `USE_TESTNET=true` | **ES:** Activa sandbox cuando el backend lo soporta; en `PAPER` puede degradar a mercado público real para lecturas. <br> **EN:** Activates sandbox when backend supports it; in `PAPER` may degrade to real public market for reads. |
+
+---
+
+## 🏗️ Arquitectura | Architecture
 
 ### Runtime
 
 ```text
 main.py
   -> core.bot_app.run_entrypoint()
-     -> Bot(BotFacade)
-        -> bootstrap de servicios, modelos, runtime state y loops
+      -> Bot(BotFacade)
+         -> bootstrap de servicios, modelos, runtime state y loops
 ```
 
-### Modulos Clave
+### Módulos Clave | Key Modules
 
-| Ruta | Rol |
+| Ruta / Path | Rol / Role |
 |---|---|
-| `main.py` | Entrypoint real del proceso |
-| `core/bot_app.py` | Bootstrap pesado, clase `Bot`, event loop y wiring principal |
-| `core/bot_facade.py` | Contrato publico del runtime |
-| `core/bot_connection.py` | Conexion a Binance y reglas por modo operativo |
-| `core/reconciliation.py` | Recovery de estado DB/exchange al arranque |
-| `core/execution_adapters.py` | Backends `live` y `shadow_live` |
-| `core/execution_service.py` | Puerto de ejecucion contra exchange |
-| `core/bot_guardian.py` | Vigilancia y protecciones sobre posiciones activas |
-| `core/bot_wallet_sync.py` | Sincronizacion de wallet y capital |
-| `core/command_router.py` | Router de comandos Telegram |
-| `core/signals/` | Contexto, analisis, filtros y ejecucion de senales |
-| `core/strategy/` | Agentes, consenso y filtros de estrategia |
-| `tests/` | Regresiones runtime, guardrails y contratos |
+| `main.py` | **ES:** Entrypoint real del proceso <br> **EN:** Actual process entrypoint |
+| `core/bot_app.py` | **ES:** Bootstrap pesado, clase `Bot`, event loop y wiring principal <br> **EN:** Heavy bootstrap, `Bot` class, event loop and main wiring |
+| `core/bot_facade.py` | **ES:** Contrato público del runtime <br> **EN:** Public runtime contract |
+| `core/bot_connection.py` | **ES:** Conexión a Binance y reglas por modo operativo <br> **EN:** Binance connection and rules per operating mode |
+| `core/reconciliation.py` | **ES:** Recovery de estado DB/exchange al arranque <br> **EN:** DB/exchange state recovery at startup |
+| `core/execution_adapters.py` | **ES:** Backends `live` y `shadow_live` <br> **EN:** `live` and `shadow_live` backends |
+| `core/execution_service.py` | **ES:** Puerto de ejecución contra exchange <br> **EN:** Execution port against exchange |
+| `core/bot_guardian.py` | **ES:** Vigilancia y protecciones sobre posiciones activas <br> **EN:** Monitoring and protections over active positions |
+| `core/bot_wallet_sync.py` | **ES:** Sincronización de wallet y capital <br> **EN:** Wallet and capital synchronization |
+| `core/command_router.py` | **ES:** Router de comandos Telegram <br> **EN:** Telegram command router |
+| `core/signals/` | **ES:** Contexto, análisis, filtros y ejecución de señales <br> **EN:** Context, analysis, filters and signal execution |
+| `core/strategy/` | **ES:** Agentes, consenso y filtros de estrategia <br> **EN:** Agents, consensus and strategy filters |
+| `tests/` | **ES:** Regresiones runtime, guardrails y contratos <br> **EN:** Runtime regressions, guardrails and contracts |
 
-## Seguridad Runtime
+---
 
-- El exchange manda sobre la DB para exposicion real y estado de ordenes/posiciones.
-- No se dejan posiciones reales sin `HARD SL`.
-- Si el `HARD SL` no puede re-adjuntarse por rechazo tipo `would trigger immediately (-2021)`, el bot ejecuta `Emergency Market Close`.
-- `LOST_IN_TRANSMISSION` solo se declara tras agotar verificacion en posiciones activas, ordenes abiertas y consulta por `origClientOrderId`.
-- Si el estado live queda ambiguo, el comportamiento esperado es `HALT` o reconciliacion antes de continuar.
-- Hay guardrail para bloquear `pass` silenciosos en `core/` mediante CI.
+## 🛡️ Seguridad Runtime | Runtime Safety
 
-### Estados Runtime De Orden/Trade
+- **ES:** El exchange manda sobre la DB para exposición real y estado de ordenes/posiciones.
+- **EN:** Exchange overrides DB for real exposure and order/position state.
+
+- **ES:** No se dejan posiciones reales sin `HARD SL`.
+- **EN:** Real positions are never left without `HARD SL`.
+
+- **ES:** Si el `HARD SL` no puede re-adjuntarse por rechazo tipo `would trigger immediately (-2021)`, el bot ejecuta `Emergency Market Close`.
+- **EN:** If `HARD SL` cannot be re-attached due to `would trigger immediately (-2021)` rejection, bot executes `Emergency Market Close`.
+
+- **ES:** `LOST_IN_TRANSMISSION` solo se declara tras agotar verificación en posiciones activas, ordenes abiertas y consulta por `origClientOrderId`.
+- **EN:** `LOST_IN_TRANSMISSION` only declared after exhausting verification on active positions, open orders and query by `origClientOrderId`.
+
+- **ES:** Si el estado live queda ambiguo, el comportamiento esperado es `HALT` o reconciliación antes de continuar.
+- **EN:** If live state becomes ambiguous, expected behavior is `HALT` or reconciliation before continuing.
+
+- **ES:** Hay guardrail para bloquear `pass` silenciosos en `core/` mediante CI.
+- **EN:** Guardrail exists to block silent `pass` in `core/` via CI.
+
+### Estados Runtime De Orden/Trade | Order/Trade Runtime States
 
 - `PENDING_SEND`
 - `PENDING_EXCHANGE_OPEN`
@@ -148,26 +196,29 @@ main.py
 - `OPEN`
 - `CLOSING_INITIATED`
 
-## Configuracion
+---
 
-`.env` se carga automaticamente desde `core/config/operational.py`.
+## ⚙️ Configuración | Configuration
 
-### Variables Importantes
+`.env` se carga automáticamente desde `core/config/operational.py`.  
+`.env` is automatically loaded from `core/config/operational.py`.
 
-| Variable | Uso |
+### Variables Importantes | Important Variables
+
+| Variable | Uso / Usage |
 |---|---|
-| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Credenciales Binance Futures |
-| `PAPER_MODE` | Alterna `PAPER`/`REAL` |
-| `PAPER_INITIAL_BALANCE` | Capital virtual inicial |
-| `USE_TESTNET` | Sandbox/testnet cuando el backend lo soporta |
-| `EXECUTION_BACKEND` | `live` o `shadow_live` |
-| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | Operacion remota y alertas |
-| `TRIAGE_MAX_WORKERS` | Concurrencia del escaneo |
-| `PARTIAL_FILL_TIMEOUT_SECONDS` | Timeout para fills parciales |
-| `PENDING_SEND_STALE_SECONDS` | Expiracion de intents huerfanas |
-| `GLOBAL_ENTRY_COOLDOWN_SECONDS` | Cooldown global de entradas |
-| `HARD_SL_ATTACH_MAX_RETRIES` | Reintentos para adjuntar stop loss |
-| `WATCHDOG_HEARTBEAT_PATH` | Ruta del heartbeat del watchdog |
+| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | **ES:** Credenciales Binance Futures <br> **EN:** Binance Futures credentials |
+| `PAPER_MODE` | **ES:** Alterna `PAPER`/`REAL` <br> **EN:** Toggles `PAPER`/`REAL` |
+| `PAPER_INITIAL_BALANCE` | **ES:** Capital virtual inicial <br> **EN:** Initial virtual capital |
+| `USE_TESTNET` | **ES:** Sandbox/testnet cuando el backend lo soporta <br> **EN:** Sandbox/testnet when backend supports it |
+| `EXECUTION_BACKEND` | **ES:** `live` o `shadow_live` <br> **EN:** `live` or `shadow_live` |
+| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | **ES:** Operación remota y alertas <br> **EN:** Remote operation and alerts |
+| `TRIAGE_MAX_WORKERS` | **ES:** Concurrencia del escaneo <br> **EN:** Scan concurrency |
+| `PARTIAL_FILL_TIMEOUT_SECONDS` | **ES:** Timeout para fills parciales <br> **EN:** Timeout for partial fills |
+| `PENDING_SEND_STALE_SECONDS` | **ES:** Expiración de intents huérfanas <br> **EN:** Orphan intent expiration |
+| `GLOBAL_ENTRY_COOLDOWN_SECONDS` | **ES:** Cooldown global de entradas <br> **EN:** Global entry cooldown |
+| `HARD_SL_ATTACH_MAX_RETRIES` | **ES:** Reintentos para adjuntar stop loss <br> **EN:** Retries to attach stop loss |
+| `WATCHDOG_HEARTBEAT_PATH` | **ES:** Ruta del heartbeat del watchdog <br> **EN:** Watchdog heartbeat path |
 
 ### Variables Para `shadow_live`
 
@@ -179,15 +230,18 @@ main.py
 - `SHADOW_SIM_PRICE_OUT_OF_RANGE_RATE`
 - `SHADOW_SIM_MIN_PARTIAL_RATIO`
 
-## Instalacion
+---
+
+## 📦 Instalación | Installation
 
 ```bash
+# ES y EN / ES and EN
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Stack Principal
+### Stack Principal | Main Stack
 
 - `ccxt`
 - `pandas`
@@ -196,7 +250,9 @@ pip install -r requirements.txt
 - `requests`, `websockets`, `websocket-client`
 - `optuna`
 
-## Puesta En Marcha
+---
+
+## 🚀 Puesta En Marcha | Deployment
 
 ### Local
 
@@ -211,7 +267,7 @@ bash tools/install_watchdog_systemd.sh
 systemctl --user status sniper-ai.service --no-pager
 ```
 
-Plantillas portables disponibles:
+Plantillas portables disponibles / Available portable templates:
 
 - `deploy/systemd/sniper-ai.service.template`
 - `deploy/systemd/sniper-ai-watchdog.service.template`
@@ -222,46 +278,35 @@ Plantillas portables disponibles:
 docker compose up --build -d
 ```
 
-Notas del despliegue Docker actual:
+**ES:** Notas del despliegue Docker actual: imagen base `python:3.12-slim`, usuario no root, persistencia en `./data/db` y `./data/models`, `SNIPER_DB_PATH=/app/data/sniper_brain.db`.  
+**EN:** Current Docker deployment notes: base image `python:3.12-slim`, non-root user, persistence in `./data/db` and `./data/models`, `SNIPER_DB_PATH=/app/data/sniper_brain.db`.
 
-- Imagen base `python:3.12-slim`
-- Usuario no root
-- Persistencia en `./data/db` y `./data/models`
-- `SNIPER_DB_PATH=/app/data/sniper_brain.db`
+---
 
-## Quick Start
+## 📊 Operación Diaria | Daily Operations
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-./.venv/bin/python main.py
-```
-
-Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales segun el modo que vayas a usar.
-
-## Operacion Diaria
-
-| Tarea | Comando |
+| Tarea / Task | Comando / Command |
 |---|---|
-| Ver estado | `systemctl --user status sniper-ai.service --no-pager` |
-| Iniciar | `systemctl --user start sniper-ai.service` |
-| Detener | `systemctl --user stop sniper-ai.service` |
-| Reiniciar | `systemctl --user restart sniper-ai.service` |
-| Logs en vivo | `journalctl --user -u sniper-ai.service -f` |
-| Ultimos logs | `journalctl --user -u sniper-ai.service -n 100 --no-pager` |
-| Reinstalar servicio | `bash tools/install_watchdog_systemd.sh` |
-| Actualizar dependencias | `source .venv/bin/activate && pip install -r requirements.txt` |
+| **ES:** Ver estado <br> **EN:** View status | `systemctl --user status sniper-ai.service --no-pager` |
+| **ES:** Iniciar <br> **EN:** Start | `systemctl --user start sniper-ai.service` |
+| **ES:** Detener <br> **EN:** Stop | `systemctl --user stop sniper-ai.service` |
+| **ES:** Reiniciar <br> **EN:** Restart | `systemctl --user restart sniper-ai.service` |
+| **ES:** Logs en vivo <br> **EN:** Live logs | `journalctl --user -u sniper-ai.service -f` |
+| **ES:** Últimos logs <br> **EN:** Recent logs | `journalctl --user -u sniper-ai.service -n 100 --no-pager` |
+| **ES:** Reinstalar servicio <br> **EN:** Reinstall service | `bash tools/install_watchdog_systemd.sh` |
+| **ES:** Actualizar dependencias <br> **EN:** Update dependencies | `source .venv/bin/activate && pip install -r requirements.txt` |
 
-## Telemetria Y Observabilidad
+---
 
-- `sniper.log`: log operativo principal.
-- `logs/execution_events.jsonl`: eventos estructurados de ejecucion.
-- Runtime monitor con metricas de memoria y salud del proceso.
-- Scorecards y reportes de rendimiento diarios.
-- `watchdog` y heartbeat para supervision externa.
+## 📡 Telemetría Y Observabilidad | Telemetry and Observability
 
-### Eventos De Ejecucion Relevantes
+- **ES:** `sniper.log`: log operativo principal. <br> **EN:** `sniper.log`: main operational log.
+- **ES:** `logs/execution_events.jsonl`: eventos estructurados de ejecución. <br> **EN:** `logs/execution_events.jsonl`: structured execution events.
+- **ES:** Runtime monitor con métricas de memoria y salud del proceso. <br> **EN:** Runtime monitor with memory metrics and process health.
+- **ES:** Scorecards y reportes de rendimiento diarios. <br> **EN:** Daily scorecards and performance reports.
+- **ES:** `watchdog` y heartbeat para supervisión externa. <br> **EN:** `watchdog` and heartbeat for external supervision.
+
+### Eventos De Ejecución Relevantes | Relevant Execution Events
 
 - `ENTRY_ORDER_ACK`
 - `PARTIAL_FILL_COMPLETED`
@@ -270,7 +315,9 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 - `EMERGENCY_CLOSE_EXECUTED`
 - `EMERGENCY_CLOSE_FAILED_HALT`
 
-## Comandos Telegram Utiles
+---
+
+## 📲 Comandos Telegram Utiles | Useful Telegram Commands
 
 ### Control
 
@@ -281,7 +328,7 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 - `/rebase_capital`
 - `/test`
 
-### Auditoria
+### Auditoría | Auditing
 
 - `/status`
 - `/audit_report`
@@ -293,7 +340,7 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 - `/tiers`
 - `/top`
 
-### Analisis E Inteligencia
+### Análisis E Inteligencia | Analysis and Intelligence
 
 - `/trade_detail <symbol>`
 - `/trade <id>`
@@ -307,11 +354,14 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 - `/performance_trends`
 - `/shadow_report`
 
-Algunos comandos heredados o remotos fueron deshabilitados a proposito en este despliegue para evitar ejecuciones falsas o dependencias ausentes.
+**ES:** Algunos comandos heredados o remotos fueron deshabilitados a propósito en este despliegue para evitar ejecuciones falsas o dependencias ausentes.  
+**EN:** Some inherited or remote commands were intentionally disabled in this deployment to avoid false executions or missing dependencies.
 
-## Validacion Minima
+---
 
-Orden base alineado con CI:
+## ✅ Validación Mínima | Minimum Validation
+
+Orden base alineado con CI / Base order aligned with CI:
 
 ```bash
 ./.venv/bin/python -m compileall -q main.py core
@@ -322,16 +372,18 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 ./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-### Cobertura Destacada En `tests/`
+### Cobertura Destacada En `tests/` | Highlighted Coverage in `tests/`
 
-- reconciliacion y wallet sync
-- contratos de adaptadores de ejecucion
-- flows avanzados de runtime
-- watchdog y graceful shutdown
-- guardrails de riesgo, leverage y smart exit
-- invariancia temporal y seguridad runtime
+- **ES:** reconciliación y wallet sync <br> **EN:** reconciliation and wallet sync
+- **ES:** contratos de adaptadores de ejecución <br> **EN:** execution adapter contracts
+- **ES:** flows avanzados de runtime <br> **EN:** advanced runtime flows
+- **ES:** watchdog y graceful shutdown <br> **EN:** watchdog and graceful shutdown
+- **ES:** guardrails de riesgo, leverage y smart exit <br> **EN:** risk guardrails, leverage and smart exit
+- **ES:** invariancia temporal y seguridad runtime <br> **EN:** temporal invariance and runtime safety
 
-## Estructura Del Proyecto
+---
+
+## 📁 Estructura Del Proyecto | Project Structure
 
 ```text
 .
@@ -348,11 +400,14 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 |-- tools/
 |-- deploy/systemd/
 |-- docs/runbooks/
+|-- docs/images/
 |-- Dockerfile
 `-- docker-compose.yml
 ```
 
-## Documentacion Adicional
+---
+
+## 📚 Documentación Adicional | Additional Documentation
 
 - `CONTRIBUTING.md`
 - `SECURITY.md`
@@ -361,14 +416,18 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 - `RELEASE_FREEZE_REPORT_2026-04-01.md`
 - `docs/runbooks/sre-intent-recovery.md`
 
-## Notas De Render Para GitHub
+---
 
-- El diagrama Mermaid se renderiza de forma nativa en GitHub.
-- Si mas adelante agregas capturas reales del dashboard o reportes, la ruta natural seria `docs/images/`.
-- Conviene evitar imagenes inventadas o enlaces rotos en portada; por eso este README usa badges y Mermaid como base visual.
+## 📸 Notas De Render Para GitHub | GitHub Render Notes
 
-## Seguridad Del Repo
+- **ES:** El diagrama Mermaid se renderiza de forma nativa en GitHub. <br> **EN:** Mermaid diagrams render natively on GitHub.
+- **ES:** Si más adelante agregas capturas reales del dashboard o reportes, la ruta natural sería `docs/images/`. <br> **EN:** If you later add real dashboard screenshots or reports, the natural path would be `docs/images/`.
+- **ES:** Conviene evitar imágenes inventadas o enlaces rotos en portada; por eso este README usa badges y Mermaid como base visual. <br> **EN:** Avoid fake images or broken links on the landing page; that's why this README uses badges and Mermaid as visual base.
 
-- No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales.
-- Usa secretos de entorno o gestor de secretos del servidor para credenciales.
-- Antes de operar en `REAL`, valida permisos de Futures, tamaño de cuenta y rutas de recovery.
+---
+
+## 🔒 Seguridad Del Repo | Repo Security
+
+- **ES:** No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales. <br> **EN:** Do not push `.env`, `.db` bases, logs, binary models or reports generated with local data.
+- **ES:** Usa secretos de entorno o gestor de secretos del servidor para credenciales. <br> **EN:** Use environment secrets or server secret manager for credentials.
+- **ES:** Antes de operar en `REAL`, valida permisos de Futures, tamaño de cuenta y rutas de recovery. <br> **EN:** Before operating in `REAL`, validate Futures permissions, account size and recovery paths.
