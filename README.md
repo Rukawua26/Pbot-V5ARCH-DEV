@@ -1,86 +1,123 @@
 # Pbot V5ARCH DEV
 
-> 🤖 Bot de trading cuantitativo para Binance Futures, orientado a señales 1H con triaje dinamico, filtros estructurales y modo shadow/real.
+Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, filtros estructurales, ejecucion segura y operacion en modos `PAPER`, `REAL` y `shadow_live`.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-22c55e)
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
-![Strategy](https://img.shields.io/badge/Strategy-Trinity_MT%2FSR%2FG-7c3aed)
-![Risk](https://img.shields.io/badge/Risk-SHOCK_Filter_On-ef4444)
 
-## 🚀 Resumen rapido
+## Resumen
 
-| Modulo | Estado | Descripcion |
+- Entrypoint minimalista en `main.py`; el bootstrap real vive en `core/bot_app.py`.
+- Configuracion real centralizada en `core/config/manager.py` y `core/config/operational.py`.
+- Escaneo de mercado 1H con filtro macro 4H, triaje dinamico por liquidez y veto por latencia.
+- Pipeline de senales por agentes (`MT`, `SR`, `G`) con watchlist de breakout y filtro `SHOCK`.
+- Runtime con reconciliacion de arranque, adopcion de huerfanas, `HARD SL` y cierre de emergencia si el estado live queda ambiguo.
+- Adaptadores de ejecucion `live` y `shadow_live` para simular rechazos, latencia y fills parciales sin contaminar la logica de negocio.
+- Operacion asistida por Telegram, watchdog, telemetria runtime y suite de regresion en CI.
+
+## Capacidades actuales
+
+| Area | Estado | Detalle |
 |---|---|---|
-| 📡 Triaje dinamico | Activo | Escanea top pares por liquidez y mantiene lista viva |
-| 🧠 Trinity (MT/SR/G) | Activo | Consenso de tendencia, estructura e IA |
-| 🛡️ Filtro SHOCK | Activo | Evita entradas sin espacio operativo |
-| 👻 Shadow Mode | Activo | Ejecuta simulacion controlada para aprendizaje |
-| 🔒 Real Mode | Activo | Solo con umbral alto de confianza |
+| Runtime modular | Activo | `Bot`, `BotFacade`, ciclos, IO loops y monitorizacion desacoplados |
+| Triage dinamico | Activo | Top pares por liquidez, spread, volumen y latencia |
+| Motor de senales | Activo | Analisis 1H, veto macro 4H, votos de agentes y decision final |
+| Breakout watchlist | Activo | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
+| Exit engine | Activo | Salidas dinamicas, trailing ATR, breakeven y degradacion de confianza |
+| Reconciliacion | Activo | Recovery DB/exchange, intents, orfanas, `LOST_IN_TRANSMISSION` |
+| Ejecucion segura | Activo | `HARD SL`, cierres de emergencia y protecciones de runtime |
+| Telemetria | Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
+| Operacion remota | Activo | Comandos Telegram para auditoria, inteligencia y control |
+| Docker/systemd | Disponible | Despliegue en VPS o contenedor |
 
-## 🆕 Novedades recientes (Abr 2026)
+## Modos operativos
 
-- Refactor modular masivo: `main.py` paso de monolito a entrypoint minimalista.
-- Nueva capa de aplicacion en `core/bot_app.py` y fachada en `core/bot_facade.py`.
-- Optimización de Salidas: Desactivación de TP estáticos (TP1/TP2) para priorizar Trailing ATR dinámico y reversión de confianza IA (`DEGRADED_CONFIDENCE`), permitiendo capturar tendencias más extensas.
-- CI reforzado en GitHub Actions: compilacion, smoke imports, guardrail anti-`pass`, contratos arquitectonicos.
-- Suite de regresion runtime incorporada en `tests/`.
-- Hardening de errores: reemplazo sistematico de `pass` silenciosos por rutas con trazabilidad.
-- Reconciliacion de arranque: modulo `core/reconciliation.py` con adopcion de huerfanas, deteccion `LOST_IN_TRANSMISSION` e `Integrity Lock` por desbalance de capital.
-- Capa de ejecucion agnostica por adaptadores: `core/execution_adapters.py` permite backend `live` o `shadow_live` sin contaminar la logica de negocio.
+| Modo | Configuracion | Comportamiento |
+|---|---|---|
+| `PAPER` | `PAPER_MODE=true` | Usa capital virtual. Si hay credenciales, valida conectividad; si no, puede seguir con endpoints publicos. |
+| `REAL` | `PAPER_MODE=false` | Requiere credenciales y permisos validos de Binance Futures; errores de auth/permisos abortan el arranque. |
+| `shadow_live` | `EXECUTION_BACKEND=shadow_live` | Mantiene runtime real pero simula latencia, rechazo, slippage y fills parciales. |
+| `TESTNET` | `USE_TESTNET=true` | Activa sandbox cuando el backend lo soporta; en `PAPER` puede degradar a mercado publico real para lecturas. |
 
-### Contrato de estados de orden/trade (runtime)
+## Arquitectura
 
-- `PENDING_SEND`: intencion persistida en SQLite antes de enviar orden al exchange.
-- `PENDING_EXCHANGE_OPEN`: orden detectada abierta en exchange por `client_order_id`.
-- `ENTRY_FILLED_AWAITING_POSITION_SYNC`: entrada detectada como `FILLED`, esperando que la posicion aparezca en `fetch_positions`.
-- `OPEN`: posicion activa y gestionada por bucles de riesgo/guardian.
-- `CLOSING_INITIATED`: cierre en progreso; el Guardian y monitor de trades no deben mutar ni re-gestionar este trade.
+### Runtime
 
-Reglas de reconciliacion en arranque:
-
-- `LOST_IN_TRANSMISSION` solo se declara si el simbolo no aparece ni en posiciones activas ni en ordenes abiertas, y tampoco se recupera por consulta explicita `origClientOrderId`.
-- Si existe posicion real sin `HARD SL` en exchange, el bot intenta re-adjuntar SL.
-- Si el exchange rechaza el SL por gap de precio (p.ej. `would trigger immediately`, `-2021`), se ejecuta `Emergency Market Close` inmediato para evitar posicion desnuda.
-
-## ⚙️ Requisitos
-
-| Requisito | Version |
-|---|---|
-| Python | 3.10+ |
-| Pip | Ultima estable recomendada |
-| Dependencias | `requirements.txt` |
-
-Variables opcionales para Shadow Live:
-
-- `EXECUTION_BACKEND=shadow_live` para simular ejecucion con latencia/rechazo/fill parcial.
-- `SHADOW_SIM_LATENCY_MIN_MS`, `SHADOW_SIM_LATENCY_MAX_MS`
-- `SHADOW_SIM_REJECT_RATE`, `SHADOW_SIM_PARTIAL_FILL_RATE`, `SHADOW_SIM_PARTIAL_COMPLETE_RATE`, `SHADOW_SIM_MIN_PARTIAL_RATIO`
-
-Variables opcionales operativas (portabilidad/retencion):
-
-- `WATCHDOG_HEARTBEAT_PATH` (default: `/dev/shm/sniper_ai_heartbeat.json`, fallback automatico a `/tmp/...`)
-- `RUNTIME_METRICS_MAX_BYTES`, `RUNTIME_METRICS_BACKUPS`
-- `EXECUTION_EVENTS_MAX_BYTES`, `EXECUTION_EVENTS_BACKUPS`
-- `PENDING_SEND_STALE_SECONDS` (default: `90`) para expirar intenciones huérfanas tras reinicio
-
-Telemetria estructurada de ejecucion:
-
-- Archivo `logs/execution_events.jsonl` (JSONL consultable).
-- Eventos clave: `ENTRY_ORDER_ACK`, `PARTIAL_FILL_COMPLETED`, `PARTIAL_FILL_TIMEOUT_CANCEL`, `PARTIAL_FILL_CANCEL_FAILED`, `EMERGENCY_CLOSE_EXECUTED`, `EMERGENCY_CLOSE_FAILED_HALT`.
-- Campos utiles para auditoria: slippage simulado (`requested_price` vs `avg_fill_price`), `ttr_seconds` en cierres de emergencia, y coherencia de cantidades (`requested_amount`, `filled_amount`, `remaining_amount`).
-
-Nota de concurrencia en `shadow_live`:
-
-- La latencia simulada no bloquea el hilo llamador de `TradeManager`; el adaptador usa tareas en segundo plano para completar fills parciales.
-
-Inyector de estrés determinista:
-
-```bash
-python3 tools/shadow_stress_injector.py --minutes 1 --orders-per-minute 20 --workers 12 --seed 2026
+```text
+main.py
+  -> core.bot_app.run_entrypoint()
+     -> Bot(BotFacade)
+        -> bootstrap de servicios, modelos, runtime state y loops
 ```
 
-## 📦 Instalacion
+### Modulos clave
+
+| Ruta | Rol |
+|---|---|
+| `main.py` | Entrypoint real del proceso |
+| `core/bot_app.py` | Bootstrap pesado, clase `Bot`, event loop y wiring principal |
+| `core/bot_facade.py` | Contrato publico del runtime |
+| `core/bot_connection.py` | Conexion a Binance y reglas por modo operativo |
+| `core/reconciliation.py` | Recovery de estado DB/exchange al arranque |
+| `core/execution_adapters.py` | Backends `live` y `shadow_live` |
+| `core/execution_service.py` | Puerto de ejecucion contra exchange |
+| `core/bot_guardian.py` | Vigilancia y protecciones sobre posiciones activas |
+| `core/bot_wallet_sync.py` | Sincronizacion de wallet y capital |
+| `core/command_router.py` | Router de comandos Telegram |
+| `core/signals/` | Contexto, analisis, filtros y ejecucion de senales |
+| `core/strategy/` | Agentes, consenso y filtros de estrategia |
+| `tests/` | Regresiones runtime, guardrails y contratos |
+
+## Seguridad runtime
+
+- El exchange manda sobre la DB para exposicion real y estado de ordenes/posiciones.
+- No se dejan posiciones reales sin `HARD SL`.
+- Si el `HARD SL` no puede re-adjuntarse por rechazo tipo `would trigger immediately (-2021)`, el bot ejecuta `Emergency Market Close`.
+- `LOST_IN_TRANSMISSION` solo se declara tras agotar verificacion en posiciones activas, ordenes abiertas y consulta por `origClientOrderId`.
+- Si el estado live queda ambiguo, el comportamiento esperado es `HALT` o reconciliacion antes de continuar.
+- Hay guardrail para bloquear `pass` silenciosos en `core/` mediante CI.
+
+### Estados runtime de orden/trade
+
+- `PENDING_SEND`
+- `PENDING_EXCHANGE_OPEN`
+- `ENTRY_FILLED_AWAITING_POSITION_SYNC`
+- `OPEN`
+- `CLOSING_INITIATED`
+
+## Configuracion
+
+`.env` se carga automaticamente desde `core/config/operational.py`.
+
+### Variables importantes
+
+| Variable | Uso |
+|---|---|
+| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Credenciales Binance Futures |
+| `PAPER_MODE` | Alterna `PAPER`/`REAL` |
+| `PAPER_INITIAL_BALANCE` | Capital virtual inicial |
+| `USE_TESTNET` | Sandbox/testnet cuando el backend lo soporta |
+| `EXECUTION_BACKEND` | `live` o `shadow_live` |
+| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | Operacion remota y alertas |
+| `TRIAGE_MAX_WORKERS` | Concurrencia del escaneo |
+| `PARTIAL_FILL_TIMEOUT_SECONDS` | Timeout para fills parciales |
+| `PENDING_SEND_STALE_SECONDS` | Expiracion de intents huerfanas |
+| `GLOBAL_ENTRY_COOLDOWN_SECONDS` | Cooldown global de entradas |
+| `HARD_SL_ATTACH_MAX_RETRIES` | Reintentos para adjuntar stop loss |
+| `WATCHDOG_HEARTBEAT_PATH` | Ruta del heartbeat del watchdog |
+
+### Variables para `shadow_live`
+
+- `SHADOW_SIM_LATENCY_MIN_MS`
+- `SHADOW_SIM_LATENCY_MAX_MS`
+- `SHADOW_SIM_REJECT_RATE`
+- `SHADOW_SIM_PARTIAL_FILL_RATE`
+- `SHADOW_SIM_PARTIAL_COMPLETE_RATE`
+- `SHADOW_SIM_PRICE_OUT_OF_RANGE_RATE`
+- `SHADOW_SIM_MIN_PARTIAL_RATIO`
+
+## Instalacion
 
 ```bash
 python3 -m venv .venv
@@ -88,197 +125,171 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 🔧 Configuracion
+Dependencias principales actuales:
 
-1. Crea y ajusta tu `.env` (no versionado).
-2. Revisa parametros principales:
+- `ccxt`
+- `pandas`
+- `ta`, `pandas_ta`
+- `scikit-learn`, `xgboost`, `lightgbm`, `imbalanced-learn`
+- `requests`, `websockets`, `websocket-client`
+- `optuna`
 
-| Archivo | Uso |
-|---|---|
-| `core/config/operational.py` | Escaneo, timeouts, limites de triaje |
-| `core/config/strategy.py` | Riesgo, TP/SL, reglas de estrategia |
-| `core/config/manager.py` | Umbrales unificados y SHOCK |
+## Ejecucion
 
-## ▶️ Ejecucion
-
-### Modo local
+### Local
 
 ```bash
-python3 main.py
+./.venv/bin/python main.py
 ```
 
-### Modo servicio (systemd user)
+### systemd user
 
 ```bash
 bash tools/install_watchdog_systemd.sh
 systemctl --user status sniper-ai.service --no-pager
 ```
 
-Plantillas portables (recomendado para VPS multi-entorno):
+Plantillas portables disponibles:
 
 - `deploy/systemd/sniper-ai.service.template`
 - `deploy/systemd/sniper-ai-watchdog.service.template`
 
-Reemplaza en esas plantillas: `{{USER}}`, `{{WORKDIR}}`, `{{PYTHON_BIN}}`, `{{HEARTBEAT_PATH}}`.
-
-Runbook SRE de recovery temporal e intenciones:
-
-- `docs/runbooks/sre-intent-recovery.md`
-
-### Watchdog externo (recomendado)
+### Docker
 
 ```bash
-sudo cp sniper-ai-watchdog.service /etc/systemd/system/sniper-ai-watchdog.service
-sudo cp sniper-ai-watchdog.timer /etc/systemd/system/sniper-ai-watchdog.timer
-sudo systemctl daemon-reload
-sudo systemctl enable sniper-ai-watchdog.timer
-sudo systemctl restart sniper-ai-watchdog.timer
-sudo systemctl status sniper-ai-watchdog.timer --no-pager
+docker compose up --build -d
 ```
 
-## 🖥️ Operacion diaria
+Notas del despliegue Docker actual:
+
+- Imagen base `python:3.12-slim`
+- Usuario no root
+- Persistencia en `./data/db` y `./data/models`
+- `SNIPER_DB_PATH=/app/data/sniper_brain.db`
+
+## Operacion diaria
 
 | Tarea | Comando |
 |---|---|
-| Instalar o reinstalar servicio user | `bash tools/install_watchdog_systemd.sh` |
-| Ver estado del servicio | `systemctl --user status sniper-ai.service --no-pager` |
-| Iniciar bot | `systemctl --user start sniper-ai.service` |
-| Detener bot | `systemctl --user stop sniper-ai.service` |
-| Reiniciar bot | `systemctl --user restart sniper-ai.service` |
-| Recargar units user | `systemctl --user daemon-reload` |
-| Habilitar arranque automatico | `systemctl --user enable sniper-ai.service` |
-| Deshabilitar arranque automatico | `systemctl --user disable sniper-ai.service` |
-| Logs systemd en vivo | `journalctl --user -u sniper-ai.service -f` |
-| Ultimos logs systemd | `journalctl --user -u sniper-ai.service -n 100 --no-pager` |
-| Logs del bot en vivo | `tail -f sniper.log` |
-| Actualizar codigo | `git pull --ff-only` |
-| Aplicar update del servicio tras cambios | `bash tools/install_watchdog_systemd.sh && systemctl --user restart sniper-ai.service` |
-| Estado timer watchdog | `systemctl --user status sniper-ai-watchdog.timer --no-pager` |
-| Últimos eventos watchdog | `journalctl --user -u sniper-ai-watchdog.service -n 50 --no-pager` |
+| Ver estado | `systemctl --user status sniper-ai.service --no-pager` |
+| Iniciar | `systemctl --user start sniper-ai.service` |
+| Detener | `systemctl --user stop sniper-ai.service` |
+| Reiniciar | `systemctl --user restart sniper-ai.service` |
+| Logs en vivo | `journalctl --user -u sniper-ai.service -f` |
+| Ultimos logs | `journalctl --user -u sniper-ai.service -n 100 --no-pager` |
+| Reinstalar servicio | `bash tools/install_watchdog_systemd.sh` |
+| Actualizar dependencias | `source .venv/bin/activate && pip install -r requirements.txt` |
 
-### Secuencia rapida de update
+## Telemetria y observabilidad
+
+- `sniper.log`: log operativo principal.
+- `logs/execution_events.jsonl`: eventos estructurados de ejecucion.
+- Runtime monitor con metricas de memoria y salud del proceso.
+- Scorecards y reportes de rendimiento diarios.
+- `watchdog` y heartbeat para supervision externa.
+
+Eventos de ejecucion relevantes:
+
+- `ENTRY_ORDER_ACK`
+- `PARTIAL_FILL_COMPLETED`
+- `PARTIAL_FILL_TIMEOUT_CANCEL`
+- `PARTIAL_FILL_CANCEL_FAILED`
+- `EMERGENCY_CLOSE_EXECUTED`
+- `EMERGENCY_CLOSE_FAILED_HALT`
+
+## Comandos Telegram utiles
+
+### Control
+
+- `/on`, `/resume`
+- `/off`, `/pause`
+- `/panic`, `/closeall`
+- `/reset`
+- `/rebase_capital`
+- `/test`
+
+### Auditoria
+
+- `/status`
+- `/audit_report`
+- `/open`
+- `/targets`
+- `/signals`
+- `/shadow_stats`
+- `/sre_intent`
+- `/tiers`
+- `/top`
+
+### Analisis e inteligencia
+
+- `/trade_detail <symbol>`
+- `/trade <id>`
+- `/thinking`
+- `/watchlist`
+- `/intelligence`
+- `/agents`
+- `/explain <symbol>`
+- `/dna <symbol>`
+- `/paper_review`
+- `/performance_trends`
+- `/shadow_report`
+
+Algunos comandos heredados o remotos fueron deshabilitados a proposito en este despliegue para evitar ejecuciones falsas o dependencias ausentes.
+
+## Validacion minima
+
+Orden base alineado con CI:
 
 ```bash
-git pull --ff-only
-source .venv/bin/activate
-pip install -r requirements.txt
 ./.venv/bin/python -m compileall -q main.py core
 PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_imports.sh
+./.venv/bin/python tools/check_no_silent_pass.py
 ./.venv/bin/python tools/regression_contracts.py
-bash tools/install_watchdog_systemd.sh
-systemctl --user restart sniper-ai.service
-systemctl --user status sniper-ai.service --no-pager
+./.venv/bin/python -m unittest discover -s tests -p "test_*.py"
+./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-## 📊 Lectura rapida del radar
+Cobertura destacada en `tests/`:
 
-| Indicador | Significado |
-|---|---|
-| `⛔ VETO: SHOCK DEMASIADO CERCA` | Hay poco espacio al siguiente nivel estructural |
-| `🔌 LATENCIA` | El fetch del par fue lento y entro en cuarentena temporal |
-| `⏱️ TIMEOUT HILO` | El hilo no termino dentro del timeout del ciclo |
-| `❌ ERR: SIZE_ERROR` | El sizing no dio un notional/cantidad valida |
+- reconciliacion y wallet sync
+- contratos de adaptadores de ejecucion
+- flows avanzados de runtime
+- watchdog y graceful shutdown
+- guardrails de riesgo, leverage y smart exit
+- invariancia temporal y seguridad runtime
 
-## 🧯 Quick Troubleshooting
+## Estructura del proyecto
 
-| Problema visible | Causa probable | Accion recomendada |
-|---|---|---|
-| Muchos `🔌 LATENCIA` | Timeout agresivo o API lenta | Revisar timeout de triaje y carga concurrente |
-| `⏱️ TIMEOUT HILO` frecuente | Hilos no completan en ventana del ciclo | Aumentar timeout o reducir retries |
-| `❌ ERR: SIZE_ERROR` | Precision/min notional del simbolo | Revisar sizing y reglas de lote/notional |
-| Todo queda en `50%` | Agentes neutralizados o IA sin boost | Verificar modelos de Ghost y votos MT/SR |
-| Casi todo veta por SHOCK | Distancia minima muy estricta | Calibrar `SHOCK_MIN_DIST_PCT` con datos reales |
-
-## 🗺️ Roadmap
-
-| Fase | Objetivo | Estado |
-|---|---|---|
-| Fase 1 | Baseline y telemetria | ✅ Completado |
-| Fase 2 | Trinity + limpieza de deuda tecnica | ✅ Completado |
-| Fase 3 | Triaje dinamico top volumen | ✅ Completado |
-| Fase 4 | Integracion SHOCK y hardening | ✅ Completado |
-| Fase 5 | Optimizacion continua y tuning live | 🔄 En progreso |
-
-## 🔐 Seguridad del repositorio
-
-- Nunca subas `.env`, DBs, logs ni modelos binarios.
-- El `.gitignore` ya bloquea artefactos locales comunes.
-- Usa tokens de GitHub, no contrasenas, para autenticacion CLI.
-
-## 🧭 Estructura del proyecto
-
-| Ruta | Contenido |
-|---|---|
-| `main.py` | Entrypoint minimalista (launcher) |
-| `core/bot_app.py` | Bootstrap y clase `Bot` principal |
-| `core/bot_facade.py` | Fachada unificada de runtime/senales/riesgo |
-| `core/reconciliation.py` | Reconciliacion determinista DB/Exchange al arranque |
-| `core/` | Motor de estrategia, riesgo, ejecucion y datos |
-| `tests/` | Regresiones de runtime y contratos basicos |
-| `tools/` | Utilidades de auditoria, reportes y entrenamiento |
-| `sniper-ai.service` | Servicio systemd listo para despliegue |
-
-## ✅ Calidad automatica (CI)
-
-Pipeline en `.github/workflows/ci.yml` ejecuta en cada PR/push:
-
-1. `python -m compileall` para validar sintaxis.
-2. `scripts/smoke_modular_imports.sh` para detectar roturas de arquitectura modular.
-3. `tools/check_no_silent_pass.py` para bloquear `pass` silenciosos en `core/`.
-4. `tools/regression_contracts.py` para contratos arquitectonicos.
-5. `python -m unittest discover -s tests -p "test_*.py"` para regresion runtime.
-
-## 🏗️ Arquitectura (alto nivel)
-
-```mermaid
-flowchart LR
-    A[Binance Futures API] --> B[DataService]
-    B --> C[Triaje Dinamico Top Volumen]
-    C --> D[Pipeline de Analisis 1H/4H]
-    D --> E[Trinity MT SR G]
-    E --> F[Filtros de Riesgo]
-    F --> G{Decision}
-    G -->|Shadow| H[Shadow Trade]
-    G -->|Real| I[Real Trade]
-    H --> J[Learning Brain / Telemetria]
-    I --> J
-    J --> K[Telegram + Dashboard]
-    K --> L[Logs / DB]
+```text
+.
+|-- main.py
+|-- core/
+|   |-- bot_app.py
+|   |-- bot_facade.py
+|   |-- reconciliation.py
+|   |-- execution_adapters.py
+|   |-- commands/
+|   |-- config/
+|   `-- strategy/
+|-- tests/
+|-- tools/
+|-- deploy/systemd/
+|-- docs/runbooks/
+|-- Dockerfile
+`-- docker-compose.yml
 ```
 
-## 🤖 Comandos Telegram utiles
+## Documentacion adicional
 
-| Comando | Funcion |
-|---|---|
-| `/targets` | Muestra objetivos activos del radar |
-| `/shadow_report` | Reporte de rendimiento shadow |
-| `/paper_review` | Resumen de desempeño paper/real |
-| `/performance_trends` | Eficiencia por tipo de mercado |
-| `/trade <id>` | Detalle completo de un trade por ID |
-| `/trade_detail <symbol>` | Analisis del simbolo en radar |
-| `/dna <symbol>` | Estado genetico de parametros por simbolo |
-| `/explain <symbol>` | Explicacion IA de la decision |
-| `/reset` | Reinicio de PnL diario |
-| `/rebase_capital` | Reancla balance local al exchange y libera Integrity Lock |
-| `/archive` | Rotacion/archivo de historial DB |
+- `CONTRIBUTING.md`
+- `SECURITY.md`
+- `SPEC.md`
+- `BOT_TECHNICAL_ROADMAP.md`
+- `RELEASE_FREEZE_REPORT_2026-04-01.md`
+- `docs/runbooks/sre-intent-recovery.md`
 
-## 🖼️ Vista sugerida del repositorio
+## Seguridad del repo
 
-Puedes agregar una captura del dashboard para mejorar la portada:
-
-```md
-![Dashboard](docs/images/dashboard.png)
-```
-
-Ruta sugerida:
-
-- `docs/images/dashboard.png`
-
-## 📚 Documentacion adicional
-
-| Documento | Proposito |
-|---|---|
-| `CONTRIBUTING.md` | Guia de contribucion y checklist de validacion |
-| `SECURITY.md` | Politica de seguridad y reporte de vulnerabilidades |
-| `.github/PULL_REQUEST_TEMPLATE.md` | Plantilla estandar para PRs |
-| `.github/ISSUE_TEMPLATE/` | Plantillas para bugs y mejoras |
+- No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales.
+- Usa secretos de entorno o gestor de secretos del servidor para credenciales.
+- Antes de operar en `REAL`, valida permisos de Futures, tamaño de cuenta y rutas de recovery.
