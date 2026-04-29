@@ -1,10 +1,48 @@
 import logging
-from datetime import datetime, timedelta
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from config import Config
 from crash_predictor import CrashPredictor
 from core.types import SignalContext
 from core.config.hyperopt_loader import HyperoptConfigLoader
 from strategy import Strategy
+
+
+def get_daily_pnl_pct(db_path, wallet_balance: float) -> tuple[float, float]:
+    """Devuelve PnL real cerrado del día UTC como fracción y USD.
+
+    Solo considera trades reales (`is_shadow=0`) y usa `timestamp` con prefijo
+    YYYY-MM-DD UTC para evitar mezclar días locales en despliegues cloud.
+    """
+    try:
+        balance = float(wallet_balance or 0.0)
+        if balance <= 0:
+            return 0.0, 0.0
+
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(pnl), 0.0)
+                FROM trades
+                WHERE is_shadow=0
+                  AND pnl IS NOT NULL
+                  AND timestamp LIKE ?
+                """,
+                (f"{today_utc}%",),
+            )
+            pnl_usd = float(cursor.fetchone()[0] or 0.0)
+        finally:
+            conn.close()
+
+        return pnl_usd / balance, pnl_usd
+    except Exception as error:
+        logging.getLogger("RiskEngine").warning(
+            f"⚠️ DAILY_DRAWDOWN_PNL_UNAVAILABLE: {error}"
+        )
+        return 0.0, 0.0
 
 
 class RiskEngine:

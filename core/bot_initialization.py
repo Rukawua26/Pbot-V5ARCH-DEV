@@ -70,6 +70,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.restricted_sectors = []
     bot.restricted_symbols = []
     bot.circuit_breaker_active = False
+    bot.daily_drawdown_alert_sent = False
     bot.pause_time = None
     bot.is_paused = False
     bot.btc_panic = False

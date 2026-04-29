@@ -62,6 +62,7 @@ def handle_reset_pnl(bot):
         # --- FIX: RESET COMPLETO DE ESTADO ---
         bot.peak_pnl = 0.0
         bot.circuit_breaker_active = False
+        bot.daily_drawdown_alert_sent = False
         bot.current_target = Config.DAILY_GOALS[0]  # Reiniciar meta al 5%
 
         bot.log("♻️ SISTEMA REINICIADO: Historial rotado y balance inicial fijado.")
