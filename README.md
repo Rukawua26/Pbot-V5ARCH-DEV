@@ -1,3 +1,5 @@
+<div align="center">
+
 # Pbot V5ARCH DEV
 
 > Bot cuantitativo para Binance Futures con runtime modular, escaneo dinamico 1H, filtros estructurales, reconciliacion segura y operacion en modos `PAPER`, `REAL` y `shadow_live`.
@@ -10,7 +12,35 @@
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 
-## Visión General
+**Trading bot con enfoque runtime-first: decision, ejecucion, reconciliacion y observabilidad en una arquitectura modular.**
+
+`1H + 4H macro` • `Binance Futures` • `Telegram ops` • `systemd` • `Docker`
+
+</div>
+
+## Navegacion Rapida
+
+| Ir a | Seccion |
+|---|---|
+| Inicio rapido | [Quick Start](#quick-start) |
+| Modos de operacion | [Modos Operativos](#modos-operativos) |
+| Arquitectura | [Arquitectura](#arquitectura) |
+| Seguridad | [Seguridad Runtime](#seguridad-runtime) |
+| Comandos | [Comandos Telegram Utiles](#comandos-telegram-utiles) |
+| Validacion | [Validacion Minima](#validacion-minima) |
+
+## Vista Rapida
+
+| Eje | Resumen |
+|---|---|
+| Estrategia | Analisis `1H` con contexto macro `4H` |
+| Decision | Consenso de agentes `MT`, `SR` y `G` |
+| Riesgo | `HARD SL`, guardrails, cooldowns y emergency close |
+| Recovery | Reconciliacion DB/exchange y adopcion de huerfanas |
+| Ejecucion | Backend `live` o `shadow_live` |
+| Operacion | Telegram, watchdog, logs y telemetria estructurada |
+
+## Vision General
 
 `Pbot V5ARCH DEV` esta orientado a operar Binance Futures con un enfoque de seguridad runtime primero:
 
@@ -20,7 +50,7 @@
 - protege posiciones reales con reconciliacion, `HARD SL` y cierres de emergencia
 - expone operacion y auditoria por Telegram, logs y telemetria estructurada
 
-## Lo Más Destacado
+## Lo Mas Destacado
 
 | Area | Que aporta |
 |---|---|
