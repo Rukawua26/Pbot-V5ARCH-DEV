@@ -8,10 +8,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+venv/
 
 # Local runtime artifacts
-*.log
-sniper.log*
+*.log*
 logs/
 bot_output.log
 
@@ -20,6 +20,7 @@ bot_output.log
 *.sqlite
 
 # ML models / binaries (local)
+models/
 *.pkl
 *.joblib
 

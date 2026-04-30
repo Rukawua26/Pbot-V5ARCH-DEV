@@ -23,6 +23,7 @@ class ExecutionAdapterContractTest(unittest.TestCase):
             BINANCE_API_KEY="k",
             BINANCE_API_SECRET="s",
             USE_TESTNET=False,
+            PAPER_MODE=True,
             EXECUTION_BACKEND="shadow_live",
             SHADOW_SIM_LATENCY_MIN_MS=0,
             SHADOW_SIM_LATENCY_MAX_MS=0,
@@ -34,6 +35,18 @@ class ExecutionAdapterContractTest(unittest.TestCase):
         execution = build_execution_gateway(config, _FakeExecutionService)
 
         self.assertIsInstance(execution, ShadowExecutionAdapter)
+
+    def test_factory_rejects_shadow_adapter_in_real_mode(self):
+        config = SimpleNamespace(
+            BINANCE_API_KEY="k",
+            BINANCE_API_SECRET="s",
+            USE_TESTNET=False,
+            PAPER_MODE=False,
+            EXECUTION_BACKEND="shadow_live",
+        )
+
+        with self.assertRaises(RuntimeError):
+            build_execution_gateway(config, _FakeExecutionService)
 
     def test_factory_enables_testnet_on_base_execution(self):
         config = SimpleNamespace(

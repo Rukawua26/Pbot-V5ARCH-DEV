@@ -239,6 +239,21 @@ def reconcile_bootstrap_state(bot):
             bot.log(
                 f"⚠️ Reconciliación abortada: no se pudieron consultar posiciones del exchange: {error}"
             )
+            if not bool(getattr(Config, "PAPER_MODE", True)):
+                bot.is_paused = True
+                bot.integrity_lock_active = True
+                setattr(bot, "halt_system_active", True)
+                with bot.db_lock:
+                    bot.brain.save_error_snapshot(
+                        "SYSTEM",
+                        "BOOTSTRAP_RECONCILIATION_FAILED",
+                        {"error": str(error)[:220], "source": "fetch_positions"},
+                    )
+                append_execution_event(
+                    bot,
+                    "BOOTSTRAP_RECONCILIATION_FAILED_HALT",
+                    {"error": str(error)[:180]},
+                )
             return
         open_orders = []
         fetch_open_orders = getattr(bot.execution, "fetch_open_orders", None)
@@ -351,8 +366,40 @@ def reconcile_bootstrap_state(bot):
                         bot.brain.save_active_trade_state(
                             symbol, bot.active_trades[symbol]
                         )
+                else:
+                    bot.is_paused = True
+                    bot.integrity_lock_active = True
+                    setattr(bot, "halt_system_active", True)
+                    with bot.lock:
+                        bot.active_trades[symbol]["status"] = "ADOPTED_UNPROTECTED"
+                    with bot.db_lock:
+                        bot.brain.save_active_trade_state(
+                            symbol, bot.active_trades[symbol]
+                        )
+                        bot.brain.save_error_snapshot(
+                            symbol,
+                            "ORPHAN_HARD_SL_ATTACH_FAILED",
+                            {"sl": sl, "amount": amount, "side": info["side"]},
+                        )
+                    append_execution_event(
+                        bot,
+                        "ORPHAN_HARD_SL_ATTACH_FAILED_HALT",
+                        {"symbol": symbol, "sl": sl, "amount": amount},
+                    )
             except Exception as e:
                 bot.log(f"⚠️ No se pudo adjuntar SL para huérfana {symbol}: {e}")
+                bot.is_paused = True
+                bot.integrity_lock_active = True
+                setattr(bot, "halt_system_active", True)
+                with bot.lock:
+                    bot.active_trades[symbol]["status"] = "ADOPTED_UNPROTECTED"
+                with bot.db_lock:
+                    bot.brain.save_active_trade_state(symbol, bot.active_trades[symbol])
+                    bot.brain.save_error_snapshot(
+                        symbol,
+                        "ORPHAN_HARD_SL_ATTACH_EXCEPTION",
+                        {"error": str(e)[:220], "sl": sl, "amount": amount},
+                    )
 
             send_telegram_msg(
                 f"🚨 *POSICIÓN HUÉRFANA ADOPTADA*\n"
@@ -394,11 +441,15 @@ def reconcile_bootstrap_state(bot):
                     intent_age_seconds = None
 
             exchange_order = None
+            order_lookup_failed = False
+            order_lookup_error = ""
             fetch_by_coid = getattr(bot.execution, "fetch_order_by_client_id", None)
             if callable(fetch_by_coid):
                 try:
                     exchange_order = fetch_by_coid(symbol, entry_coid)
                 except Exception as error:
+                    order_lookup_failed = True
+                    order_lookup_error = str(error)[:220]
                     bot.log(
                         f"⚠️ Consulta order-by-client-id falló {symbol}/{entry_coid}: {error}"
                     )
@@ -411,8 +462,50 @@ def reconcile_bootstrap_state(bot):
                 int(state.get("intent_check_attempts", 0) or 0) + 1
             )
 
+            if order_lookup_failed and exchange_order is None:
+                state["status"] = "ORDER_LOOKUP_FAILED"
+                state["order_lookup_error"] = order_lookup_error
+                state["reconciled_at"] = utc_now_iso()
+                safe_pending_symbols.add(symbol)
+                with bot.lock:
+                    bot.active_trades[symbol] = state
+                with bot.db_lock:
+                    bot.brain.save_active_trade_state(symbol, state)
+                    bot.brain.save_error_snapshot(
+                        symbol,
+                        "ORDER_LOOKUP_FAILED",
+                        {
+                            "entry_client_order_id": entry_coid,
+                            "error": order_lookup_error,
+                            "reconciliation_ts": state["reconciled_at"],
+                        },
+                    )
+                append_execution_event(
+                    bot,
+                    "ORDER_LOOKUP_FAILED_KEEP_INTENT",
+                    {
+                        "symbol": symbol,
+                        "entry_client_order_id": entry_coid,
+                        "error": order_lookup_error,
+                    },
+                )
+                if not bool(getattr(Config, "PAPER_MODE", True)):
+                    with bot.lock:
+                        bot.integrity_lock_active = True
+                        setattr(bot, "halt_system_active", True)
+                    bot.log(
+                        f"🛑 ORDER_LOOKUP_FAILED en {symbol} activa HALT para modo REAL. "
+                        f"Requiere intervención manual."
+                    )
+                    from notifier import send_telegram_msg
+                    send_telegram_msg(
+                        f"🛑 *ORDER_LOOKUP_FAILED* {symbol} activó HALT en modo REAL. "
+                        f"Error: {order_lookup_error[:100]}. Requiere intervención manual."
+                    )
+                continue
+
             if exchange_order is None:
-                if status == "PENDING_SEND":
+                if status in {"PENDING_SEND", "ENTRY_ACK_UNKNOWN"}:
                     stale_limit = float(
                         getattr(
                             bot,
@@ -508,14 +601,13 @@ def reconcile_bootstrap_state(bot):
             lost += 1
 
         # En PAPER_MODE el balance es virtual; no se compara contra custodia real.
-        if bool(getattr(Config, "PAPER_MODE", False)):
-            paper_balance = float(getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0))
+        if Config.PAPER_MODE:
             if not float(getattr(bot, "balance", 0.0) or 0.0):
-                bot.balance = paper_balance
+                bot.balance = Config.PAPER_INITIAL_BALANCE
             if not float(getattr(bot, "available_balance", 0.0) or 0.0):
-                bot.available_balance = paper_balance
+                bot.available_balance = Config.PAPER_INITIAL_BALANCE
             if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
-                bot.daily_initial_balance = paper_balance
+                bot.daily_initial_balance = Config.PAPER_INITIAL_BALANCE
             bot.integrity_lock_active = False
             return
 
@@ -556,3 +648,81 @@ def reconcile_bootstrap_state(bot):
 
 def allocate_signal_timestamp() -> float:
     return utc_now().timestamp()
+
+
+def recover_halt_if_exchange_consistent(bot, required_snapshots: int = 2) -> tuple[bool, str]:
+    """Release HALT only after repeated flat exchange snapshots.
+
+    This is intentionally conservative: it only auto-recovers when there are no
+    local real trades, no exchange positions, and balance is readable/positive.
+    """
+    required = max(1, int(required_snapshots or 1))
+    with bot.lock:
+        local_real_symbols = sorted(
+            symbol
+            for symbol, trade in (getattr(bot, "active_trades", {}) or {}).items()
+            if isinstance(trade, dict) and not trade.get("is_shadow", False)
+        )
+    if local_real_symbols:
+        return False, f"RECOVERY_BLOCKED_LOCAL_REAL: {', '.join(local_real_symbols)}"
+
+    try:
+        positions = bot.execution.fetch_positions() or []
+    except Exception as error:
+        return False, f"RECOVERY_BLOCKED_POSITIONS_UNREADABLE: {error}"
+
+    exchange_symbols = []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        amount = pos.get("contracts")
+        if amount is None:
+            amount = (pos.get("info") or {}).get("positionAmt", 0)
+        if abs(float(amount or 0.0)) > 0.0:
+            exchange_symbols.append(_normalize_position_symbol(pos.get("symbol", "")))
+    exchange_symbols = sorted(symbol for symbol in exchange_symbols if symbol)
+    if exchange_symbols:
+        return False, f"RECOVERY_BLOCKED_EXCHANGE_EXPOSURE: {', '.join(exchange_symbols)}"
+
+    fetch_open_orders = getattr(bot.execution, "fetch_open_orders", None)
+    open_orders = []
+    if callable(fetch_open_orders):
+        try:
+            open_orders = fetch_open_orders() or []
+        except Exception as error:
+            return False, f"RECOVERY_BLOCKED_OPEN_ORDERS_UNREADABLE: {error}"
+    if open_orders:
+        open_symbols = sorted(set(o.get("symbol", "") for o in open_orders if isinstance(o, dict)))
+        return False, f"RECOVERY_BLOCKED_OPEN_ORDERS: {', '.join(open_symbols)}"
+
+    try:
+        exchange_balance = float(bot.get_current_balance() or 0.0)
+    except Exception as error:
+        return False, f"RECOVERY_BLOCKED_BALANCE_UNREADABLE: {error}"
+    if exchange_balance <= 0:
+        return False, "RECOVERY_BLOCKED_BALANCE_NON_POSITIVE"
+
+    fingerprint = {"exchange_flat": True, "balance": round(exchange_balance, 8)}
+    state = getattr(bot, "_halt_recovery_state", {}) or {}
+    if state.get("fingerprint") == fingerprint:
+        count = int(state.get("count", 0) or 0) + 1
+    else:
+        count = 1
+    bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count}
+
+    if count < required:
+        return False, f"RECOVERY_PENDING_CONSISTENT_SNAPSHOTS: {count}/{required}"
+
+    with bot.lock:
+        bot.balance = exchange_balance
+        bot.daily_initial_balance = exchange_balance
+        bot.integrity_lock_active = False
+        bot.halt_system_active = False
+        bot.is_paused = False
+        bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count}
+    append_execution_event(
+        bot,
+        "HALT_RECOVERY_RELEASED",
+        {"balance": exchange_balance, "snapshots": count},
+    )
+    return True, f"RECOVERY_OK: exchange flat, balance=${exchange_balance:.2f}, snapshots={count}"

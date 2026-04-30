@@ -107,6 +107,19 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
     @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
     def test_emergency_market_close_when_sl_is_rejected_by_gap(self):
         bot = self._base_bot()
+        positions = [
+            [
+                {
+                    "symbol": "SOL/USDT:USDT",
+                    "contracts": 1.0,
+                    "side": "long",
+                    "entryPrice": 120.0,
+                    "unrealizedPnl": -10.0,
+                    "info": {},
+                }
+            ],
+            [],
+        ]
         bot.active_trades = {
             "SOL/USDT": {
                 "symbol": "SOL/USDT",
@@ -121,16 +134,7 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
             }
         }
         bot.execution = SimpleNamespace(
-            fetch_positions=lambda: [
-                {
-                    "symbol": "SOL/USDT:USDT",
-                    "contracts": 1.0,
-                    "side": "long",
-                    "entryPrice": 120.0,
-                    "unrealizedPnl": -10.0,
-                    "info": {},
-                }
-            ],
+            fetch_positions=MagicMock(side_effect=positions),
             fetch_open_orders=lambda _symbol=None: [],
             place_hard_sl=MagicMock(return_value=None),
             close_position=MagicMock(return_value={"id": "close-1"}),
@@ -142,6 +146,56 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         bot.execution.close_position.assert_called_once()
         self.assertNotIn("SOL/USDT", bot.active_trades)
         bot.brain.delete_active_trade_state.assert_called_once_with("SOL/USDT")
+
+    @patch("core.bot_wallet_sync.send_telegram_msg")
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    def test_emergency_close_keeps_trade_when_position_not_flat(self, mocked_tg):
+        bot = self._base_bot()
+        bot.integrity_lock_active = False
+        bot.is_paused = False
+        bot.active_trades = {
+            "SOL/USDT": {
+                "symbol": "SOL/USDT",
+                "side": "BUY",
+                "entry": 120.0,
+                "amount": 1.0,
+                "sl": 118.0,
+                "is_shadow": False,
+                "open_time": datetime.now(),
+                "entry_client_order_id": "sai-v118-sol",
+                "sl_exchange_order_id": None,
+            }
+        }
+        open_position = [
+            {
+                "symbol": "SOL/USDT:USDT",
+                "contracts": 1.0,
+                "side": "long",
+                "entryPrice": 120.0,
+                "unrealizedPnl": -10.0,
+                "info": {},
+            }
+        ]
+        bot.execution = SimpleNamespace(
+            fetch_positions=MagicMock(return_value=open_position),
+            fetch_open_orders=lambda _symbol=None: [],
+            place_hard_sl=MagicMock(return_value=None),
+            close_position=MagicMock(return_value={"id": "close-1", "status": "open"}),
+            last_hard_sl_error="Order would trigger immediately. (-2021)",
+        )
+
+        sync_wallet(bot)
+
+        self.assertIn("SOL/USDT", bot.active_trades)
+        self.assertEqual(
+            bot.active_trades["SOL/USDT"].get("status"), "EMERGENCY_CLOSE_PENDING"
+        )
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(getattr(bot, "halt_system_active", False))
+        bot.brain.delete_active_trade_state.assert_not_called()
+        self.assertEqual(bot.execution.close_position.call_count, 3)
+        mocked_tg.assert_called_once()
 
     @patch("core.bot_wallet_sync.send_telegram_msg")
     @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
@@ -290,6 +344,80 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         self.assertEqual(trade.get("remaining_amount"), 0.0)
         self.assertEqual(trade.get("unfilled_canceled_amount"), 6.0)
         bot.execution.cancel_order.assert_called_once_with("BNB/USDT", "entry-ord-1")
+
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    def test_partial_fill_keeps_pending_when_entry_lookup_fails(self):
+        bot = self._base_bot()
+        bot.active_trades = {
+            "BNB/USDT": {
+                "symbol": "BNB/USDT",
+                "side": "BUY",
+                "entry": 300.0,
+                "amount": 4.0,
+                "requested_amount": 10.0,
+                "remaining_amount": 6.0,
+                "status": "PARTIAL_FILL_PENDING",
+                "partial_fill_pending": True,
+                "partial_fill_started_at": datetime.now().isoformat(),
+                "is_shadow": False,
+                "open_time": datetime.now(),
+                "entry_exchange_order_id": "entry-ord-1",
+                "sl_exchange_order_id": "sl-1",
+            }
+        }
+
+        bot.execution = SimpleNamespace(
+            fetch_positions=lambda: [
+                {
+                    "symbol": "BNB/USDT:USDT",
+                    "contracts": 4.0,
+                    "side": "long",
+                    "entryPrice": 301.0,
+                    "unrealizedPnl": 0.0,
+                    "info": {},
+                }
+            ],
+            fetch_open_orders=MagicMock(side_effect=RuntimeError("exchange down")),
+            cancel_order=MagicMock(),
+            place_hard_sl=MagicMock(return_value={"id": "sl-1"}),
+        )
+
+        sync_wallet(bot)
+
+        trade = bot.active_trades["BNB/USDT"]
+        self.assertEqual(trade.get("status"), "PARTIAL_FILL_PENDING")
+        self.assertTrue(trade.get("partial_fill_pending"))
+        self.assertEqual(trade.get("remaining_amount"), 6.0)
+        bot.execution.cancel_order.assert_not_called()
+        bot.brain.save_active_trade_state.assert_called()
+
+    @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
+    def test_empty_positions_snapshot_with_local_real_trade_halts_without_purge(self):
+        bot = self._base_bot()
+        bot.integrity_lock_active = False
+        bot.is_paused = False
+        bot.halt_system_active = False
+        bot.active_trades = {
+            "BTC/USDT": {
+                "symbol": "BTC/USDT",
+                "side": "BUY",
+                "entry": 100.0,
+                "amount": 1.0,
+                "sl": 99.0,
+                "is_shadow": False,
+                "open_time": datetime.fromtimestamp(datetime.now().timestamp() - 300),
+                "sl_exchange_order_id": "sl-1",
+            }
+        }
+        bot.execution = SimpleNamespace(fetch_positions=MagicMock(return_value=[]))
+
+        sync_wallet(bot)
+
+        self.assertIn("BTC/USDT", bot.active_trades)
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(bot.halt_system_active)
+        bot.brain.delete_active_trade_state.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,38 @@
+# Exchange & Trading
+ccxt
+
+# Data & Analysis
+pandas
+pyarrow
+ta
+pandas_ta
+
+# Terminal UI
+rich
+
+# Configuration
+python-dotenv
+
+# HTTP
+requests
+
+# Machine Learning
+scikit-learn
+xgboost
+lightgbm
+imbalanced-learn
+
+# WebSockets
+websockets
+websocket-client
+
+# Optimization
+optuna
+
+# Testing & Security
+coverage
+pip-audit
+
+# Packaging (optional)
+pyinstaller
+pyarmor

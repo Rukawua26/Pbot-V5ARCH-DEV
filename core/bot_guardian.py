@@ -7,6 +7,26 @@ from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
 from strategy import Strategy
 
 
+def _fetch_prices_with_fallback(bot) -> dict:
+    with bot.price_lock:
+        price_map = bot.live_prices.copy()
+
+    if not price_map:
+        try:
+            all_prices_raw = bot.execution.fetch_all_prices()
+            price_map = {p["symbol"]: p["price"] for p in all_prices_raw}
+        except Exception:
+            price_map = {}
+
+    return price_map
+
+
+def _prioritize_symbols(snapshot: dict) -> list:
+    real_syms = [s for s in snapshot.keys() if not snapshot[s].get("is_shadow")]
+    shadow_syms = [s for s in snapshot.keys() if snapshot[s].get("is_shadow")]
+    return real_syms + shadow_syms
+
+
 def run_guardian_loop(bot):
     bot.log("🛡️ Guardián OK.")
     last_heavy = 0.0
@@ -33,23 +53,8 @@ def run_guardian_loop(bot):
                 time.sleep(1)
                 continue
 
-            # --- OPTIMIZACIÓN DE LATENCIA (v106.x) ---
-            # Prioridad: 1. Websocket (ms) -> 2. REST Mass (s) -> 3. REST Single (lento)
-            with bot.price_lock:
-                price_map = bot.live_prices.copy()
-
-            if not price_map:
-                try:
-                    all_prices_raw = bot.execution.fetch_all_prices()
-                    price_map = {p["symbol"]: p["price"] for p in all_prices_raw}
-                except Exception:
-                    # bot.log(f"⚠️ Guardian: fapiPublicGetTickerPrice falló: {e}")
-                    price_map = {}
-
-            # PRIORIZACIÓN (v103.7): Reales primero, luego Shadow
-            real_syms = [s for s in syms if not snapshot[s].get("is_shadow")]
-            shadow_syms = [s for s in syms if snapshot[s].get("is_shadow")]
-            sorted_syms = real_syms + shadow_syms
+            price_map = _fetch_prices_with_fallback(bot)
+            sorted_syms = _prioritize_symbols(snapshot)
 
             for s in sorted_syms:
                 try:

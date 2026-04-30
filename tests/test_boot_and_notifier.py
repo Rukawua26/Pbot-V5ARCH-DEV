@@ -122,6 +122,20 @@ class BootAndNotifierTest(unittest.TestCase):
         self.assertEqual(third_item[3]["json"]["text"], "second")
         queue.stop()
 
+    def test_shadow_logger_does_not_start_until_used(self):
+        from learning import LazyShadowLogger
+
+        logger = LazyShadowLogger(":memory:")
+
+        self.assertFalse(logger.is_started())
+        self.assertFalse(logger.is_trading_halted())
+        self.assertFalse(logger.is_started())
+
+        logger.log({"type": "TEST", "data": {}})
+
+        self.assertTrue(logger.is_started())
+        logger.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ import json
 import random
 import numpy as np
 import pandas as pd
+from core.model_loader import safe_pickle_load
 from notifier import send_telegram_msg
 
 try:
@@ -167,8 +168,45 @@ class AsyncShadowLogger:
             self.thread.join(timeout=2.0)
 
 
-# Instancia global — usa _DB_PATH (ruta absoluta)
-shadow_logger = AsyncShadowLogger()
+class LazyShadowLogger:
+    """Proxy lazy para evitar threads/DB al importar learning.py."""
+
+    def __init__(self, brain_db_path: str = _DB_PATH):
+        self.db_path = brain_db_path
+        self._instance = None
+        self._lock = threading.Lock()
+
+    def _get(self) -> AsyncShadowLogger:
+        with self._lock:
+            if self._instance is None:
+                self._instance = AsyncShadowLogger(self.db_path)
+            return self._instance
+
+    def log(self, entry: dict):
+        self._get().log(entry)
+
+    def is_trading_halted(self) -> bool:
+        if self._instance is None:
+            return False
+        return self._instance.is_trading_halted()
+
+    def force_flush(self):
+        if self._instance is not None:
+            self._instance.force_flush()
+
+    def stop(self):
+        if self._instance is not None:
+            self._instance.stop()
+
+    def is_started(self) -> bool:
+        return self._instance is not None
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+# Proxy global: conserva API, pero no arranca thread/DB hasta el primer uso real.
+shadow_logger = LazyShadowLogger()
 
 
 class Brain:
@@ -182,7 +220,7 @@ class Brain:
         conn = sqlite3.connect(self.db_name, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")  # Mejor concurrencia
-        conn.execute("PRAGMA synchronous=OFF")  # Fase PAPER/cosecha: priorizar baja latencia
+        conn.execute("PRAGMA synchronous=NORMAL")  # Durabilidad razonable para recovery.
         conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
         return conn
 
@@ -201,9 +239,17 @@ class Brain:
             except Exception as e:
                 print(f"⚠️ Error migrando columna '{column_name}': {e}")
 
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT,
+                side TEXT, entry_price REAL, exit_price REAL, pnl REAL,
+                pnl_percent REAL, reason TEXT
+            )
+        """)
+
         migration_columns = [
-            ("ALTER TABLE trades ADD COLUMN fees REAL DEFAULT 0", "fees"),
             ("ALTER TABLE trades ADD COLUMN is_shadow BOOLEAN DEFAULT 0", "is_shadow"),
+            ("ALTER TABLE trades ADD COLUMN fees REAL DEFAULT 0", "fees"),
             ("ALTER TABLE trades ADD COLUMN market_snapshot TEXT", "market_snapshot"),
             ("ALTER TABLE trades ADD COLUMN market_context TEXT", "market_context"),
             ("ALTER TABLE trades ADD COLUMN open_time TEXT", "open_time"),
@@ -281,48 +327,6 @@ class Brain:
         for sql, column_name in migration_columns:
             _safe_add_column(sql, column_name)
         # ----------------------------------------------------
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT,
-                side TEXT, entry_price REAL, exit_price REAL, pnl REAL,
-                pnl_percent REAL, reason TEXT,
-                is_shadow BOOLEAN DEFAULT 0,
-                fees REAL DEFAULT 0,
-                funding_rate REAL,
-                vol_rel REAL,
-                rsi REAL,
-                adx REAL,
-                market_snapshot TEXT,
-                market_context TEXT,
-                open_time TEXT,
-                entry_ob TEXT DEFAULT '⚪',
-                dist_ema REAL,
-                z_score REAL,
-                bb_pos REAL,
-                ob_status TEXT,
-                mae_percent REAL,
-                mfe_percent REAL,
-                btc_correlation REAL,
-                market_regime TEXT,
-                entry_confidence REAL,
-                exit_confidence REAL,
-                entry_shock_level REAL,
-                entry_atr REAL,
-                breakout_origin INTEGER DEFAULT 0,
-                entry_client_order_id TEXT,
-                sl_client_order_id TEXT,
-                tp_client_order_id TEXT,
-                entry_exchange_order_id TEXT,
-                sl_exchange_order_id TEXT,
-                tp_exchange_order_id TEXT,
-                exit_reason TEXT,
-                is_adopted INTEGER DEFAULT 0,
-                is_dirty INTEGER DEFAULT 0,
-                mae_at_sl REAL,
-                mfe_at_sl REAL
-            )
-        """)
 
         c.execute("""
             CREATE TABLE IF NOT EXISTS dynamic_config (
@@ -958,8 +962,7 @@ class Brain:
         model_path = "ghost_brain.pkl"
         if os.path.exists(model_path):
             try:
-                with open(model_path, "rb") as handle:
-                    bot.ghost_model = pickle.load(handle)
+                bot.ghost_model = safe_pickle_load(model_path)
                 self.pending_model_update = False
                 bot.log(
                     "✅ [HOT-SWAP] Modelo Ghost recargado exitosamente en ventana segura."
@@ -2625,11 +2628,9 @@ class Brain:
     def get_model_insights(self):
         """Extrae la lógica actual del modelo Random Forest."""
         try:
-            import pickle
             import pandas as pd
 
-            with open("ghost_brain.pkl", "rb") as f:
-                model = pickle.load(f)
+            model = safe_pickle_load("ghost_brain.pkl")
 
             # 1. Obtener importancia de indicadores
             # [GHOST v2] Actualizado para coincidir con ghost_trainer.py

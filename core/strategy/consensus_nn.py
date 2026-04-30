@@ -3,6 +3,7 @@ import os
 import pickle
 import numpy as np
 import logging
+from core.model_loader import safe_pickle_load
 
 try:
     from sklearn.neural_network import MLPClassifier
@@ -40,14 +41,13 @@ class AgentConsensusNN:
         """Carga el modelo entrenado si existe."""
         if os.path.exists(self.model_path):
             try:
-                with open(self.model_path, "rb") as f:
-                    data = pickle.load(f)
-                    self.model = data["model"]
-                    self.scaler = data["scaler"]
-                    self.is_trained = True
-                    logger.info(
-                        f"✅ Neural Consensus 1H cargado: {data.get('n_samples', 0)} muestras"
-                    )
+                data = safe_pickle_load(self.model_path)
+                self.model = data["model"]
+                self.scaler = data["scaler"]
+                self.is_trained = True
+                logger.info(
+                    f"✅ Neural Consensus 1H cargado: {data.get('n_samples', 0)} muestras"
+                )
             except Exception as e:
                 logger.warning(f"⚠️ Error cargando Neural Consensus: {e}")
                 self.is_trained = False

@@ -9,15 +9,11 @@ def start_silent_sync(bot):
         try:
             if Config.PAPER_MODE:
                 if not float(getattr(bot, "balance", 0.0) or 0.0):
-                    bot.balance = float(getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0))
+                    bot.balance = Config.PAPER_INITIAL_BALANCE
                 if not float(getattr(bot, "available_balance", 0.0) or 0.0):
-                    bot.available_balance = float(
-                        getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
-                    )
+                    bot.available_balance = Config.PAPER_INITIAL_BALANCE
                 if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
-                    bot.daily_initial_balance = float(
-                        getattr(Config, "PAPER_INITIAL_BALANCE", 1000.0)
-                    )
+                    bot.daily_initial_balance = Config.PAPER_INITIAL_BALANCE
                 time.sleep(3600)
                 continue
 

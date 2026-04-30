@@ -12,6 +12,7 @@ import pickle
 import os
 import json
 import warnings
+from core.model_loader import safe_pickle_load
 
 warnings.filterwarnings("ignore")
 
@@ -255,8 +256,7 @@ class UltimateMLSystem:
     def load(self):
         if os.path.exists(self.model_path):
             try:
-                with open(self.model_path, "rb") as f:
-                    self.models = pickle.load(f)
+                self.models = safe_pickle_load(self.model_path)
                 self.clf_models = self.models.get("clf", {})
                 self.reg_models = self.models.get("reg", {})
                 self.feature_cols = self.models.get("feature_cols", [])

@@ -25,6 +25,7 @@ def _help_message() -> str:
         "• `/on` | `/resume`: Activar sistema\n"
         "• `/off` | `/pause`: Pausar sistema\n"
         "• `/panic`: Cierre de emergencia\n"
+        "• `/recover_halt`: Liberar HALT solo con snapshots exchange planos\n"
         "• `/unquarantine`: Resetear cooldown de pares\n\n"
         "• `/force_clear [PAR]`: Liberar recovery bloqueado con verificación\n\n"
         "📊 *AUDITORÍA*\n"

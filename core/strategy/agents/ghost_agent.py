@@ -1,8 +1,8 @@
 import os
-import pickle
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional, Union
+from core.model_loader import safe_pickle_load
 from core.strategy.base_agent import BaseAgent
 import logging
 
@@ -52,8 +52,7 @@ class GhostAgent(BaseAgent):
         model_path = "agent_models.pkl"
         if os.path.exists(model_path):
             try:
-                with open(model_path, "rb") as f:
-                    self._trained_model = pickle.load(f)
+                self._trained_model = safe_pickle_load(model_path)
                 logger.debug(
                     f"✅ Ghost Model cargado: {self._trained_model.get('n_samples', 0)} muestras"
                 )

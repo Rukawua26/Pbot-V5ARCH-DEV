@@ -4,6 +4,7 @@ import json
 import threading
 import pandas as pd
 import logging
+import ccxt
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, List
 from config import Config
@@ -252,7 +253,7 @@ class DataService:
         try:
             with open(self.maturity_file, "w") as f:
                 json.dump(self.maturity_cache, f)
-        except Exception as e:
+        except (IOError, OSError) as e:
             logger.warning(f"⚠️ Error guardando maturity cache: {e}")
 
     def audit_symbol_maturity(self, symbol: str) -> bool:
@@ -266,17 +267,9 @@ class DataService:
             self._track_api_weight("fetch_ohlcv", 1, "market")
             is_mature = len(ohlcv) >= 200
             self.maturity_cache[symbol] = is_mature
-            self.save_maturity_cache()
-
-            if not is_mature:
-                logger.info(
-                    f"⚠️ {symbol} RECHAZADO: Inmaduro ({len(ohlcv)}/200 velas 4H)."
-                )
-            else:
-                logger.info(f"✅ {symbol} MADURO: Pasa auditoría de historial.")
             return is_mature
-        except Exception as e:
-            logger.warning(f"⚠️ Fallo en auditoría de {symbol}: {e}")
+        except (ccxt.NetworkError, ccxt.ExchangeError) as e:
+            logger.warning(f"⚠️ Error auditando madurez {symbol}: {e}")
             return False
 
     def fetch_and_update_data(
@@ -311,59 +304,55 @@ class DataService:
                 since = int(prev_df["time"].iloc[-1])
                 limit = None
 
-        try:
-            ohlcv = []
-            retries = 1 if fast_mode else 2
-            for i in range(retries):
-                try:
-                    ohlcv = self.exchange.fetch_ohlcv(
-                        symbol, timeframe, since=since, limit=limit
+        ohlcv = []
+        retries = 1 if fast_mode else 2
+        for i in range(retries):
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(
+                    symbol, timeframe, since=since, limit=limit
+                )
+                self._track_api_weight("fetch_ohlcv", 1, "market")
+                break
+            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
+                if i == retries - 1:
+                    logger.error(
+                        f"🚫 Error fatal fetch {symbol} ({timeframe}): {e}"
                     )
-                    self._track_api_weight("fetch_ohlcv", 1, "market")
-                    break
-                except Exception as e:
-                    if i == retries - 1:
-                        logger.error(
-                            f"🚫 Error fatal fetch {symbol} ({timeframe}): {e}"
-                        )
-                        return prev_df
-                    time.sleep(0.15 if fast_mode else (i + 1) ** 2)
-
-            if not ohlcv:
-                return prev_df
-
-            new_df = pd.DataFrame(ohlcv, columns=expected_cols)
-            if new_df[expected_cols].isnull().any().any():
-                return prev_df
-
-            for col in ["open", "high", "low", "close"]:
-                if (new_df[col] <= 0).any() or (new_df[col] > 1e9).any():
                     return prev_df
+                time.sleep(0.15 if fast_mode else (i + 1) ** 2)
 
-            combined = (
-                pd.concat([prev_df, new_df], ignore_index=True)
-                if prev_df is not None
-                else new_df
-            )
-            updated = self._clean_df(combined).tail(Config.CANDLE_FETCH_LIMIT)
-            updated = updated[expected_cols].copy()
-
-            self.data_cache[cache_key] = updated
-            self.last_ohlcv_fetch[cache_key] = time.time()
-
-            # Gestión de memoria del caché
-            if len(self.data_cache) > 50 and pairs_to_scan:
-                symbols_to_keep = set(pairs_to_scan[:30])
-                keys_to_delete = [
-                    k for k in self.data_cache if k.split("_")[0] not in symbols_to_keep
-                ]
-                for k in keys_to_delete[:20]:
-                    del self.data_cache[k]
-
-            return updated
-        except Exception as e:
-            logger.warning(f"⚠️ Error actualizando datos de {symbol}: {e}")
+        if not ohlcv:
             return prev_df
+
+        new_df = pd.DataFrame(ohlcv, columns=expected_cols)
+        if new_df[expected_cols].isnull().any().any():
+            return prev_df
+
+        for col in ["open", "high", "low", "close"]:
+            if (new_df[col] <= 0).any() or (new_df[col] > 1e9).any():
+                return prev_df
+
+        combined = (
+            pd.concat([prev_df, new_df], ignore_index=True)
+            if prev_df is not None
+            else new_df
+        )
+        updated = self._clean_df(combined).tail(Config.CANDLE_FETCH_LIMIT)
+        updated = updated[expected_cols].copy()
+
+        self.data_cache[cache_key] = updated
+        self.last_ohlcv_fetch[cache_key] = time.time()
+
+        # Gestión de memoria del caché
+        if len(self.data_cache) > 50 and pairs_to_scan:
+            symbols_to_keep = set(pairs_to_scan[:30])
+            keys_to_delete = [
+                k for k in self.data_cache if k.split("_")[0] not in symbols_to_keep
+            ]
+            for k in keys_to_delete[:20]:
+                del self.data_cache[k]
+
+        return updated
 
     def sanitize_context(self, context: Optional[Dict]) -> Dict:
         """Elimina objetos no serializables (DataFrames) del contexto para guardar en DB."""

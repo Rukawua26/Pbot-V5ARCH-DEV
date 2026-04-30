@@ -84,6 +84,15 @@ def handle_basic_command(bot, text: str) -> bool:
             send_telegram_msg(f"❌ Error en /rebase_capital: {error}")
         return True
 
+    if text == "/recover_halt":
+        from notifier import send_telegram_msg
+        from core.reconciliation import recover_halt_if_exchange_consistent
+
+        ok, message = recover_halt_if_exchange_consistent(bot)
+        prefix = "✅" if ok else "🛑"
+        send_telegram_msg(f"{prefix} *RECOVER HALT*\n{message}")
+        return True
+
     if text == "/test":
         from notifier import send_telegram_msg
 

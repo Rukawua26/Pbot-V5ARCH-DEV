@@ -8,6 +8,31 @@ import ccxt
 from core.execution_service import ExecutionService
 
 
+class _ClientOrderLookupExchange:
+    def __init__(self, lookup_error=None, lookup_order=None):
+        self.timeout = 9000
+        self.lookup_error = lookup_error
+        self.lookup_order = lookup_order
+        self.create_attempts = 0
+        self.lookup_attempts = 0
+
+    def market_id(self, _symbol):
+        return "BTCUSDT"
+
+    def fapiPrivateGetOrder(self, _params):
+        self.lookup_attempts += 1
+        if self.lookup_error:
+            raise self.lookup_error
+        return self.lookup_order or {}
+
+    def price_to_precision(self, _symbol, price):
+        return str(price)
+
+    def create_order(self, *args, **kwargs):
+        self.create_attempts += 1
+        raise ccxt.RequestTimeout("create ack timeout")
+
+
 class _FlakyCancelExchange:
     def __init__(self):
         self.timeout = 0
@@ -56,6 +81,12 @@ class _TimeoutProbeExchange:
         }
 
 
+class _BrokenMarketsExchange:
+    @property
+    def markets(self):
+        raise RuntimeError("markets cache corrupted")
+
+
 class _NoPriceExchange:
     def __init__(self):
         self.timeout = 9000
@@ -81,6 +112,43 @@ class _NoPriceExchange:
         }
 
 
+class _ChaseLimitNoFillExchange:
+    def __init__(self):
+        self.timeout = 9000
+        self.created = []
+        self.canceled = []
+
+    def cancel_all_orders(self, _symbol):
+        return []
+
+    def fetch_ticker(self, _symbol):
+        return {"last": 100.0}
+
+    def price_to_precision(self, _symbol, price):
+        return str(round(float(price), 2))
+
+    def create_order(self, symbol, order_type, side, amount, price, params):
+        order = {
+            "id": f"exit-{len(self.created) + 1}",
+            "symbol": symbol,
+            "type": order_type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "status": "open",
+            "params": params,
+        }
+        self.created.append(order)
+        return order
+
+    def fetch_order(self, order_id, symbol):
+        return {"id": order_id, "symbol": symbol, "status": "open"}
+
+    def cancel_order(self, order_id, symbol):
+        self.canceled.append(order_id)
+        return {"id": order_id, "symbol": symbol, "status": "canceled"}
+
+
 class _ConcurrentTimeoutExchange:
     def __init__(self):
         self.timeout = 9000
@@ -99,6 +167,18 @@ class _ConcurrentTimeoutExchange:
 
 
 class ExecutionServiceResilienceTest(unittest.TestCase):
+    def test_has_markets_loaded_logs_lookup_failure(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _BrokenMarketsExchange()
+
+        with self.assertLogs("Execution", level="WARNING") as captured:
+            loaded = service.has_markets_loaded()
+
+        self.assertFalse(loaded)
+        self.assertTrue(
+            any("markets cargados" in message for message in captured.output)
+        )
+
     @patch("core.execution_service.time.sleep", return_value=None)
     def test_cancel_order_retries_on_network_error(self, _sleep_mock):
         service = ExecutionService("k", "s")
@@ -203,6 +283,18 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
         self.assertLess(tuned_once, base)
         self.assertGreaterEqual(tuned_floor, 45)
 
+    @patch("core.execution_service.time.sleep", return_value=None)
+    def test_close_position_returns_stuck_state_when_hard_floor_not_filled(self, _sleep):
+        service = ExecutionService("k", "s")
+        service.exchange = _ChaseLimitNoFillExchange()
+        service.set_weight_tracker(None)
+
+        result = service.close_position("BTC/USDT", side="BUY", amount=0.1)
+
+        self.assertEqual(result.get("exit_state"), "STUCK")
+        self.assertEqual(result.get("id"), "exit-4")
+        self.assertEqual(service.exchange.canceled, ["exit-1", "exit-2", "exit-3"])
+
     def test_cancel_all_degraded_activates_symbol_quarantine(self):
         service = ExecutionService("k", "s")
         service.exchange = _TimeoutProbeExchange()
@@ -231,3 +323,42 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
             remaining = service.get_symbol_quarantine_remaining_seconds("BTC/USDT")
 
         self.assertGreater(remaining, 0)
+
+    def test_fetch_order_by_client_id_raises_on_lookup_transport_error(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _ClientOrderLookupExchange(
+            lookup_error=ccxt.NetworkError("temporary down")
+        )
+
+        with self.assertRaises(RuntimeError):
+            service.fetch_order_by_client_id("BTC/USDT", "cid-1")
+
+    def test_fetch_order_by_client_id_returns_none_for_not_found(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _ClientOrderLookupExchange(
+            lookup_error=ccxt.OrderNotFound("Order does not exist")
+        )
+
+        self.assertIsNone(service.fetch_order_by_client_id("BTC/USDT", "cid-1"))
+
+    def test_create_precision_order_recovers_ack_by_client_order_id_after_timeout(self):
+        service = ExecutionService("k", "s")
+        service.exchange = _ClientOrderLookupExchange(
+            lookup_order={
+                "orderId": "ord-1",
+                "status": "FILLED",
+                "clientOrderId": "cid-1",
+                "executedQty": "0.1",
+                "avgPrice": "101.0",
+            }
+        )
+
+        order = service.create_precision_order(
+            "BTC/USDT", "BUY", 0.1, 100.0, client_order_id="cid-1"
+        )
+
+        self.assertIsNotNone(order)
+        self.assertEqual(order.get("id"), "ord-1")
+        self.assertEqual(order.get("clientOrderId"), "cid-1")
+        self.assertEqual(service.exchange.create_attempts, 1)
+        self.assertEqual(service.exchange.lookup_attempts, 1)

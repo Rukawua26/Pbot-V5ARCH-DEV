@@ -318,6 +318,10 @@ def build_execution_gateway(config, execution_service_cls):
 
     backend = str(getattr(config, "EXECUTION_BACKEND", "live") or "live").lower()
     if backend == "shadow_live":
+        if not bool(getattr(config, "PAPER_MODE", True)):
+            raise RuntimeError(
+                "EXECUTION_BACKEND=shadow_live no está permitido en modo REAL"
+            )
         return ShadowExecutionAdapter(
             execution,
             min_latency_ms=int(getattr(config, "SHADOW_SIM_LATENCY_MIN_MS", 200)),

@@ -69,8 +69,6 @@ class StrategyConfig:
     TRAILING_ATR_MULTIPLIER = 2.5
 
     DYNAMIC_SL_TP = True
-    STOP_LOSS_ATR_MODIFIER = 1.5  # [v119] SL dinámico: Entry - 1.5x ATR
-    ATR_SL_MULTIPLIER = 1.5  # Deprecated, use STOP_LOSS_ATR_MODIFIER
     ATR_TP1_MULTIPLIER = 2.0  # [v119] Trailing activo a Entry + 2.0x ATR
     ATR_TP2_MULTIPLIER = 4.0  # TP2 para exits parciales
 

@@ -132,6 +132,40 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         exchange.set_sandbox_mode.assert_called_once_with(True)
 
+    @patch("core.bot_connection.Config.USE_TESTNET", False)
+    @patch("core.bot_connection.Config.PAPER_MODE", False)
+    @patch("core.bot_connection.ccxt.binance")
+    def test_connect_to_binance_aborts_when_position_mode_detection_fails(
+        self, mocked_binance
+    ):
+        exchange = MagicMock()
+        mocked_binance.return_value = exchange
+
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            is_paused=False,
+            integrity_lock_active=False,
+            halt_system_active=False,
+            execution=SimpleNamespace(
+                exchange=None,
+                load_markets=MagicMock(),
+                fetch_balance=MagicMock(return_value={"USDT": {"total": 1}}),
+                fetch_position_mode=MagicMock(side_effect=RuntimeError("mode down")),
+                get_position_side_dual=MagicMock(side_effect=RuntimeError("mode down")),
+            ),
+            data_service=SimpleNamespace(exchange=None),
+            sync_wallet=MagicMock(),
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            connect_to_binance(bot)
+
+        self.assertIn("modo Hedge/OneWay", str(ctx.exception))
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(bot.halt_system_active)
+        bot.sync_wallet.assert_not_called()
+
     @patch("core.bot_connection.Config.USE_TESTNET", True)
     @patch("core.bot_connection.Config.PAPER_MODE", True)
     @patch("core.bot_connection.ccxt.binance")

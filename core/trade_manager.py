@@ -45,87 +45,7 @@ def _fail_safe_close_when_sl_missing(
     return False
 
 
-def _safe_log_signal_alert(bot, **kwargs) -> None:
-    brain = getattr(bot, "brain", None)
-    method = getattr(brain, "log_signal_alert", None)
-    lock = getattr(bot, "db_lock", None)
-    if not callable(method):
-        return
-    with (lock or nullcontext()):
-        method(**kwargs)
-
-
-def _safe_update_signal_alert_status(bot, entry_client_order_id, status) -> None:
-    brain = getattr(bot, "brain", None)
-    method = getattr(brain, "update_signal_alert_status", None)
-    lock = getattr(bot, "db_lock", None)
-    if not callable(method):
-        return
-    with (lock or nullcontext()):
-        method(entry_client_order_id, status)
-
-
-def _sanitize_context(bot, context):
-    data_service = getattr(bot, "data_service", None)
-    sanitizer = getattr(data_service, "sanitize_context", None)
-    if callable(sanitizer):
-        return sanitizer(context)
-    if isinstance(context, dict):
-        return dict(context)
-    return {}
-
-
-def _get_local_open_trade_counts(bot):
-    open_statuses = {
-        "OPEN",
-        "PENDING_SEND",
-        "PENDING_EXCHANGE_OPEN",
-        "ENTRY_FILLED_AWAITING_POSITION_SYNC",
-        "PARTIAL_FILL_PENDING",
-        "PARTIAL_FILL",
-    }
-    states = {}
-    try:
-        states.update(getattr(bot, "active_trades", {}) or {})
-    except Exception:
-        pass
-
-    brain = getattr(bot, "brain", None)
-    loader = getattr(brain, "load_active_trade_states", None)
-    if callable(loader):
-        try:
-            for symbol, state in (loader() or {}).items():
-                states.setdefault(symbol, state)
-        except Exception:
-            pass
-
-    num_real = 0
-    num_shadow = 0
-    for state in states.values():
-        if not isinstance(state, dict):
-            continue
-        status = str(state.get("status") or "").upper()
-        if status not in open_statuses:
-            continue
-        if bool(state.get("is_shadow", False)):
-            num_shadow += 1
-        else:
-            num_real += 1
-    return num_real, num_shadow
-
-
-def execute_order(
-    bot,
-    symbol: str,
-    side: str,
-    price: float,
-    atr: float,
-    is_shadow: bool = False,
-    vol: float = 0,
-    context: Optional[Dict[str, Any]] = None,
-    ob_status: str = "⚪",
-    override_usd_size: float = 0.0,
-) -> str:
+def _validate_entry_preconditions(bot, symbol: str, is_shadow: bool) -> Optional[str]:
     if bool(getattr(bot, "stop_requested", False)) or bool(
         getattr(bot, "shutdown_in_progress", False)
     ):
@@ -141,6 +61,7 @@ def execute_order(
             "ENTRY_FILLED_AWAITING_POSITION_SYNC",
             "PARTIAL_FILL_PENDING",
             "PARTIAL_FILL",
+            "ORDER_LOOKUP_FAILED",
         }:
             bot.log(
                 f"🧷 RECOVERY_GUARD {symbol}: estado pendiente detectado ({existing_status}). Se bloquea nueva apertura para evitar duplicado tras reinicio."
@@ -169,13 +90,10 @@ def execute_order(
         )
         return "CONFIDENCE_STAGNATION_LOCK"
 
-    req_shadow = is_shadow
-    degradation_reason = "UNKNOWN"
-    signal_ts = allocate_signal_timestamp()
-    instance_id = getattr(bot, "instance_uuid", "default")
-    entry_client_order_id, sl_client_order_id, tp_client_order_id = generate_order_ids(
-        symbol, side, signal_ts, instance_id
-    )
+    return None
+
+
+def _validate_symbol_entry(bot, symbol: str, is_shadow: bool) -> Optional[str]:
     symbol_base = symbol.split("/")[0]
     controls = bot._load_runtime_symbol_controls()
     if symbol_base in controls.get("blocked", set()):
@@ -194,6 +112,193 @@ def execute_order(
                 f"🚫 SYMBOL_QUARANTINE_ACTIVE {symbol}: bloqueada apertura real por degradación cancel_all ({remaining_s}s restantes)."
             )
             return "SYMBOL_QUARANTINED"
+
+    return None
+
+
+def _calculate_pnl_and_metrics(
+    trade: Dict[str, Any],
+    exit_price: float,
+    fees: float,
+    side: str,
+) -> Dict[str, Any]:
+    amt = float(trade["amount"])
+    pnl_bruto_usd = (exit_price - trade["entry"]) * amt
+    if side == "SELL":
+        pnl_bruto_usd *= -1
+
+    pnl_neto_usd = pnl_bruto_usd - fees
+    val = trade["entry"] * amt
+    pnl_neto_percent = (pnl_neto_usd / val) * 100 if val > 0 else 0
+
+    entry_price = trade["entry"]
+    mae_price = trade.get("mae_price", entry_price)
+    mfe_price = trade.get("mfe_price", entry_price)
+
+    if side == "BUY":
+        mae_percent = ((entry_price - mae_price) / entry_price) * 100 if mae_price else 0
+        mfe_percent = ((mfe_price - entry_price) / entry_price) * 100 if mfe_price else 0
+    else:
+        mae_percent = ((mae_price - entry_price) / entry_price) * 100 if mae_price else 0
+        mfe_percent = ((entry_price - mfe_price) / entry_price) * 100 if mfe_price else 0
+
+    return {
+        "amt": amt,
+        "pnl_bruto_usd": pnl_bruto_usd,
+        "pnl_neto_usd": pnl_neto_usd,
+        "pnl_neto_percent": pnl_neto_percent,
+        "mae_percent": mae_percent,
+        "mfe_percent": mfe_percent,
+    }
+
+
+def _safe_log_signal_alert(bot, **kwargs) -> None:
+    brain = getattr(bot, "brain", None)
+    method = getattr(brain, "log_signal_alert", None)
+    lock = getattr(bot, "db_lock", None)
+    if not callable(method):
+        return
+    with (lock or nullcontext()):
+        method(**kwargs)
+
+
+def _safe_update_signal_alert_status(bot, entry_client_order_id, status) -> None:
+    brain = getattr(bot, "brain", None)
+    method = getattr(brain, "update_signal_alert_status", None)
+    lock = getattr(bot, "db_lock", None)
+    if not callable(method):
+        return
+    with (lock or nullcontext()):
+        method(entry_client_order_id, status)
+
+
+def _normalize_position_symbol(pos_symbol: str) -> str:
+    raw = str(pos_symbol or "").split(":")[0]
+    if "/" in raw:
+        return raw
+    if raw.endswith("USDT") and len(raw) > 4:
+        return f"{raw[:-4]}/{raw[-4:]}"
+    return raw
+
+
+def _order_looks_filled(order: dict) -> bool:
+    if not isinstance(order, dict):
+        return False
+    status = str(
+        order.get("status") or (order.get("info") or {}).get("status") or ""
+    ).lower()
+    return status in {"closed", "filled"}
+
+
+def _exchange_position_is_flat(bot, symbol: str) -> bool:
+    fetch_positions = getattr(getattr(bot, "execution", None), "fetch_positions", None)
+    if not callable(fetch_positions):
+        raise RuntimeError(
+            "No se puede confirmar exposición cero: fetch_positions no disponible"
+        )
+
+    positions = fetch_positions() or []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        if _normalize_position_symbol(pos.get("symbol", "")) != symbol:
+            continue
+        contracts = pos.get("contracts")
+        if contracts is None:
+            contracts = (pos.get("info") or {}).get("positionAmt", 0)
+        if abs(float(contracts or 0.0)) > 0.0:
+            return False
+    return True
+
+
+def _sanitize_context(bot, context):
+    data_service = getattr(bot, "data_service", None)
+    sanitizer = getattr(data_service, "sanitize_context", None)
+    if callable(sanitizer):
+        return sanitizer(context)
+    if isinstance(context, dict):
+        return dict(context)
+    return {}
+
+
+def _get_local_open_trade_counts(bot):
+    open_statuses = {
+        "OPEN",
+        "PENDING_SEND",
+        "PENDING_EXCHANGE_OPEN",
+        "ENTRY_FILLED_AWAITING_POSITION_SYNC",
+        "PARTIAL_FILL_PENDING",
+        "PARTIAL_FILL",
+    }
+    states = {}
+    try:
+        states.update(getattr(bot, "active_trades", {}) or {})
+    except Exception as error:
+        logger = getattr(bot, "log", None)
+        if callable(logger):
+            logger(f"🛑 No se pudo leer active_trades local para conteo: {error}")
+        return int(getattr(Config, "MAX_OPEN_TRADES", 1)), int(
+            getattr(Config, "MAX_SHADOW_TRADES", 0)
+        )
+
+    brain = getattr(bot, "brain", None)
+    loader = getattr(brain, "load_active_trade_states", None)
+    if callable(loader):
+        try:
+            for symbol, state in (loader() or {}).items():
+                states.setdefault(symbol, state)
+        except Exception as error:
+            logger = getattr(bot, "log", None)
+            if callable(logger):
+                logger(f"🛑 No se pudo cargar estado persistido para conteo: {error}")
+            return int(getattr(Config, "MAX_OPEN_TRADES", 1)), int(
+                getattr(Config, "MAX_SHADOW_TRADES", 0)
+            )
+
+    num_real = 0
+    num_shadow = 0
+    for state in states.values():
+        if not isinstance(state, dict):
+            continue
+        status = str(state.get("status") or "").upper()
+        if status not in open_statuses:
+            continue
+        if bool(state.get("is_shadow", False)):
+            num_shadow += 1
+        else:
+            num_real += 1
+    return num_real, num_shadow
+
+
+def execute_order(
+    bot,
+    symbol: str,
+    side: str,
+    price: float,
+    atr: float,
+    is_shadow: bool = False,
+    vol: float = 0,
+    context: Optional[Dict[str, Any]] = None,
+    ob_status: str = "⚪",
+    override_usd_size: float = 0.0,
+) -> str:
+    precheck = _validate_entry_preconditions(bot, symbol, is_shadow)
+    if precheck:
+        return precheck
+
+    req_shadow = is_shadow
+    degradation_reason = "UNKNOWN"
+    signal_ts = allocate_signal_timestamp()
+    instance_id = getattr(bot, "instance_uuid", "default")
+    entry_client_order_id, sl_client_order_id, tp_client_order_id = generate_order_ids(
+        symbol, side, signal_ts, instance_id
+    )
+    symbol_check = _validate_symbol_entry(bot, symbol, is_shadow)
+    if symbol_check:
+        return symbol_check
+
+    symbol_base = symbol.split("/")[0]
+    controls = bot._load_runtime_symbol_controls()
 
     execution_mode = "SHADOW" if is_shadow else ("PAPER" if Config.PAPER_MODE else "REAL")
 
@@ -676,19 +781,45 @@ def execute_order(
                 bot.available_balance -= margin_used
             else:
                 bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol}")
+                reject_reason = str(
+                    getattr(bot.execution, "last_entry_reject_error", "")
+                    or "EXECUTION_FAILED"
+                )[:220]
                 append_execution_event(
                     bot,
                     "ENTRY_ORDER_REJECTED",
                     {
                         "symbol": symbol,
                         "entry_client_order_id": entry_client_order_id,
-                        "reason": str(
-                            getattr(bot.execution, "last_entry_reject_error", "")
-                            or "EXECUTION_FAILED"
-                        )[:220],
+                        "reason": reject_reason,
                     },
                 )
                 _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
+
+                pending_state["status"] = "ENTRY_ACK_UNKNOWN"
+                pending_state["entry_reject_reason"] = reject_reason
+                pending_state["intent_last_check_at_utc"] = utc_now_iso()
+                pending_state["intent_check_attempts"] = int(
+                    pending_state.get("intent_check_attempts", 0) or 0
+                ) + 1
+                with bot.lock:
+                    bot.active_trades[symbol] = pending_state
+                with bot.db_lock:
+                    bot.brain.save_active_trade_state(symbol, pending_state)
+                append_execution_event(
+                    bot,
+                    "ENTRY_ACK_UNKNOWN_PERSISTED",
+                    {
+                        "symbol": symbol,
+                        "entry_client_order_id": entry_client_order_id,
+                        "reason": reject_reason,
+                    },
+                )
+                if not Config.PAPER_MODE:
+                    bot.integrity_lock_active = True
+                    with bot.db_lock:
+                        bot.brain.save_active_trade_state(symbol, pending_state)
+                    return "ENTRY_ACK_UNKNOWN"
                 _drop_pending_intent()
                 return "EXECUTION_FAILED"
         elif not is_shadow and Config.PAPER_MODE:
@@ -866,6 +997,24 @@ def close_trade(
                 if order:
                     bot.log(f"✅ CIERRE EXITOSO: {symbol} ID: {order.get('id', 'N/A')}")
 
+                exit_state = str((order or {}).get("exit_state") or "").upper()
+                if exit_state in {"STUCK", "FAILED", "OPEN_UNCONFIRMED"}:
+                    raise RuntimeError(
+                        f"Cierre no finalizado para {symbol}; exit_state={exit_state}"
+                    )
+
+                if not _exchange_position_is_flat(bot, symbol):
+                    order_status = str((order or {}).get("status") or "UNKNOWN")
+                    raise RuntimeError(
+                        f"Cierre no confirmado en exchange para {symbol}; "
+                        f"order_status={order_status}"
+                    )
+
+                if order and not _order_looks_filled(order):
+                    bot.log(
+                        f"⚠️ {symbol}: exposición remota plana aunque la orden reporta status={order.get('status', 'N/A')}"
+                    )
+
                 if latency_context and latency_context.get("signal_ts") is not None:
                     signal_to_api_ms = (
                         pre_api_ts - float(latency_context["signal_ts"])
@@ -886,6 +1035,18 @@ def close_trade(
                 if any(
                     x in str(e).lower() for x in ["notional", "-4164", "insufficient"]
                 ):
+                    try:
+                        if not _exchange_position_is_flat(bot, symbol):
+                            raise RuntimeError(
+                                f"{symbol}: error de dust/min notional pero exposición remota sigue abierta"
+                            )
+                    except Exception as verify_error:
+                        bot.log(f"🚨 DUST_VERIFY_FAILED {symbol}: {verify_error}")
+                        send_telegram_msg(
+                            f"⚠️ *FALLO DE CIERRE REAL*\n{symbol}: no se pudo confirmar exposición cero tras error dust/minNotional. {verify_error}"
+                        )
+                        raise verify_error
+
                     bot.log(f"⚠️ {symbol} descartado localmente (Dust/Min Notional).")
                     send_telegram_msg(
                         f"⚠️ *AVISO DUST*\n{symbol} cerrado virtualmente por monto bajo."
@@ -925,34 +1086,18 @@ def close_trade(
                     f"⏱️ SMART_EXIT_LATENCY {symbol} trigger={trigger} total_ms={total_ms:.1f} simulated=1 (PAPER/SHADOW)"
                 )
 
-        amt = float(trade["amount"])
-        pnl_bruto_usd = (exit_price - trade["entry"]) * amt
-        if trade["side"] == "SELL":
-            pnl_bruto_usd *= -1
-
-        pnl_neto_usd = pnl_bruto_usd - fees
-        val = trade["entry"] * amt
-        pnl_neto_percent = (pnl_neto_usd / val) * 100 if val > 0 else 0
-
+        side = trade.get("side", "BUY")
+        pnl_metrics = _calculate_pnl_and_metrics(
+            trade, exit_price, fees, side
+        )
         entry_price = trade["entry"]
         mae_price = trade.get("mae_price", entry_price)
         mfe_price = trade.get("mfe_price", entry_price)
-        side = trade.get("side", "BUY")
-
-        if side == "BUY":
-            mae_percent = (
-                ((entry_price - mae_price) / entry_price) * 100 if mae_price else 0
-            )
-            mfe_percent = (
-                ((mfe_price - entry_price) / entry_price) * 100 if mfe_price else 0
-            )
-        else:
-            mae_percent = (
-                ((mae_price - entry_price) / entry_price) * 100 if mae_price else 0
-            )
-            mfe_percent = (
-                ((entry_price - mfe_price) / entry_price) * 100 if mfe_price else 0
-            )
+        amt = pnl_metrics["amt"]
+        pnl_neto_usd = pnl_metrics["pnl_neto_usd"]
+        pnl_neto_percent = pnl_metrics["pnl_neto_percent"]
+        mae_percent = pnl_metrics["mae_percent"]
+        mfe_percent = pnl_metrics["mfe_percent"]
 
         pm_data = label_exit_reason(
             reason=reason,
@@ -1267,11 +1412,29 @@ def close_trade(
 
         bot._update_dynamic_risk()
     except Exception as e:
+        error_str = str(e).upper()
+        is_stuck_or_unconfirmed = any(
+            x in error_str for x in ["STUCK", "OPEN_UNCONFIRMED", "EXIT_STATE="]
+        )
+
         with bot.lock:
             current = bot.active_trades.get(symbol)
             if current:
                 current["closing_in_progress"] = False
-                current["status"] = "OPEN"
+                if is_stuck_or_unconfirmed and not (trade.get("is_shadow", False) or Config.PAPER_MODE):
+                    current["status"] = "EXIT_STUCK"
+                    bot.integrity_lock_active = True
+                    setattr(bot, "halt_system_active", True)
+                    bot.log(
+                        f"🛑 CIERRE_STUCK {symbol}: estado EXIT_STUCK, HALT activado. "
+                        f"Requiere intervención manual."
+                    )
+                    send_telegram_msg(
+                        f"🛑 *CIERRE_STUCK* {symbol} falló y activó HALT. "
+                        f"Error: {str(e)[:100]}. Requiere intervención manual."
+                    )
+                else:
+                    current["status"] = "OPEN"
         with bot.db_lock:
             current = bot.active_trades.get(symbol)
             if current:

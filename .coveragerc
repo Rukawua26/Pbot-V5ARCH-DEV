@@ -1,0 +1,12 @@
+[run]
+source = core
+omit =
+    */__pycache__/*
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 35
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

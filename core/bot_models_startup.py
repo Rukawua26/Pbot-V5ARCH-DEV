@@ -1,5 +1,4 @@
 import os
-import pickle
 import platform
 import sys
 import threading
@@ -9,6 +8,7 @@ import ccxt
 import joblib
 import pandas as pd
 
+from core.model_loader import safe_pickle_load
 from notifier import send_telegram_msg
 
 
@@ -40,8 +40,7 @@ def init_models_and_startup_tasks(
 
         if os.path.exists(advanced_model_path):
             try:
-                with open(advanced_model_path, "rb") as file_obj:
-                    bot.ghost_model = pickle.load(file_obj)
+                bot.ghost_model = safe_pickle_load(advanced_model_path)
                 bot.ghost_model_type = "ADVANCED_ENSEMBLE"
                 bot.bootstrap_heuristic_mode = False
                 bot.log(
@@ -61,8 +60,7 @@ def init_models_and_startup_tasks(
 
         if bot.ghost_model_type == "OFF":
             if os.path.exists(pro_model_path):
-                with open(pro_model_path, "rb") as file_obj:
-                    bot.ghost_model = pickle.load(file_obj)
+                bot.ghost_model = safe_pickle_load(pro_model_path)
                 bot.ghost_model_type = "PRO_ENSEMBLE"
                 bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (PRO v2): Ensemble cargado.")
@@ -77,16 +75,14 @@ def init_models_and_startup_tasks(
                 bot.log("👻 Agente Ghost (LSTM): Red Neuronal cargada.")
                 send_telegram_msg("🧠 *IA Nivel 5 (LSTM Neural Network) operativa*")
             elif os.path.exists("ghost_brain.pkl"):
-                with open("ghost_brain.pkl", "rb") as file_obj:
-                    bot.ghost_model = pickle.load(file_obj)
+                bot.ghost_model = safe_pickle_load("ghost_brain.pkl")
                 bot.ghost_model_type = "RF"
                 bot.bootstrap_heuristic_mode = False
                 bot.log("👻 Agente Ghost (Random Forest): Cerebro cargado.")
                 send_telegram_msg("🧠 *IA Nivel 4 (Random Forest) operativa*")
             elif os.path.exists(agent_models_path):
                 try:
-                    with open(agent_models_path, "rb") as file_obj:
-                        bot.ghost_model = pickle.load(file_obj)
+                    bot.ghost_model = safe_pickle_load(agent_models_path)
                     bot.ghost_model_type = "AGENT_MODELS"
                     bot.bootstrap_heuristic_mode = False
                     bot.log(

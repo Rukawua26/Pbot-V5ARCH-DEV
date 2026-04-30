@@ -8,6 +8,9 @@ from core.time_utils import parse_datetime_utc, utc_now
 from notifier import send_telegram_msg
 
 
+_OPEN_ENTRY_ORDER_LOOKUP_FAILED = object()
+
+
 def _bool_reduce_only(order: dict) -> bool:
     info = order.get("info") or {}
     raw = info.get("reduceOnly", order.get("reduceOnly", False))
@@ -58,6 +61,45 @@ def _is_immediate_trigger_rejection(error_text: str) -> bool:
     )
 
 
+def _normalize_position_symbol(pos_symbol: str) -> str:
+    raw = str(pos_symbol or "").split(":")[0]
+    if "/" in raw:
+        return raw
+    if raw.endswith("USDT") and len(raw) > 4:
+        return f"{raw[:-4]}/{raw[-4:]}"
+    return raw
+
+
+def _exchange_position_is_flat(bot, symbol: str) -> bool:
+    fetch_positions = getattr(getattr(bot, "execution", None), "fetch_positions", None)
+    if not callable(fetch_positions):
+        return False
+    positions = fetch_positions() or []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        if _normalize_position_symbol(pos.get("symbol", "")) != symbol:
+            continue
+        amount = pos.get("contracts")
+        if amount is None:
+            amount = (pos.get("info") or {}).get("positionAmt", 0)
+        if abs(float(amount or 0.0)) > 0.0:
+            return False
+    return True
+
+
+def _halt_wallet_sync(bot, reason: str, details: dict | None = None) -> None:
+    bot.is_paused = True
+    bot.integrity_lock_active = True
+    setattr(bot, "halt_system_active", True)
+    payload = dict(details or {})
+    payload["reason"] = reason
+    with bot.db_lock:
+        bot.brain.save_error_snapshot("SYSTEM", "WALLET_SYNC_HALT", payload)
+    append_execution_event(bot, "WALLET_SYNC_HALT", payload)
+    bot.log(f"🛑 WALLET_SYNC_HALT: {reason}")
+
+
 def _emergency_market_close_unprotected(
     bot, symbol: str, trade: dict, amount: float, sl_error: str
 ):
@@ -74,8 +116,13 @@ def _emergency_market_close_unprotected(
             bot.execution.close_position(
                 symbol, str(trade.get("side") or "BUY"), amount
             )
-            close_ok = True
-            break
+            if _exchange_position_is_flat(bot, symbol):
+                close_ok = True
+                break
+            last_close_error = "close order accepted but exchange position still open"
+            bot.log(
+                f"⚠️ EMERGENCY_CLOSE {symbol}: cierre no confirmado, exposición sigue abierta"
+            )
         except Exception as close_error:
             last_close_error = str(close_error)
             bot.log(
@@ -113,6 +160,10 @@ def _emergency_market_close_unprotected(
     bot.is_paused = True
     bot.integrity_lock_active = True
     setattr(bot, "halt_system_active", True)
+    trade["status"] = "EMERGENCY_CLOSE_PENDING"
+    trade["closing_in_progress"] = True
+    with bot.db_lock:
+        bot.brain.save_active_trade_state(symbol, trade)
     bot.log(
         f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado tras 3 intentos."
     )
@@ -231,8 +282,14 @@ def _find_open_entry_order(bot, symbol: str, trade: dict):
         return None
     try:
         open_orders = fetch_open_orders(symbol) or []
-    except Exception:
-        return None
+    except Exception as error:
+        bot.log(f"⚠️ No se pudo inspeccionar orden entry abierta de {symbol}: {error}")
+        append_execution_event(
+            bot,
+            "PARTIAL_FILL_ENTRY_LOOKUP_FAILED",
+            {"symbol": symbol, "error": str(error)[:180]},
+        )
+        return _OPEN_ENTRY_ORDER_LOOKUP_FAILED
     orders_iter = open_orders if isinstance(open_orders, (list, tuple)) else []
     entry_order_id = str(trade.get("entry_exchange_order_id") or "")
     entry_coid = str(trade.get("entry_client_order_id") or "")
@@ -272,6 +329,14 @@ def _manage_partial_fill_trade(bot, symbol: str, trade: dict, info: dict):
     remaining_estimated = max(0.0, requested_amount - executed_amount)
 
     open_entry_order = _find_open_entry_order(bot, symbol, trade)
+    if open_entry_order is _OPEN_ENTRY_ORDER_LOOKUP_FAILED:
+        trade["remaining_amount"] = remaining_estimated
+        trade["status"] = "PARTIAL_FILL_PENDING"
+        trade["partial_fill_pending"] = True
+        with bot.db_lock:
+            bot.brain.save_active_trade_state(symbol, trade)
+        return
+
     if open_entry_order is None:
         trade["remaining_amount"] = 0.0
         trade["partial_fill_pending"] = False
@@ -363,6 +428,13 @@ def sync_wallet(bot):
         if not positions and any(
             not trade.get("is_shadow") for trade in active_trades_snapshot.values()
         ):
+            if not Config.PAPER_MODE:
+                _halt_wallet_sync(
+                    bot,
+                    "EMPTY_POSITIONS_WITH_LOCAL_REAL_TRADES",
+                    {"local_symbols": list(active_trades_snapshot.keys())},
+                )
+                return
             if bot.get_current_balance() == 0:
                 return  # Si balance es 0 y pos es 0, ok. Si no, sospechoso.
 
@@ -517,3 +589,9 @@ def sync_wallet(bot):
                     )
     except Exception as error:
         bot.log(f"⚠️ Error Sync: {error}")
+        if not Config.PAPER_MODE:
+            _halt_wallet_sync(
+                bot,
+                "WALLET_SYNC_EXCEPTION",
+                {"error": str(error)[:220]},
+            )

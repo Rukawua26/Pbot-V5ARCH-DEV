@@ -122,11 +122,12 @@ def connect_to_binance(bot):
                         f"ℹ️ Modo de Posición: {'HEDGE' if bot.is_hedge_mode else 'ONE-WAY'}"
                     )
                 except Exception as error:
-                    # No es crítico, asumimos One-Way por defecto
-                    bot.is_hedge_mode = False
-                    bot.log(
-                        f"⚠️ No se pudo detectar modo Hedge/OneWay, asumiendo ONE-WAY: {error}"
-                    )
+                    bot.is_paused = True
+                    bot.integrity_lock_active = True
+                    setattr(bot, "halt_system_active", True)
+                    raise RuntimeError(
+                        f"No se pudo detectar modo Hedge/OneWay en REAL: {error}"
+                    ) from error
             except Exception as error:
                 bot.log(
                     f"❌ CONEXIÓN RECHAZADA: Error verificando permisos/balance. Revise sus API Keys. {error}"
