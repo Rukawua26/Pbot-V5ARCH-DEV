@@ -4,6 +4,10 @@
 .venv
 .env
 data/
+data_storage/
+backups/
+logs/
+models/
 *.db
 *.db-wal
 *.db-shm
@@ -15,4 +19,6 @@ __pycache__
 tests/
 tools/
 *.log
+.coverage
+.sniperai.lock
 .DS_Store

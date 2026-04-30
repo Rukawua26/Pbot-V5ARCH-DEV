@@ -9,6 +9,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 venv/
+.venv/
+.coverage
+htmlcov/
 
 # Local runtime artifacts
 *.log*
@@ -29,6 +32,8 @@ models/
 
 # Data/cache artifacts
 data_storage/
+backups/
+docs/reports/*.csv
 
 # OS/editor
 .DS_Store

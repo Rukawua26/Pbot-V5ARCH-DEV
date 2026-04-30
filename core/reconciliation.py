@@ -3,6 +3,7 @@ import hashlib
 from config import Config
 from core.config.operational import OperationalConfig
 from core.execution_telemetry import append_execution_event
+from core.symbol_utils import normalize_position_symbol
 from notifier import send_telegram_msg
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 
@@ -73,9 +74,8 @@ def validate_binance_limits(order_id: str) -> None:
         )
 
 
-# --- Funciones legacy (deprecadas) ---
-# Mantenidas solo para compatibilidad con código existente.
-# NO USAR en nuevo código. Usar generate_order_ids() en su lugar.
+# --- Funciones legacy ---
+# Mantenidas para compatibilidad con código existente.
 
 
 def generate_client_order_id(
@@ -87,27 +87,6 @@ def generate_client_order_id(
     """
     entry_id, _, _ = generate_order_ids(symbol, side, signal_ts, instance_id)
     return entry_id
-
-
-def generate_child_client_order_id(entry_client_order_id: str, leg: str) -> str:
-    """DEPRECADO: Usar generate_order_ids().
-
-    Esta función generaba IDs concatenando el ID de entrada completo,
-    lo cual excedía el límite de 36 caracteres de Binance.
-    """
-    raise NotImplementedError(
-        "generate_child_client_order_id está deprecada. "
-        "Usar generate_order_ids() para generar todos los IDs desde una semilla común."
-    )
-
-
-def _normalize_position_symbol(pos_symbol: str) -> str:
-    raw = pos_symbol.split(":")[0]
-    if "/" in raw:
-        return raw
-    if raw.endswith("USDT") and len(raw) > 4:
-        return f"{raw[:-4]}/{raw[-4:]}"
-    return raw
 
 
 def _extract_client_order_id(order: dict) -> str:
@@ -128,7 +107,7 @@ def _build_open_order_index(open_orders):
     for order in open_orders or []:
         if not isinstance(order, dict):
             continue
-        symbol = _normalize_position_symbol(order.get("symbol", ""))
+        symbol = normalize_position_symbol(order.get("symbol", ""))
         if symbol:
             by_symbol.setdefault(symbol, []).append(order)
         coid = _extract_client_order_id(order)
@@ -269,7 +248,7 @@ def reconcile_bootstrap_state(bot):
             amount = float(pos.get("contracts") or 0)
             if abs(amount) <= 0:
                 continue
-            symbol = _normalize_position_symbol(pos.get("symbol", ""))
+            symbol = normalize_position_symbol(pos.get("symbol", ""))
             if not symbol:
                 continue
             side = "BUY"
@@ -679,7 +658,7 @@ def recover_halt_if_exchange_consistent(bot, required_snapshots: int = 2) -> tup
         if amount is None:
             amount = (pos.get("info") or {}).get("positionAmt", 0)
         if abs(float(amount or 0.0)) > 0.0:
-            exchange_symbols.append(_normalize_position_symbol(pos.get("symbol", "")))
+            exchange_symbols.append(normalize_position_symbol(pos.get("symbol", "")))
     exchange_symbols = sorted(symbol for symbol in exchange_symbols if symbol)
     if exchange_symbols:
         return False, f"RECOVERY_BLOCKED_EXCHANGE_EXPOSURE: {', '.join(exchange_symbols)}"

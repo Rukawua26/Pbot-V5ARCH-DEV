@@ -18,7 +18,6 @@ _BASE_DIR = os.path.dirname(
 
 try:
     import pyarrow
-    import pyarrow.parquet as pq
 
     HAS_PARQUET = True
 except ImportError:

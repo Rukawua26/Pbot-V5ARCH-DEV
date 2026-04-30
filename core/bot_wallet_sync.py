@@ -4,6 +4,7 @@ import time
 from config import Config
 from core.execution_telemetry import append_execution_event
 from core.reconciliation import generate_child_client_order_id
+from core.symbol_utils import normalize_position_symbol
 from core.time_utils import parse_datetime_utc, utc_now
 from notifier import send_telegram_msg
 
@@ -61,15 +62,6 @@ def _is_immediate_trigger_rejection(error_text: str) -> bool:
     )
 
 
-def _normalize_position_symbol(pos_symbol: str) -> str:
-    raw = str(pos_symbol or "").split(":")[0]
-    if "/" in raw:
-        return raw
-    if raw.endswith("USDT") and len(raw) > 4:
-        return f"{raw[:-4]}/{raw[-4:]}"
-    return raw
-
-
 def _exchange_position_is_flat(bot, symbol: str) -> bool:
     fetch_positions = getattr(getattr(bot, "execution", None), "fetch_positions", None)
     if not callable(fetch_positions):
@@ -78,7 +70,7 @@ def _exchange_position_is_flat(bot, symbol: str) -> bool:
     for pos in positions:
         if not isinstance(pos, dict):
             continue
-        if _normalize_position_symbol(pos.get("symbol", "")) != symbol:
+        if normalize_position_symbol(pos.get("symbol", "")) != symbol:
             continue
         amount = pos.get("contracts")
         if amount is None:

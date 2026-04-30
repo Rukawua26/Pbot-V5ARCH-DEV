@@ -12,6 +12,7 @@ from core.reconciliation import (
     allocate_signal_timestamp,
     generate_order_ids,
 )
+from core.symbol_utils import normalize_position_symbol
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 from learning import shadow_logger
 from notifier import Priority, send_telegram_msg, send_telegram_photo
@@ -172,15 +173,6 @@ def _safe_update_signal_alert_status(bot, entry_client_order_id, status) -> None
         method(entry_client_order_id, status)
 
 
-def _normalize_position_symbol(pos_symbol: str) -> str:
-    raw = str(pos_symbol or "").split(":")[0]
-    if "/" in raw:
-        return raw
-    if raw.endswith("USDT") and len(raw) > 4:
-        return f"{raw[:-4]}/{raw[-4:]}"
-    return raw
-
-
 def _order_looks_filled(order: dict) -> bool:
     if not isinstance(order, dict):
         return False
@@ -201,7 +193,7 @@ def _exchange_position_is_flat(bot, symbol: str) -> bool:
     for pos in positions:
         if not isinstance(pos, dict):
             continue
-        if _normalize_position_symbol(pos.get("symbol", "")) != symbol:
+        if normalize_position_symbol(pos.get("symbol", "")) != symbol:
             continue
         contracts = pos.get("contracts")
         if contracts is None:
