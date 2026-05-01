@@ -547,6 +547,19 @@ def execute_order(
         "intent_last_check_at_utc": None,
         "intent_check_attempts": 0,
     }
+    append_execution_event(
+        bot,
+        "ORDER_INTENT_CREATED",
+        {
+            "symbol": symbol,
+            "side": side,
+            "is_shadow": bool(is_shadow),
+            "entry_client_order_id": entry_client_order_id,
+            "requested_price": float(price),
+            "requested_amount": float(amount),
+            "notional_usd": float(calculated_position_size),
+        },
+    )
     with bot.db_lock:
         persisted = bot.brain.save_active_trade_state(symbol, pending_state)
     append_execution_event(
@@ -694,6 +707,19 @@ def execute_order(
                         "status": str(order.get("status") or ""),
                     },
                 )
+                append_execution_event(
+                    bot,
+                    "ORDER_FILLED",
+                    {
+                        "symbol": symbol,
+                        "side": side,
+                        "is_shadow": False,
+                        "entry_client_order_id": entry_client_order_id,
+                        "exchange_order_id": order.get("id"),
+                        "filled_amount": filled_amount,
+                        "avg_fill_price": avg_fill_price,
+                    },
+                )
                 if remaining_amount > 0.0:
                     append_execution_event(
                         bot,
@@ -753,6 +779,19 @@ def execute_order(
                     _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
                     _drop_pending_intent()
                     return "ENTRY_ABORTED_NO_HARD_SL"
+
+                append_execution_event(
+                    bot,
+                    "ORDER_PROTECTION_ATTACHED",
+                    {
+                        "symbol": symbol,
+                        "side": side,
+                        "entry_client_order_id": entry_client_order_id,
+                        "sl_client_order_id": sl_client_order_id,
+                        "sl_exchange_order_id": sl_order.get("id"),
+                        "sl_price": float(sl_val),
+                    },
+                )
 
                 send_telegram_msg(
                     f"🚀 *🔥 REAL TRADE ABIERTO*\n"
@@ -816,11 +855,36 @@ def execute_order(
                 return "EXECUTION_FAILED"
         elif not is_shadow and Config.PAPER_MODE:
             bot.log(f"📝 PAPER TRADE (Simulado): {side} {symbol} (${final_usd:.2f})")
+            append_execution_event(
+                bot,
+                "ORDER_FILLED",
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "is_shadow": False,
+                    "simulated_real": True,
+                    "entry_client_order_id": entry_client_order_id,
+                    "filled_amount": float(amount),
+                    "avg_fill_price": float(price),
+                },
+            )
             send_telegram_msg(
                 f"📝 *PAPER TRADE (SIMULACRO)*\n🔹 {symbol}\n🔸 Lado: {side}\n💰 Precio: {price}\n📊 Notional: ${final_usd:.2f}\n⚠️ *AVISO:* Bot en modo PAPER."
             )
         else:
             bot.log(f"👻 SHADOW {side} {symbol} (${final_usd:.2f})")
+            append_execution_event(
+                bot,
+                "ORDER_FILLED",
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "is_shadow": True,
+                    "entry_client_order_id": entry_client_order_id,
+                    "filled_amount": float(amount),
+                    "avg_fill_price": float(price),
+                },
+            )
             send_telegram_msg(
                 f"👻 *SHADOW TRADE ABIERTO*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"

@@ -15,6 +15,29 @@ from core.commands.ops import (
 
 class OpsForceClearTest(unittest.TestCase):
     @patch("core.commands.ops.send_telegram_msg")
+    def test_pipeline_reports_hmm_and_ws_state(self, mocked_tg):
+        bot = SimpleNamespace(
+            market_regime="BULL_TREND",
+            market_regime_source="HMM",
+            market_regime_confidence=0.87,
+            market_btc_price=65000.0,
+            market_btc_price_source="WS_TICKER",
+            market_btc_price_ts=10.0,
+        )
+
+        with patch("core.commands.ops.monotonic_now", return_value=12.5):
+            handled = _handle_misc_commands(bot, "/pipeline")
+
+        self.assertTrue(handled)
+        mocked_tg.assert_called_once()
+        msg = mocked_tg.call_args[0][0]
+        self.assertIn("PIPELINE STATUS", msg)
+        self.assertIn("BULL_TREND", msg)
+        self.assertIn("87.0%", msg)
+        self.assertIn("WS_TICKER", msg)
+        self.assertIn("2.5s", msg)
+
+    @patch("core.commands.ops.send_telegram_msg")
     def test_sre_intent_reports_ratio(self, mocked_tg):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "execution_events.jsonl"

@@ -1,3 +1,6 @@
+from core.time_utils import monotonic_now
+
+
 def collect_telemetry(bot, logger):
     """Collect runtime/service metrics for UI refresh."""
     stats = {}
@@ -26,9 +29,16 @@ def collect_telemetry(bot, logger):
             )
 
         # 2. Market and global state data
+        ws_btc_ts = float(getattr(bot, "market_btc_price_ts", 0.0) or 0.0)
+        ws_btc_age = monotonic_now() - ws_btc_ts if ws_btc_ts > 0 else None
         stats.update(
             {
                 "btc_price": getattr(bot, "market_btc_price", 0),
+                "btc_price_source": getattr(bot, "market_btc_price_source", "UNKNOWN"),
+                "btc_ws_age_seconds": ws_btc_age,
+                "market_regime": getattr(bot, "market_regime", "UNKNOWN"),
+                "market_regime_source": getattr(bot, "market_regime_source", "UNKNOWN"),
+                "market_regime_confidence": getattr(bot, "market_regime_confidence", None),
                 "btc_panic": getattr(bot, "btc_panic", False),
                 "fear_greed": getattr(bot, "fear_greed", 50),
                 "circuit_breaker": getattr(bot, "circuit_breaker_active", False),

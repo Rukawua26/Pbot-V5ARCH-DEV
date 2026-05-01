@@ -122,7 +122,13 @@ class Strategy:
             > (base_df["ema"].iloc[-1] if "ema" in base_df.columns else precio)
             else "DOWN"
         )
-        regime = StrategyUtils.detect_market_regime(atr_pct, adx, base_trend)
+        market_regime = str(kwargs.get("market_regime") or "").upper()
+        if market_regime in ["BULL_TREND", "BEAR_TREND", "RANGE"]:
+            regime = market_regime
+        elif adx >= float(getattr(Config, "ADX_TREND_THRESHOLD", 20)):
+            regime = "BULL_TREND" if base_trend == "UP" else "BEAR_TREND"
+        else:
+            regime = "RANGE"
 
         # 4. Preparación del Contexto para Agentes
         context = {

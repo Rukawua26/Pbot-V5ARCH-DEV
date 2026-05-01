@@ -45,7 +45,7 @@ from core.bot_runtime_monitor import (
     get_rss_mb,
     run_runtime_monitor_loop,
 )
-from core.bot_market_state import detect_market_regime
+from core.bot_market_state import detect_market_regime, warmup_hmm_regime
 from core.bot_telemetry import collect_telemetry
 from core.bot_ml_health import check_ml_models_health
 from core.bot_wallet_sync import sync_wallet as run_wallet_sync
@@ -175,6 +175,7 @@ class Bot(BotFacade):
 
         self._init_core_services_and_engines()
         self._init_runtime_state()
+        self._warmup_hmm_regime()
         self._init_realtime_and_monitoring()
         self._init_models_and_startup_tasks()
 
@@ -311,6 +312,9 @@ class Bot(BotFacade):
 
     def _get_market_regime(self) -> str:
         return detect_market_regime(self)
+
+    def _warmup_hmm_regime(self) -> bool:
+        return warmup_hmm_regime(self)
 
     def connect(self):
         return connect_to_binance(self)

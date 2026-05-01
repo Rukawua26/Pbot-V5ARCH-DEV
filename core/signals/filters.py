@@ -1,5 +1,6 @@
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown
+from core.execution_telemetry import append_execution_event
 from core.time_utils import utc_now, utc_now_iso
 from strategy import Strategy
 
@@ -50,6 +51,48 @@ def _evaluate_bootstrap_heuristic(audit_signal, ctx):
         "bootstrap_ready_shadow": hit_count >= 4,
         "bootstrap_ready_real": hit_count >= 5,
     }
+
+
+def _resolve_btc_regime_adjustment(audit_signal, btc_regime):
+    regime_weight = 1.0
+    regime_reason = "N/A"
+    range_veto = False
+
+    if btc_regime == "BULL_TREND":
+        if audit_signal == "BUY":
+            regime_weight = 1.15
+            regime_reason = "BULL_ALIGNED"
+        else:
+            regime_weight = 0.85
+            regime_reason = "BULL_COUNTER"
+    elif btc_regime == "BEAR_TREND":
+        if audit_signal == "SELL":
+            regime_weight = 1.15
+            regime_reason = "BEAR_ALIGNED"
+        else:
+            regime_weight = 0.85
+            regime_reason = "BEAR_COUNTER"
+    elif btc_regime == "RANGE":
+        regime_weight = max(0.0, float(getattr(Config, "HMM_RANGE_PENALTY", 0.5)))
+        regime_reason = "RANGE_PENALTY"
+        range_veto = bool(getattr(Config, "HMM_RANGE_VETO", False)) and audit_signal in [
+            "BUY",
+            "SELL",
+        ]
+        if range_veto:
+            regime_weight = 0.0
+            regime_reason = "RANGE_VETO"
+    else:
+        regime_reason = "RANGE_NEUTRAL"
+
+    return regime_weight, regime_reason, range_veto
+
+
+def _is_shadow_learning_runtime(bot) -> bool:
+    execution_mode = str(getattr(bot, "execution_mode", "") or "").lower()
+    backend = str(getattr(Config, "EXECUTION_BACKEND", "live") or "live").lower()
+    paper_mode = bool(getattr(Config, "PAPER_MODE", True))
+    return paper_mode and (execution_mode in {"shadow", "shadow_live"} or backend == "shadow_live")
 
 
 def _apply_entry_filters_and_adjust_prob(
@@ -103,6 +146,51 @@ def _apply_entry_filters_and_adjust_prob(
         modifier=sl_modifier,
         genes=genes,
     )
+
+    btc_regime = bot._get_market_regime()
+    regime_weight, regime_reason, range_veto = _resolve_btc_regime_adjustment(
+        audit_signal, btc_regime
+    )
+    ctx["btc_regime"] = btc_regime
+    ctx["regime_weight"] = regime_weight
+    ctx["regime_reason"] = regime_reason
+
+    allow_range_learning = range_veto and (
+        bool(getattr(Config, "PAPER_MODE", True)) or _is_shadow_learning_runtime(bot)
+    )
+    if allow_range_learning:
+        range_veto = False
+        regime_weight = max(0.0, float(getattr(Config, "HMM_RANGE_PENALTY", 0.5)))
+        regime_reason = "RANGE_PENALTY"
+        ctx["regime_weight"] = regime_weight
+        ctx["regime_reason"] = regime_reason
+        bot.log(f"👻 {symbol}: RANGE permitido para aprendizaje BTC={btc_regime}")
+        append_execution_event(
+            bot,
+            "RANGE_PENALTY",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "btc_regime": btc_regime,
+                "regime_weight": regime_weight,
+                "paper_mode": bool(getattr(Config, "PAPER_MODE", True)),
+            },
+        )
+
+    if range_veto:
+        filter_passed = False
+        filter_reason = "RANGE REGIME VETO"
+        bot.log(f"⛔ {symbol}: veto por régimen BTC={btc_regime} [{regime_reason}]")
+        append_execution_event(
+            bot,
+            "RANGE_VETO",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "btc_regime": btc_regime,
+                "paper_mode": bool(getattr(Config, "PAPER_MODE", True)),
+            },
+        )
 
     if audit_signal == "BUY" and str(ctx.get("market_breadth_sentiment", "")).upper() == "FEAR":
         filter_passed = False
@@ -158,7 +246,7 @@ def _apply_entry_filters_and_adjust_prob(
     # Breakout Hunter (pasivo): evaluar ruptura con el df ya cargado (sin API extra)
     breakout_ready = False
     breakout_info = None
-    if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)):
+    if not range_veto and bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)):
         breakout_ready, breakout_info = bot.breakout_agent.evaluate_breakout(
             symbol, df_main
         )
@@ -215,29 +303,6 @@ def _apply_entry_filters_and_adjust_prob(
     hour_weight = ctx.get("hour_weight", 1.0)
     combined_weight = (day_weight + hour_weight) / 2
 
-    # === [NUEVO] PONDERACIÓN POR RÉGIMEN BTC ===
-    # Ajustar probabilidad según alineación con régimen de BTC
-    btc_regime = bot._get_market_regime()
-    regime_weight = 1.0
-    regime_reason = "N/A"
-
-    if btc_regime == "BULL_TREND":
-        if audit_signal == "BUY":
-            regime_weight = 1.15  # Bonus +15% para LONG en bull
-            regime_reason = "BULL_ALINGED"
-        else:
-            regime_weight = 0.85  # Penalty -15% para SHORT en bull
-            regime_reason = "BULL_COUNTER"
-    elif btc_regime == "BEAR_TREND":
-        if audit_signal == "SELL":
-            regime_weight = 1.15  # Bonus +15% para SHORT en bear
-            regime_reason = "BEAR_ALIGNED"
-        else:
-            regime_weight = 0.85  # Penalty -15% para LONG en bear
-            regime_reason = "BEAR_COUNTER"
-    else:
-        regime_reason = "RANGE_NEUTRAL"
-
     final_weight = combined_weight * regime_weight
     if regime_weight != 1.0:
         bot.log(f"📊 {symbol}: BTC={btc_regime} [{regime_reason}] x{regime_weight:.2f}")
@@ -247,7 +312,11 @@ def _apply_entry_filters_and_adjust_prob(
     original_prob = prob_final
     tier_current = ctx.get("tier", "IRON")
 
-    if tier_current in ["ELITE", "GOLD"] and original_prob >= 80.0:
+    if (
+        tier_current in ["ELITE", "GOLD"]
+        and original_prob >= 80.0
+        and regime_reason not in ["RANGE_PENALTY", "RANGE_VETO"]
+    ):
         if final_weight < 1.0:
             bot.log(
                 f"⚡ [BYPASS] {symbol} ({tier_current}): Ignorando penalización temporal (x{final_weight:.2f})"
@@ -266,6 +335,23 @@ def _apply_entry_filters_and_adjust_prob(
         ctx.update(bootstrap)
         ctx["execution_mode"] = "BOOTSTRAP"
         prob_final = float(bootstrap["heuristic_confidence"])
+
+    ctx["filter_passed"] = bool(filter_passed)
+    ctx["filter_reason"] = filter_reason
+    append_execution_event(
+        bot,
+        "FILTER_APPLIED",
+        {
+            "symbol": symbol,
+            "side": audit_signal,
+            "filter_passed": bool(filter_passed),
+            "filter_reason": str(filter_reason),
+            "prob_final": float(prob_final),
+            "btc_regime": btc_regime,
+            "regime_reason": regime_reason,
+            "regime_weight": float(regime_weight),
+        },
+    )
 
     return prob_final, filter_passed, filter_reason, ctx
 

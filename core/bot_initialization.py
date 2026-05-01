@@ -151,6 +151,9 @@ def init_realtime_and_monitoring(
     os.makedirs(bot.cache_dir, exist_ok=True)
     bot.market_btc_price = 0.0
     bot.live_prices = {}
+    bot.live_prices_ts = {}
+    bot.market_btc_price_source = "INIT"
+    bot.market_btc_price_ts = 0.0
     bot.current_sentiment = ("⚪ ANALIZANDO...", "white")
     bot.last_ohlcv_fetch = {}
     bot.last_train_date = bot.brain.get_last_train_timestamp()
