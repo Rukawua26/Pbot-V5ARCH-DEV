@@ -42,6 +42,7 @@ class GhostAgent(BaseAgent):
         super().__init__(name="G", weight=weight)
         self._model_loaded = False
         self._trained_model = None
+        self.model = None
         self._ultimate_ml = None
 
     def load_trained_model(self) -> Optional[Dict[str, Any]]:
@@ -53,6 +54,12 @@ class GhostAgent(BaseAgent):
         if os.path.exists(model_path):
             try:
                 self._trained_model = safe_pickle_load(model_path)
+                self.model = self._select_boost_model(self._trained_model)
+                if self.model is None:
+                    logger.warning(
+                        "⚠️ Ghost Model cargado pero sin predictor usable "
+                        "(predict/predict_proba no disponible)"
+                    )
                 logger.debug(
                     f"✅ Ghost Model cargado: {self._trained_model.get('n_samples', 0)} muestras"
                 )

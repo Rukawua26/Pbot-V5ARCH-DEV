@@ -20,7 +20,7 @@ class Config(OperationalConfig, StrategyConfig):
     SHADOW_MODE_MAX = 69.9
 
     # --- Mapa de SHOCKS (filtro de espacio operativo) ---
-    SHOCK_MIN_DIST_PCT = float(os.getenv("SHOCK_MIN_DIST_PCT", "0.6"))
+    SHOCK_MIN_DIST_PCT = float(os.getenv("SHOCK_MIN_DIST_PCT", "0.4"))
     SHOCK_PIVOT_WINDOW = 3
     SHOCK_LOOKBACK_BARS = 240
 

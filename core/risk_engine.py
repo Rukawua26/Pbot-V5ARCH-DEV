@@ -302,10 +302,28 @@ class RiskEngine:
 
             min_notional = float(getattr(Config, "MIN_NOTIONAL_VALUE", 0.0) or 0.0)
             if raw_notional < min_notional:
-                self.logger.warning(
-                    f"🚫 RISK_SIZE_MIN_NOTIONAL {symbol}: ${raw_notional:.2f} < ${min_notional:.2f}"
+                affordable_notional = balance * lev
+                min_amount = min_notional / entry if entry > 0 else 0.0
+                min_risk_usd = min_amount * stop_distance
+                if affordable_notional < min_notional:
+                    self.logger.warning(
+                        f"🚫 RISK_SIZE_MIN_NOTIONAL {symbol}: ${raw_notional:.2f} < "
+                        f"${min_notional:.2f} y balance×leverage=${affordable_notional:.2f}"
+                    )
+                    return 0.0, -1
+                if not is_shadow and max_risk_usd > 0 and min_risk_usd > max_risk_usd:
+                    self.logger.warning(
+                        f"🚫 RISK_SIZE_MIN_RISK {symbol}: min notional arriesga "
+                        f"${min_risk_usd:.2f} > límite ${max_risk_usd:.2f}"
+                    )
+                    return 0.0, -4
+                raw_amount = min_amount
+                raw_notional = min_notional
+                self.logger.info(
+                    f"⚠️ RISK_SIZE_MIN_NOTIONAL_ADJUST {symbol}: "
+                    f"${raw_notional:.2f} forzado al mínimo "
+                    f"(risk=${min_risk_usd:.2f})"
                 )
-                return 0.0, -1
 
             if is_shadow or exchange is None:
                 return raw_amount, raw_notional

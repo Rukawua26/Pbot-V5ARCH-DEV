@@ -12,9 +12,39 @@ from datetime import timedelta
 from core.time_utils import utc_now, utc_now_iso
 
 
+class _PredictProbaModel:
+    def predict_proba(self, _features):
+        return [[0.35, 0.65]]
+
+
 class SmartExitConfidenceGuardrailsTest(unittest.TestCase):
     def test_ghost_agent_missing_model_returns_neutral_vote(self):
         self.assertEqual(GhostAgent().vote({"model": None}), 50.0)
+
+    @patch("core.strategy.agents.ghost_agent.os.path.exists", return_value=True)
+    @patch("core.strategy.agents.ghost_agent.safe_pickle_load")
+    def test_ghost_agent_assigns_selected_model_after_pickle_load(
+        self, mocked_load, _exists
+    ):
+        model = _PredictProbaModel()
+        mocked_load.return_value = {"n_samples": 7, "rf": model, "feature_cols": ["rsi"]}
+
+        agent = GhostAgent()
+        loaded = agent.load_trained_model()
+
+        self.assertIs(loaded["rf"], model)
+        self.assertIs(agent.model, model)
+
+    @patch("core.strategy.agents.ghost_agent.os.path.exists", return_value=True)
+    @patch("core.strategy.agents.ghost_agent.safe_pickle_load", return_value={"n_samples": 7})
+    def test_ghost_agent_keeps_model_none_when_pickle_has_no_predictor(
+        self, _load, _exists
+    ):
+        agent = GhostAgent()
+
+        agent.load_trained_model()
+
+        self.assertIsNone(agent.model)
 
     @patch("core.bot_guardian.time.sleep", return_value=None)
     def test_guardian_uses_shadow_threshold_and_entry_confidence_fallback(
