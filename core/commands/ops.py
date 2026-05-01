@@ -11,6 +11,7 @@ from pathlib import Path
 from config import Config
 from notifier import send_telegram_msg
 from core.cooldown_state import persist_cooldowns
+from core.time_utils import monotonic_now
 
 
 def _help_message() -> str:
@@ -34,6 +35,7 @@ def _help_message() -> str:
         "• `/open`: Ver operaciones abiertas\n"
         "• `/targets`: Ver radar de objetivos\n"
         "• `/signals`: Distribución de señales\n"
+        "• `/pipeline`: Estado HMM/WS/pipeline\n"
         "• `/shadow_stats`: Estadísticas modo Shadow\n"
         "• `/sre_intent`: SLA intents 1h/24h\n"
         "• `/tiers`: Señales por Tier\n"
@@ -59,6 +61,32 @@ def _help_message() -> str:
 
 
 def _handle_misc_commands(bot, text: str) -> bool:
+    if text == "/pipeline":
+        try:
+            ws_ts = float(getattr(bot, "market_btc_price_ts", 0.0) or 0.0)
+            ws_age = monotonic_now() - ws_ts if ws_ts > 0 else None
+            ws_age_text = f"{ws_age:.1f}s" if ws_age is not None else "n/a"
+            regime_conf = getattr(bot, "market_regime_confidence", None)
+            regime_conf_text = (
+                f"{float(regime_conf) * 100:.1f}%" if regime_conf is not None else "n/a"
+            )
+            send_telegram_msg(
+                "🧬 *PIPELINE STATUS*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 Régimen: {getattr(bot, 'market_regime', 'UNKNOWN')}\n"
+                f"🔎 Fuente régimen: {getattr(bot, 'market_regime_source', 'UNKNOWN')}\n"
+                f"🎯 Confianza HMM: {regime_conf_text}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"₿ BTC: ${float(getattr(bot, 'market_btc_price', 0.0) or 0.0):,.2f}\n"
+                f"📡 Fuente BTC: {getattr(bot, 'market_btc_price_source', 'UNKNOWN')}\n"
+                f"⏱️ Edad WS BTC: {ws_age_text}\n"
+                f"🧠 HMM Range Veto: {bool(getattr(Config, 'HMM_RANGE_VETO', False))}\n"
+                f"🧪 Paper Mode: {bool(getattr(Config, 'PAPER_MODE', True))}"
+            )
+        except Exception as error:
+            send_telegram_msg(f"❌ Error /pipeline: {error}")
+        return True
+
     if text == "/sre_intent":
         try:
             events_path = Path("logs/execution_events.jsonl")

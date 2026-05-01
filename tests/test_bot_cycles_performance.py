@@ -1,10 +1,16 @@
 import unittest
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from core.bot_cycles import _get_cached_btc_indicator, _resolve_btc_market_indicators
+from core.bot_cycles import (
+    _get_cached_btc_indicator,
+    _resolve_btc_market_indicators,
+    run_market_context_cycle,
+)
+from core.bot_io_loops import _apply_ticker_stream_update
 
 
 class _FakeSeries:
@@ -68,6 +74,54 @@ class BotCyclesPerformanceTest(unittest.TestCase):
         self.assertEqual(first, 123.45)
         self.assertEqual(second, 123.45)
         self.assertEqual(_FakeEMAIndicator.call_count, 1)
+
+    def test_ticker_stream_updates_btc_price_state(self):
+        bot = SimpleNamespace(
+            price_lock=threading.Lock(),
+            live_prices={},
+            live_prices_ts={},
+            market_btc_price=0.0,
+        )
+
+        updated = _apply_ticker_stream_update(
+            bot,
+            [
+                {"s": "BTCUSDT", "c": "65000.5"},
+                {"s": "ETHUSDT", "c": "3200.0"},
+            ],
+        )
+
+        self.assertEqual(updated, 2)
+        self.assertEqual(bot.live_prices["BTCUSDT"], "65000.5")
+        self.assertEqual(bot.market_btc_price, 65000.5)
+        self.assertEqual(bot.market_btc_price_source, "WS_TICKER")
+        self.assertGreater(bot.market_btc_price_ts, 0)
+
+    def test_market_context_prefers_fresh_ws_btc_price(self):
+        bot = SimpleNamespace(
+            brain=SimpleNamespace(get_daily_real_pnl=lambda *_: (0.0, {})),
+            daily_initial_balance=0.0,
+            balance=1000.0,
+            price_lock=threading.Lock(),
+            live_prices={"BTCUSDT": "65000.5"},
+            live_prices_ts={"BTCUSDT": 1.0},
+            market_btc_price=0.0,
+            market_btc_price_source="INIT",
+            _get_cached_btc_data=lambda: None,
+            execution=SimpleNamespace(fetch_ticker=MagicMock()),
+            log=MagicMock(),
+        )
+
+        with patch("core.bot_cycles.monotonic_now", return_value=2.0):
+            pnl_real_hoy = run_market_context_cycle(
+                bot,
+                {"BTC/USDT": {"last": 64000.0}},
+            )
+
+        self.assertEqual(pnl_real_hoy, 0.0)
+        self.assertEqual(bot.market_btc_price, 65000.5)
+        self.assertEqual(bot.market_btc_price_source, "WS_TICKER")
+        bot.execution.fetch_ticker.assert_not_called()
 
 
 if __name__ == "__main__":

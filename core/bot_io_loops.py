@@ -24,6 +24,41 @@ def _is_authorized_telegram_chat(chat_id) -> bool:
     return bool(expected) and current == expected
 
 
+def _apply_ticker_stream_update(bot, data) -> int:
+    if not isinstance(data, list):
+        return 0
+
+    updated = 0
+    now_ts = monotonic_now()
+    with bot.price_lock:
+        live_prices_ts = getattr(bot, "live_prices_ts", None)
+        if live_prices_ts is None:
+            bot.live_prices_ts = {}
+            live_prices_ts = bot.live_prices_ts
+
+        for ticker in data:
+            symbol = str(ticker.get("s", "") or "")
+            close_price = ticker.get("c")
+            if not symbol or close_price is None:
+                continue
+
+            bot.live_prices[symbol] = close_price
+            live_prices_ts[symbol] = now_ts
+            updated += 1
+
+            if symbol == "BTCUSDT":
+                try:
+                    btc_price = float(close_price)
+                except (TypeError, ValueError):
+                    continue
+                if btc_price > 0:
+                    bot.market_btc_price = btc_price
+                    bot.market_btc_price_source = "WS_TICKER"
+                    bot.market_btc_price_ts = now_ts
+
+    return updated
+
+
 def websocket_monitor(bot):
     """Hilo dedicado a escuchar precios en tiempo real vía Websockets (v106.5)."""
     try:
@@ -36,9 +71,7 @@ def websocket_monitor(bot):
         try:
             data = json.loads(message)
             # Formato !ticker@arr: [{'s': 'BTCUSDT', 'c': '60000.00'}, ...]
-            with bot.price_lock:
-                for ticker in data:
-                    bot.live_prices[ticker["s"]] = ticker["c"]
+            _apply_ticker_stream_update(bot, data)
         except (KeyError, ValueError, json.JSONDecodeError):
             return  # Mensaje malformado, ignorar
         except Exception as error:

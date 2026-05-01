@@ -9,6 +9,7 @@ import pandas as pd
 import ta.trend as ta_trend
 
 from config import Config
+from core.time_utils import monotonic_now
 from notifier import send_telegram_msg
 
 
@@ -125,10 +126,26 @@ def run_market_context_cycle(bot, tickers):
     )
     pnl_real_hoy, _ = bot.brain.get_daily_real_pnl(base_bal)
 
-    btc_ticker = tickers.get(
-        "BTC/USDT:USDT", tickers.get("BTC/USDT", {"last": bot.market_btc_price})
-    )
-    bot.market_btc_price = float(btc_ticker.get("last", bot.market_btc_price))
+    ws_btc_price = 0.0
+    ws_btc_age = float("inf")
+    with bot.price_lock:
+        try:
+            ws_btc_price = float(getattr(bot, "live_prices", {}).get("BTCUSDT", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            ws_btc_price = 0.0
+        ws_btc_ts = float(getattr(bot, "live_prices_ts", {}).get("BTCUSDT", 0.0) or 0.0)
+        if ws_btc_ts > 0:
+            ws_btc_age = monotonic_now() - ws_btc_ts
+
+    if ws_btc_price > 0 and ws_btc_age <= float(getattr(Config, "WS_TICKER_MAX_AGE_SECONDS", 15.0)):
+        bot.market_btc_price = ws_btc_price
+        bot.market_btc_price_source = "WS_TICKER"
+    else:
+        btc_ticker = tickers.get(
+            "BTC/USDT:USDT", tickers.get("BTC/USDT", {"last": bot.market_btc_price})
+        )
+        bot.market_btc_price = float(btc_ticker.get("last", bot.market_btc_price))
+        bot.market_btc_price_source = "REST_TICKER"
 
     if bot.market_btc_price == 0:
         try:
