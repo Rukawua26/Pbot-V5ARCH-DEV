@@ -117,17 +117,6 @@ class StrategyUtils:
         return "CALM"
 
     @staticmethod
-    def detect_market_regime(
-        atr_pct: float, adx: float, trend_direction: str = "UP"
-    ) -> str:
-        """Detecta el régimen actual del mercado (BULL_TREND, BEAR_TREND, CHAOS, CALM)."""
-        if adx > 25:
-            return "BULL_TREND" if trend_direction == "UP" else "BEAR_TREND"
-        if atr_pct > 0.035:
-            return "CHAOS"
-        return "CALM"
-
-    @staticmethod
     def detect_order_block(df: pd.DataFrame, symbol: str) -> str:
         """Detecta bloques de órdenes con confirmación de volumen y mitigación."""
         if df is None or len(df) < 30:

@@ -2,6 +2,13 @@ from config import Config
 from strategy import Strategy
 
 
+def _is_shadow_learning_runtime(bot) -> bool:
+    execution_mode = str(getattr(bot, "execution_mode", "") or "").lower()
+    backend = str(getattr(Config, "EXECUTION_BACKEND", "live") or "live").lower()
+    paper_mode = bool(getattr(Config, "PAPER_MODE", True))
+    return paper_mode and (execution_mode in {"shadow", "shadow_live"} or backend == "shadow_live")
+
+
 def _get_fast_coherence_veto_reason(bot, df_main):
     if not bool(getattr(Config, "DIRECTIONAL_COHERENCE_FILTER", True)):
         return None
@@ -77,6 +84,24 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
             )
             return None
 
+        market_regime = bot._get_market_regime()
+        if market_regime == "RANGE" and bool(getattr(Config, "HMM_RANGE_VETO", False)):
+            protects_real_capital = not bool(getattr(Config, "PAPER_MODE", True))
+            if protects_real_capital:
+                bot.log(f"⛔ REGIME VETO REAL {symbol}: Ranging market ({market_regime})")
+                bot.update_radar(
+                    symbol,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    f"⛔ VETO REAL: Ranging market ({market_regime})",
+                    {"tier": "IRON", "regime": market_regime},
+                    response_ms=elapsed,
+                )
+                return None
+            if _is_shadow_learning_runtime(bot):
+                bot.log(f"👻 SHADOW RANGE ALLOWED {symbol}: learning in {market_regime}")
+
         with bot.db_lock:
             dynamic_params = bot.brain.get_dynamic_settings(symbol)
 
@@ -102,6 +127,7 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
                 min_score=min_score,
                 funding_rate=0.0,
                 df_4h=df_4h,
+                market_regime=market_regime,
             )
 
         if res[3] >= 50.0:
@@ -128,6 +154,7 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
                     min_score=min_score,
                     funding_rate=funding_rate,
                     df_4h=df_4h,
+                    market_regime=market_regime,
                 )
 
         return res

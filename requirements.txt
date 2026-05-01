@@ -21,6 +21,7 @@ scikit-learn==1.8.0
 xgboost==3.2.0
 lightgbm==4.6.0
 imbalanced-learn==0.14.1
+hmmlearn==0.3.3
 
 # WebSockets
 websockets==16.0
