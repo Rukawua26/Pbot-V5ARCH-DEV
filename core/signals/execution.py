@@ -1,5 +1,7 @@
 import time
 
+from core.execution_telemetry import append_execution_event
+
 
 def _execute_and_update_symbol(
     bot,
@@ -43,6 +45,20 @@ def _execute_and_update_symbol(
             ctx["prob_final"] = prob_final
             ctx["audit_verdict"] = audit_verdict
 
+        append_execution_event(
+            bot,
+            "SIGNAL_EXECUTION_SELECTED",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "is_shadow": bool(is_shadow_exec),
+                "prob_final": float(prob_final),
+                "audit_verdict": str(audit_verdict),
+                "regime": (ctx or {}).get("btc_regime") or (ctx or {}).get("regime"),
+                "filter_reason": (ctx or {}).get("filter_reason"),
+            },
+        )
+
         exec_result = bot.execute_order(
             symbol=symbol,
             side=audit_signal,
@@ -52,6 +68,17 @@ def _execute_and_update_symbol(
             context=ctx,
             ob_status=ob_status,
             override_usd_size=0.0,
+        )
+
+        append_execution_event(
+            bot,
+            "SIGNAL_EXECUTION_RESULT",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "is_shadow": bool(is_shadow_exec),
+                "result": str(exec_result),
+            },
         )
 
         if exec_result.startswith("OK"):

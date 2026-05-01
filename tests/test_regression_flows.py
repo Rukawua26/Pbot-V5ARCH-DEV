@@ -1,7 +1,10 @@
 import unittest
+import threading
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pandas as pd
 
 from core.bot_facade import BotFacade
 from core.bot_guardian import run_guardian_loop
@@ -224,6 +227,43 @@ class ExecutionServiceHelpersTest(unittest.TestCase):
 
         result = _with_exit_state(None, "FILLED")
         self.assertIsNone(result)
+
+    def test_signal_execution_emits_selected_and_result_events(self):
+        from core.signals.execution import _execute_and_update_symbol
+
+        bot = SimpleNamespace(
+            execute_order=MagicMock(return_value="OK_SHADOW"),
+            update_radar=MagicMock(),
+            log=MagicMock(),
+            lock=threading.Lock(),
+            active_trades={},
+            scanner_history=[],
+        )
+        df_main = pd.DataFrame({"close": [100.0]})
+        ctx = {"atr": 1.0, "btc_regime": "BULL_TREND"}
+
+        with patch("core.signals.execution.append_execution_event") as append_mock:
+            _execute_and_update_symbol(
+                bot=bot,
+                symbol_raw="TEST/USDT",
+                symbol="TEST/USDT",
+                audit_signal="BUY",
+                prob_final=72.0,
+                audit_verdict="OK",
+                should_execute=True,
+                is_shadow_exec=True,
+                df_main=df_main,
+                ctx=ctx,
+                ob_status="OK",
+                votos={"G": 70.0},
+                decision={"signal": "BUY"},
+                elapsed=10,
+            )
+
+        events = [call.args[1] for call in append_mock.call_args_list]
+        self.assertIn("SIGNAL_EXECUTION_SELECTED", events)
+        self.assertIn("SIGNAL_EXECUTION_RESULT", events)
+        bot.execute_order.assert_called_once()
 
 
 class RuntimeSafetyCriticalRegressionTest(unittest.TestCase):

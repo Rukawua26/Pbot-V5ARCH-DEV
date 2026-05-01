@@ -5,6 +5,7 @@ import pandas as pd
 
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown
+from core.execution_telemetry import append_execution_event
 from core.market_breadth import calculate_market_breadth
 
 
@@ -71,6 +72,19 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
             continue
 
         audit_signal, mode, price, prob_final, ind, votos = analysis
+        append_execution_event(
+            bot,
+            "SIGNAL_ANALYZED",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "mode": mode,
+                "price": float(price) if price is not None else None,
+                "prob_final": float(prob_final),
+                "market_regime": getattr(bot, "market_regime", None),
+                "market_regime_source": getattr(bot, "market_regime_source", None),
+            },
+        )
 
         try:
             # [v118.5] Abortar si la estrategia detectó problemas de integridad
