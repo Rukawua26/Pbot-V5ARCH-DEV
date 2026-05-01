@@ -304,6 +304,81 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertEqual(trade.get("requested_amount"), 10.0)
         self.assertEqual(trade.get("remaining_amount"), 6.0)
 
+    @patch("core.trade_manager.Config.PAPER_MODE", True)
+    @patch("core.trade_manager.Config.MAX_DIRECTIONAL_TRADES", 1)
+    @patch("core.trade_manager.Config.MAX_SHADOW_TRADES", 2)
+    @patch("core.trade_manager.send_telegram_msg")
+    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    def test_execute_order_paper_directional_limit_degrades_to_shadow(
+        self, _mock_halted, _mock_tg
+    ):
+        bot = SimpleNamespace()
+        bot.lock = RLock()
+        bot.db_lock = RLock()
+        bot.log = MagicMock()
+        bot.integrity_lock_active = False
+        bot.halt_system_active = False
+        bot.balance = 500.0
+        bot.available_balance = 500.0
+        bot.is_paused = False
+        bot.circuit_breaker_active = False
+        bot.cooldown_pairs = {}
+        bot.active_trades = {
+            "ETH/USDT": {
+                "symbol": "ETH/USDT",
+                "side": "BUY",
+                "is_shadow": False,
+                "status": "OPEN",
+                "sector": "OTHE",
+            }
+        }
+        bot.instance_uuid = "test-inst"
+        bot.last_entry_open_ts = 0.0
+        bot.last_shadow_signal_ts = 0.0
+        bot._symbol_reduced_size_mult = 1.0
+        bot.market_btc_change_tf = 0.0
+        bot.ghost_model = object()
+        bot._load_runtime_symbol_controls = lambda: {"blocked": set(), "reduced": set()}
+        bot._get_base_coin = lambda s: s.split("/")[0]
+        bot.ws_manager = SimpleNamespace(get_l2_state=lambda _symbol: {})
+
+        bot.brain = SimpleNamespace(
+            get_genetic_params=lambda _symbol: {},
+            get_stats_by_trend=lambda: {},
+            load_active_trade_states=lambda: {},
+            save_active_trade_state=MagicMock(return_value=True),
+            save_error_snapshot=MagicMock(),
+            delete_active_trade_state=MagicMock(),
+        )
+        bot.data_service = SimpleNamespace(sanitize_context=lambda ctx: ctx or {})
+        bot.risk_engine = SimpleNamespace(
+            calculate_position_size=lambda **kwargs: (1.0, 100.0),
+            get_exit_levels=lambda **kwargs: (99.0, 120.0, "STD"),
+            check_market_safety=lambda *_args, **_kwargs: (True, "OK", 80),
+        )
+        bot.execution = SimpleNamespace(
+            exchange=object(),
+            fetch_ticker=lambda _symbol: {"last": 100.0},
+        )
+
+        result = execute_order(
+            bot,
+            symbol="BTC/USDT",
+            side="BUY",
+            price=100.0,
+            atr=1.0,
+            is_shadow=False,
+            context={
+                "atr_pct": 0.01,
+                "trend": "RANGO",
+                "spread": 0.0,
+                "prob_final": 75.0,
+            },
+        )
+
+        self.assertEqual(result, "OK_DEGRADED: MAX_DIRECTIONAL_DEGRADED")
+        self.assertTrue(bot.active_trades["BTC/USDT"].get("is_shadow"))
+
 
 if __name__ == "__main__":
     unittest.main()

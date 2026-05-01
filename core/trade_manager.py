@@ -489,10 +489,10 @@ def execute_order(
             if in_cd:
                 return "COOLDOWN"
 
+        actives = list(bot.active_trades.values())
         if Config.PAPER_MODE:
             num_real, num_shadow = _get_local_open_trade_counts(bot)
         else:
-            actives = bot.active_trades.values()
             num_real = sum(1 for t in actives if not t.get("is_shadow", False))
             num_shadow = sum(1 for t in actives if t.get("is_shadow", False))
 
