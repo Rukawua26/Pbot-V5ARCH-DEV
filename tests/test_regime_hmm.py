@@ -40,6 +40,78 @@ class DynamicHMMRegimeTests(unittest.TestCase):
 
 
 class MarketStateHMMFallbackTests(unittest.TestCase):
+    def test_cached_btc_requires_dict_data_and_minimum_history(self):
+        short_data = pd.DataFrame({"close": [1.0] * 10})
+
+        self.assertIsNone(market_state._get_cached_btc_1h(SimpleNamespace(data_service=None)))
+        self.assertIsNone(
+            market_state._get_cached_btc_1h(
+                SimpleNamespace(data_service=SimpleNamespace(data_cache=[]))
+            )
+        )
+        self.assertIsNone(
+            market_state._get_cached_btc_1h(
+                SimpleNamespace(
+                    data_service=SimpleNamespace(data_cache={"BTC/USDT_1h": short_data})
+                )
+            )
+        )
+
+    def test_warmup_hmm_is_skipped_when_disabled(self):
+        bot = SimpleNamespace(log=MagicMock())
+
+        with patch.object(market_state.Config, "HMM_REGIME_ENABLED", False):
+            self.assertFalse(market_state.warmup_hmm_regime(bot))
+
+        bot.log.assert_not_called()
+
+    def test_warmup_hmm_is_skipped_without_data_service(self):
+        bot = SimpleNamespace(data_service=None, log=MagicMock())
+
+        with patch.object(market_state.Config, "HMM_REGIME_ENABLED", True):
+            self.assertFalse(market_state.warmup_hmm_regime(bot))
+
+        bot.log.assert_called_once()
+
+    def test_warmup_hmm_falls_back_when_exchange_returns_no_candles(self):
+        data_service = SimpleNamespace(
+            exchange=SimpleNamespace(fetch_ohlcv=MagicMock(return_value=[])),
+            _track_api_weight=MagicMock(),
+        )
+        bot = SimpleNamespace(data_service=data_service, log=MagicMock())
+
+        with patch.object(market_state.Config, "HMM_REGIME_ENABLED", True):
+            with patch.object(market_state.Config, "HMM_BOOTSTRAP_CANDLES", 500):
+                self.assertFalse(market_state.warmup_hmm_regime(bot))
+
+        data_service.exchange.fetch_ohlcv.assert_called_once_with("BTC/USDT", "1h", limit=500)
+        data_service._track_api_weight.assert_called_once_with("fetch_ohlcv", 1, "market")
+
+    def test_warmup_hmm_falls_back_when_training_rejects_data(self):
+        close = pd.Series([100.0 + i for i in range(420)])
+        ohlcv = [
+            [i, float(price), float(price + 1), float(price - 1), float(price), 1000.0]
+            for i, price in enumerate(close)
+        ]
+        data_service = SimpleNamespace(
+            exchange=SimpleNamespace(fetch_ohlcv=MagicMock(return_value=ohlcv)),
+            data_cache={},
+            last_ohlcv_fetch={},
+        )
+        bot = SimpleNamespace(data_service=data_service, log=MagicMock())
+        fake_hmm = SimpleNamespace(
+            is_ready=False,
+            dynamic_retrain=MagicMock(return_value=False),
+            last_error="not enough variance",
+        )
+
+        with patch.object(market_state, "hmm_filter", fake_hmm):
+            with patch.object(market_state.Config, "HMM_LOOKBACK_CANDLES", 336):
+                self.assertFalse(market_state.warmup_hmm_regime(bot))
+
+        fake_hmm.dynamic_retrain.assert_called_once()
+        self.assertIn("BTC/USDT_1h", data_service.data_cache)
+
     def test_low_confidence_hmm_falls_back_to_heuristic(self):
         close = pd.Series([100.0 + i for i in range(220)])
         btc_data = pd.DataFrame(
@@ -132,6 +204,69 @@ class MarketStateHMMFallbackTests(unittest.TestCase):
             self.assertEqual(market_state.detect_market_regime(bot), "BULL_TREND")
 
         fetch_mock.assert_not_called()
+
+    def test_detect_market_regime_uses_heuristic_when_hmm_disabled(self):
+        close = pd.Series([300.0 - i for i in range(220)])
+        btc_data = pd.DataFrame(
+            {
+                "close": close,
+                "high": close + 1,
+                "low": close - 1,
+                "adx": [35.0] * 220,
+            }
+        )
+        bot = SimpleNamespace(
+            market_btc_price=btc_data["close"].iloc[-1],
+            data_service=SimpleNamespace(fetch_and_update_data=MagicMock(return_value=btc_data)),
+            log=MagicMock(),
+        )
+
+        with patch.object(market_state.Config, "HMM_REGIME_ENABLED", False):
+            self.assertEqual(market_state.detect_market_regime(bot), "BEAR_TREND")
+
+        self.assertEqual(bot.market_regime, "BEAR_TREND")
+        self.assertEqual(bot.market_regime_source, "HEURISTIC")
+
+    def test_detect_market_regime_falls_back_to_range_without_btc_price(self):
+        bot = SimpleNamespace(
+            market_btc_price=0,
+            data_service=SimpleNamespace(fetch_and_update_data=MagicMock()),
+            log=MagicMock(),
+        )
+
+        with patch.object(market_state.Config, "HMM_REGIME_ENABLED", False):
+            self.assertEqual(market_state.detect_market_regime(bot), "RANGE")
+
+        bot.data_service.fetch_and_update_data.assert_not_called()
+        self.assertEqual(bot.market_regime_source, "HEURISTIC")
+
+    def test_detect_market_regime_handles_hmm_predict_exception(self):
+        close = pd.Series([100.0 + i for i in range(220)])
+        btc_data = pd.DataFrame(
+            {
+                "close": close,
+                "high": close + 1,
+                "low": close - 1,
+                "adx": [30.0] * 220,
+            }
+        )
+        bot = SimpleNamespace(
+            market_btc_price=btc_data["close"].iloc[-1],
+            data_service=SimpleNamespace(fetch_and_update_data=MagicMock(return_value=btc_data)),
+            log=MagicMock(),
+        )
+        fake_hmm = SimpleNamespace(
+            is_ready=True,
+            dynamic_retrain=MagicMock(return_value=True),
+            predict_regime=MagicMock(side_effect=RuntimeError("boom")),
+            last_error=None,
+        )
+
+        with patch.object(market_state, "hmm_filter", fake_hmm):
+            self.assertEqual(market_state.detect_market_regime(bot), "BULL_TREND")
+
+        bot.log.assert_called()
+        self.assertEqual(bot.market_regime, "BULL_TREND")
 
 
 class RegimeRangeFilterTests(unittest.TestCase):
