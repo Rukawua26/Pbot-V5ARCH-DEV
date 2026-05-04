@@ -436,11 +436,10 @@ def run_guardian_loop(bot):
                         bot.close_trade(s, f"Hard SL ({max_loss}%)", curr)
                         continue
 
-                    # === [NUEVO v118] TAKE PROFIT ESCALONADO ===
-                    # TP1: Cerrar 50% de la posición a +1%
+                    # TP1: cerrar una fracción de la posición al primer objetivo.
                     if Config.TP1_ENABLED and not t.get("tp1_triggered", False):
                         if t["pnl"] >= Config.TP1_LEVEL:
-                            # Cerrar 50% del tamaño
+                            # Cerrar la fracción configurada del tamaño.
                             close_amount = t.get("size_usd", 0) * (
                                 Config.TP1_PERCENT / 100
                             )

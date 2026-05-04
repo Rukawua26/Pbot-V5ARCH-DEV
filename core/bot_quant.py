@@ -1,12 +1,12 @@
 def calculate_quant_consensus(visual_prob, context):
     """
-    PROTOCOLO CIRUGÍA LÁSER: Lógica del 'Senior Quant Strategist'.
+    Consenso cuantitativo del filtro técnico.
     Evalúa la cohesión entre la visión de la IA (Visual) y los datos técnicos (RSI/ADX).
     """
     if not context:
         return visual_prob, "Sin Contexto"
 
-    # 1. Extracción de Datos
+    # Extracción de datos.
     rsi = context.get("rsi", 50)
     adx = context.get("adx", 20)
     trend = context.get("trend", "NEUTRAL")
@@ -14,7 +14,7 @@ def calculate_quant_consensus(visual_prob, context):
     vol_ma = context.get("volume_ma", vol)
     vol_rel = vol / vol_ma if vol_ma > 0 else 0
 
-    # 2. Score Base (Confianza Visual del Modelo ML - 40% Peso Estructural)
+    # Score base de confianza visual del modelo ML.
     score = visual_prob * 100
     penalties = []
 

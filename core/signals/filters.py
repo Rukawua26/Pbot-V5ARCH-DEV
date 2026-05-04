@@ -98,8 +98,7 @@ def _is_shadow_learning_runtime(bot) -> bool:
 def _apply_entry_filters_and_adjust_prob(
     bot, symbol, symbol_raw, df_main, audit_signal, prob_final, ctx, vol_rel
 ):
-    # === [NUEVO v118] FILTROS DE ENTRADA OPTIMIZADOS ===
-    # Aplicar filtros de RSI, ADX y horario antes de evaluar
+    # Aplicar filtros de RSI, ADX y horario antes de evaluar.
     rsi_val = ctx.get("rsi", 50)
     adx_val = ctx.get("adx", 20)
     current_time = utc_now()
@@ -286,19 +285,15 @@ def _apply_entry_filters_and_adjust_prob(
     # --- CÁLCULO ANTICIPADO DE IA (AUDITORÍA) ---
     prob_ia = 0.0
     adjustment_reason = "N/A"
-    # [v118 FIX] prob_ia solo se usa en _calculate_quant_consensus
-    # para el radar visual, NO como entrada adicional a decisión.
-    # Ghost (G) ya contribuye DENTRO de p_final con su peso ponderado.
-    # Usar votos.G aquí de nuevo sería double-counting.
-    # Asignamos directamente prob_final escalado para coherencia.
+    # prob_ia se usa para radar visual y consenso cuantitativo; Ghost ya contribuye
+    # dentro de p_final, así que no se agrega de nuevo para evitar double-counting.
     prob_ia = prob_final / 100.0
 
-    # --- PROTOCOLO CIRUGÍA LÁSER: CONSENSO CUÁNTICO ---
-    # Aplicamos el filtro del Senior Quant Strategist sobre la probabilidad bruta
+    # Aplicar consenso cuantitativo sobre la probabilidad bruta.
     if prob_ia > 0:
         prob_ia, adjustment_reason = bot._calculate_quant_consensus(prob_ia, ctx)
 
-    # [NUEVO v118] Aplicar pesos de día/hora a la probabilidad IA
+    # Aplicar pesos de día/hora a la probabilidad IA.
     day_weight = ctx.get("day_weight", 1.0)
     hour_weight = ctx.get("hour_weight", 1.0)
     combined_weight = (day_weight + hour_weight) / 2

@@ -16,22 +16,19 @@ def get_audit_verdict(
     if signal not in ["BUY", "SELL"]:
         return "⏳ ESPERANDO TÉCNICA"
 
-    # === [NUEVO v118] FILTROS DE ENTRADA Y CONCESIONES ===
+    # Filtros de entrada y concesiones informativas.
     if ctx:
         filter_veto = ctx.get("filter_veto")
         if filter_veto:
             return f"⛔ VETO: {filter_veto}"
 
-        # Concesión granular desde Strategy.analyze
-        # [v118 FIX] Las concesiones son INFORMATIVOS, NO son vetos duros.
-        # Un trade con prob >= 75 Y veto_reason NO debería ser bloqueado;
-        # la probabilidad alta significa que el consenso de 14 agentes superó
-        # los warnings individuales. Solo reportar como concesión, no bloquear.
+        # Las concesiones son informativas, no vetos duros. Una probabilidad alta
+        # significa que el consenso superó los warnings individuales.
         strategy_warnings = ctx.get("veto_reason")
         if strategy_warnings and prob_ia * 100 < 75:
             # Bajo 75%: reportar el riesgo y dejar que el umbral decida
             return f"⚠️ RIESGO: {strategy_warnings}"
-        # Si prob >= 75, ignorar los warnings — el consenso los superó
+        # Si prob >= 75, ignorar los warnings porque el consenso los superó.
 
     ia_percent = prob_ia * 100
 

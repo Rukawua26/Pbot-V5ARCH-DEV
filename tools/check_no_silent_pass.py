@@ -13,8 +13,6 @@ CORE = ROOT / "core"
 ALLOWLIST = {
     (CORE / "strategy" / "base_agent.py").resolve(),
     (CORE / "strategy" / "agents" / "visual_agent.py").resolve(),
-    (CORE / "postmortem_cleanuper.py").resolve(),
-    (CORE / "hourly_cleanup.py").resolve(),
 }
 
 

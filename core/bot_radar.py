@@ -68,7 +68,7 @@ def update_radar(
         display_verdict = display_verdict.replace(tag, "")
     display_verdict = display_verdict.strip()
 
-    # [CIRUGÍA LÁSER] Visualización de Posiciones Activas en Radar
+    # Marcar visualmente posiciones activas en el radar.
     if symbol in bot.active_trades:
         display_verdict = f"⚡ OPEN | {display_verdict}"
 

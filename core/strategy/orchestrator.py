@@ -93,7 +93,7 @@ class StrategyOrchestrator:
                     if len(h1) >= 7 and len(h2) >= 7:
                         corr = np.corrcoef(h1, h2)[0, 1]
                         if not np.isnan(corr) and abs(corr) > 0.90:
-                            # [FIX v118.1] EXCLUSIÓN: Peso 0 al de menor rendimiento
+                            # Excluir el agente correlacionado con menor rendimiento.
                             perf1 = (
                                 agent_performances.get(a1, 100.0)
                                 if agent_performances

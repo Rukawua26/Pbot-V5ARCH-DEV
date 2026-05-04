@@ -24,7 +24,7 @@ def acquire_targets(bot):
         cleanup_expired_cooldowns(bot)
 
         tickers = bot.execution.fetch_tickers(params={"type": "future"})
-        # [CIRUGÍA LÁSER] Ampliar filtro para capturar todos los pares USDT (ej: BTC/USDT)
+        # Incluir todos los futuros USDT devueltos por Binance.
         all_future_tickers = [t for s, t in tickers.items() if "/USDT" in s]
 
         if not all_future_tickers:
@@ -51,16 +51,12 @@ def acquire_targets(bot):
                 if t.get("quoteVolume", 0) < Config.TRIAGE_MIN_VOL_24H:
                     continue
 
-                # [v118.5] AUDITORÍA DE MADUREZ (Source Filtering)
+                # Auditoría de madurez del símbolo antes de escanear.
                 if not bot.data_service.audit_symbol_maturity(symbol):
                     # Si fue rechazado, lo removemos de cualquier lista activa
                     if symbol in bot.pairs_to_scan:
                         bot.pairs_to_scan.remove(symbol)
                     continue
-
-                # [ELIMINADO] Filtro de cuarentena por pérdidas consecutivas
-                # Ahora SHADOW no tiene límite - aprendizaje libre
-                # REAL usa cooldown estándar de 60 min
 
                 valid_pool.append(t)
 
@@ -104,7 +100,7 @@ def acquire_targets(bot):
                             min(trades, 50) * 0.3
                         )  # Ponderar WR y experiencia
                     return 50
-                except:
+                except Exception:
                     return 50
 
             # Ordenar cada categoría por WR histórico
@@ -140,7 +136,7 @@ def acquire_targets(bot):
                     not in bot.restricted_sectors
                 ]
 
-            # [v118] Filtrado por Symbol Blacklist
+            # Filtrado por blacklist persistida en el brain.
             if hasattr(bot.brain, "get_symbol_blacklist"):
                 symbol_blacklist = bot.brain.get_symbol_blacklist()
                 # Normalizar blacklist para comparación (quitar /USDT si existe)
@@ -174,7 +170,7 @@ def acquire_targets(bot):
 
             bot.pairs_to_scan = new_list
 
-        # [DINÁMICO] Ya no completamos con Config.PAIRS — la lista es 100% del mercado
+        # La lista se construye desde el mercado activo, no desde Config.PAIRS.
         if len(bot.pairs_to_scan) < Config.TOP_TRIAGE_COUNT:
             bot.log(
                 f"⚠️ Solo {len(bot.pairs_to_scan)} pares filtrados (lista dinámica del mercado)."
@@ -185,7 +181,7 @@ def acquire_targets(bot):
         # Si el volumen reciente es > 500% del promedio, se descarta por riesgo de manipulación.
         safe_list = []
         for p in bot.pairs_to_scan:
-            # --- [v118] ANTI-REVENGE CHECK (Blacklist dinámica 6h) ---
+            # Blacklist dinámica anti-revenge.
             is_safe, ar_reason = bot.risk_engine.check_anti_revenge_blacklist(p)
             if not is_safe:
                 bot.log(
@@ -219,8 +215,7 @@ def acquire_targets(bot):
                 safe_list.append(p)
         bot.pairs_to_scan = safe_list
 
-        # [VISIBILIDAD RADAR] Inicializar Radar con todos los objetivos como PENDING
-        # Esto asegura que el usuario vea los 50+50 pares desde el inicio.
+        # Inicializar radar con todos los objetivos como PENDING.
         with bot.lock:
             existing_syms = {i["symbol"] for i in bot.scanner_history}
             for p in bot.pairs_to_scan:
@@ -265,7 +260,7 @@ def acquire_targets(bot):
                         }
                     )
 
-        # --- AUTO-RECUPERACIÓN DE BTC (Muro Invisible Fix) ---
+        # Auto-recuperación del precio BTC si no vino en el batch.
         if "BTC/USDT" in tickers or "BTC/USDT:USDT" in tickers:
             btc_ticker = tickers.get("BTC/USDT:USDT", tickers.get("BTC/USDT"))
             bot.market_btc_price = float(btc_ticker["last"])
@@ -299,7 +294,7 @@ def acquire_targets(bot):
                 return {item["symbol"]: item.get("ticker", {}) for item in ranked}
         except Exception as error:
             bot.log(f"⚠️ Fallback snapshot dinámico falló en acquire_targets: {error}")
-        # Intento de rescate de BTC si todo lo demás falla
+        # Último intento de rescate de BTC si todo lo demás falla.
         try:
             btc_t = bot.execution.fetch_ticker("BTC/USDT")
             bot.market_btc_price = float(btc_t["last"])

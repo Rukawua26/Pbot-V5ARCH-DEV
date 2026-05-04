@@ -34,7 +34,7 @@ class AgentConsensusNN:
             self.scaler = None
         self.is_trained: bool = False
         self.model_path: str = model_path
-        self._debug_count = 0  # [FIX v118.1] Contador para integridad matemática
+        self._integrity_log_count = 0
         self.load()
 
     def load(self) -> None:
@@ -91,11 +91,11 @@ class AgentConsensusNN:
         try:
             X = self.prepare_features(votes_dict)
 
-            # [FIX v118.1] Verificación de Integridad Matemática
-            if self._debug_count < 5:
-                self._debug_count += 1
+            # Verificación ligera de integridad matemática en los primeros ciclos.
+            if self._integrity_log_count < 5:
+                self._integrity_log_count += 1
                 X_scaled = self.scaler.transform(X)
-                logger.debug(f"🧬 [MATH-FIX] Ciclo {self._debug_count}")
+                logger.debug(f"🧬 [CONSENSUS-INTEGRITY] Ciclo {self._integrity_log_count}")
                 logger.debug(f"   > Raw: {X[0].tolist()}")
                 logger.debug(f"   > Scaled: {X_scaled[0].tolist()}")
 
@@ -105,7 +105,7 @@ class AgentConsensusNN:
                     logger.critical(
                         "🚨 [ABORT] Integridad Matemática Comprometida: Escalado fuera de rango [-3, 3]."
                     )
-                    # No abortamos el proceso entero para evitar crash del bot, pero invalidamos predicción
+                    # Invalidar predicción sin abortar el proceso del bot.
                     return 0.5, 0.0
             else:
                 X_scaled = self.scaler.transform(X)
@@ -113,7 +113,7 @@ class AgentConsensusNN:
             prob = self.model.predict_proba(X_scaled)[0][1]
             return float(prob), float(abs(prob - 0.5) * 2)
         except Exception as e:
-            # logger.error(f"⚠️ Error en predicción de consenso (V118.1): {e}")
+            logger.debug(f"⚠️ Error en predicción de consenso: {e}")
             return 0.5, 0.0
 
     def train(self, X_train: np.ndarray, y_train: np.ndarray) -> bool:

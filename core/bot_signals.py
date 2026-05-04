@@ -177,14 +177,11 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 )
                 continue
 
-            # DEBUG: Show signal and prob values
             bot.log(
                 f"🔎 {symbol}: signal={audit_signal} prob={prob_final} verdict={audit_verdict[:30] if audit_verdict else 'None'}"
             )
 
-            # [CIRUGÍA LÁSER] Actualizar scanner_history para Dashboard
-            # FIX: Usar update_radar unificado para evitar duplicados y errores de matching
-            # [V118-PRO] Usar tiempo de respuesta medido en la fase paralela
+            # Actualizar radar unificado para evitar duplicados y errores de matching.
             bot.update_radar(
                 symbol_raw,
                 decision,
@@ -314,7 +311,7 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
                 f"❌ ERROR en {symbol}: {error_str} | {traceback.format_exc(limit=3)}"
             )
 
-            # [CIRUGÍA LÁSER] Reportar el crash en el Radar
+            # Reportar el crash en el radar.
             for item in bot.scanner_history:
                 if item["symbol"] == symbol:
                     item["result"] = f"❌ CRASH: {str(e)[:15]}"

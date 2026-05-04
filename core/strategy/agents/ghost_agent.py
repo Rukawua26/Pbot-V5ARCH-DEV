@@ -136,9 +136,6 @@ class GhostAgent(BaseAgent):
             "hour_cos": 1.0,
         }
 
-        # Si tenemos acceso al DataFrame actual en el contexto, extraemos los valores exactos
-        # (Sugerencia: este método debería recibir el df o el row ya procesado)
-
         row = [float(base.get(c, 0.0)) for c in cols]
         return np.array([row], dtype=float)
 
