@@ -25,3 +25,6 @@ class ConfigPrecedenceTest(unittest.TestCase):
             OperationalConfig.ATR_SL_MULTIPLIER = original_operational_alias
             StrategyConfig.STOP_LOSS_ATR_MODIFIER = original_strategy
             StrategyConfig.ATR_SL_MULTIPLIER = original_strategy_alias
+
+    def test_default_max_shadow_trades_allows_broader_exploration(self):
+        self.assertEqual(Config.MAX_SHADOW_TRADES, 20)

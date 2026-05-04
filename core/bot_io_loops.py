@@ -79,27 +79,33 @@ def websocket_monitor(bot):
 
     is_reconnecting = False
     reconnect_delay = 5.0
+
+    def on_open(ws):
+        nonlocal is_reconnecting, reconnect_delay
+        if is_reconnecting:
+            bot.log(
+                "⚡ WEBSOCKET: Reconectado exitosamente. Precios en tiempo real restaurados."
+            )
+        else:
+            bot.log("⚡ WEBSOCKET: Conectado. Precios en tiempo real activos.")
+        is_reconnecting = False
+        reconnect_delay = 5.0
+
     while bot.is_running:
         try:
-            if is_reconnecting:
-                bot.log(
-                    "⚡ WEBSOCKET: Reconectado exitosamente. Precios en tiempo real restaurados."
-                )
-                is_reconnecting = False
-                reconnect_delay = 5.0
-
             websocket.enableTrace(False)
             ws = websocket.WebSocketApp(
-                "wss://fstream.binance.com/ws/!ticker@arr", on_message=on_message
+                "wss://fstream.binance.com/ws/!ticker@arr",
+                on_message=on_message,
+                on_open=on_open,
             )
             ws.run_forever()
             if bot.is_running:
                 is_reconnecting = True
                 wait_s = reconnect_delay + random.uniform(0.0, 1.0)
-                if reconnect_delay <= 5.1:
-                    bot.log(
-                        f"🔌 WEBSOCKET: Conexión cerrada. Reintentando en {wait_s:.1f}s..."
-                    )
+                bot.log(
+                    f"🔌 WEBSOCKET: Conexión cerrada. Reintentando en {wait_s:.1f}s..."
+                )
                 time.sleep(wait_s)
                 reconnect_delay = min(reconnect_delay * 1.8, 60.0)
         except Exception as error:

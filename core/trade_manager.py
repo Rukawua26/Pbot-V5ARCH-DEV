@@ -310,6 +310,10 @@ def execute_order(
         features=_sanitize_context(bot, context),
     )
 
+    def _discard_pending_signal(reason: str) -> str:
+        _safe_update_signal_alert_status(bot, entry_client_order_id, "DISCARDED")
+        return reason
+
     atr_pct = context.get("atr_pct", 0) if context else 0.02
     min_notional = Config.MIN_NOTIONAL_VALUE
     confidence_score = context.get("prob_final", 0.0) if context else 0.0
@@ -320,7 +324,7 @@ def execute_order(
         bot.log(
             f"❌ SALDO_INSUFICIENTE_PARA_MIN_NOTIONAL: Balance ${bot.balance:.2f} × {current_leverage}x = ${max_notional_possible:.2f} < Min ${min_notional:.2f}"
         )
-        return "INSUFFICIENT_BALANCE_MIN_NOTIONAL"
+        return _discard_pending_signal("INSUFFICIENT_BALANCE_MIN_NOTIONAL")
 
     if bool(getattr(Config, "REQUIRE_GHOST_MODEL_FOR_TRADING", True)) and getattr(
         bot, "ghost_model", None
@@ -328,7 +332,7 @@ def execute_order(
         bot.log(
             f"🛑 GHOST_MODEL_MISSING: bloqueando nueva entrada {symbol} hasta restaurar modelo IA."
         )
-        return "GHOST_MODEL_MISSING"
+        return _discard_pending_signal("GHOST_MODEL_MISSING")
 
     atr_pct = context.get("atr_pct", 0) if context else 0
     if atr_pct * 100 > Config.NATR_THRESHOLD:
@@ -425,7 +429,7 @@ def execute_order(
         degradation_reason = reason
 
     if bot.is_paused:
-        return "BOT_PAUSED"
+        return _discard_pending_signal("BOT_PAUSED")
 
     if bot.circuit_breaker_active:
         with bot.db_lock:
@@ -434,7 +438,7 @@ def execute_order(
                 "CIRCUIT_BREAKER_HARD_PANIC",
                 bot.data_service.sanitize_context(context),
             )
-        return "CIRCUIT_BREAKER_PANIC"
+        return _discard_pending_signal("CIRCUIT_BREAKER_PANIC")
 
     global_cd = int(getattr(Config, "GLOBAL_ENTRY_COOLDOWN_SECONDS", 300) or 0)
     last_open_ts = float(getattr(bot, "last_entry_open_ts", 0.0) or 0.0)
@@ -445,7 +449,7 @@ def execute_order(
             bot.log(
                 f"⏳ GLOBAL_COOLDOWN activo ({remaining}s restantes): {symbol} bloqueado"
             )
-            return "GLOBAL_COOLDOWN"
+            return _discard_pending_signal("GLOBAL_COOLDOWN")
 
     with bot.lock:
         if not is_shadow:
@@ -464,7 +468,7 @@ def execute_order(
                             "DUPLICATE_REAL",
                             bot.data_service.sanitize_context(context),
                         )
-                    return "DUPLICATE_REAL_COIN"
+                    return _discard_pending_signal("DUPLICATE_REAL_COIN")
 
             current_sector = next(
                 (
@@ -480,14 +484,14 @@ def execute_order(
                 if t["sector"] == current_sector and not t.get("is_shadow", False)
             )
             if sector_count >= Config.MAX_SECTOR_EXPOSURE:
-                return f"MAX_SECTOR_EXPOSURE ({current_sector})"
+                return _discard_pending_signal(f"MAX_SECTOR_EXPOSURE ({current_sector})")
 
         if symbol in bot.active_trades:
-            return "ALREADY_ACTIVE"
+            return _discard_pending_signal("ALREADY_ACTIVE")
         if not is_shadow:
             in_cd, _remaining = is_symbol_in_cooldown(bot, symbol)
             if in_cd:
-                return "COOLDOWN"
+                return _discard_pending_signal("COOLDOWN")
 
         actives = list(bot.active_trades.values())
         if Config.PAPER_MODE:
@@ -499,7 +503,7 @@ def execute_order(
         if not is_shadow:
             if num_real >= Config.MAX_OPEN_TRADES:
                 bot.log(f"⏳ LÍMITE REAL ALCANZADO ({num_real}): {symbol} ignorado.")
-                return "MAX_REAL_TRADES"
+                return _discard_pending_signal("MAX_REAL_TRADES")
             t_side = sum(
                 1
                 for t in actives
@@ -516,7 +520,7 @@ def execute_order(
                     bot.log(
                         f"⏳ LÍMITE DIRECCIONAL ({side}) y SHADOW ({num_shadow}): {symbol} ignorado."
                     )
-                    return "MAX_DIRECTIONAL"
+                    return _discard_pending_signal("MAX_DIRECTIONAL")
         elif num_shadow >= Config.MAX_SHADOW_TRADES:
             bot.log(f"⏳ LÍMITE SHADOW ALCANZADO ({num_shadow}): {symbol} ignorado.")
             with bot.db_lock:
@@ -525,7 +529,7 @@ def execute_order(
                     "MAX_SHADOW",
                     bot.data_service.sanitize_context(context),
                 )
-            return "MAX_SHADOW"
+            return _discard_pending_signal("MAX_SHADOW")
 
     # Persistencia previa al cable de red (journal de intención)
     pending_state = {
@@ -575,7 +579,7 @@ def execute_order(
         bot.log(
             f"❌ IDPOTENCY_GUARD {symbol}: no se pudo persistir intención PENDING_SEND antes de enviar orden"
         )
-        return "INTENT_PERSISTENCE_FAILED"
+        return _discard_pending_signal("INTENT_PERSISTENCE_FAILED")
 
     def _drop_pending_intent():
         with bot.db_lock:

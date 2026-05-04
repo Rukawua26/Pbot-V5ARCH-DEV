@@ -10,13 +10,15 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
+![Coverage](https://img.shields.io/badge/Coverage-41%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
+![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**  
 **Runtime-first trading bot: decision, execution, reconciliation and observability in a modular architecture.**
 
-`1H + 4H macro` • `Binance Futures` • `Telegram ops` • `systemd` • `Docker`
+`1H + 4H macro` • `BTC HMM regime` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -32,6 +34,16 @@
 | Escaneo dinámico de mercado en 1H con contexto macro 4H, régimen HMM de BTC y filtros estructurales. | Dynamic market scanning on 1H with 4H macro context, BTC HMM regime and structural filters. |
 | Separación clara entre lógica de decisión y ejecución, con adaptadores para modos reales y simulados. | Clear separation between decision logic and execution, with adapters for real and simulated modes. |
 | Protección de posiciones reales mediante reconciliación, `HARD SL` y cierres de emergencia. | Real position protection through reconciliation, `HARD SL` and emergency close procedures. |
+
+### ⚡ Operational Edge
+
+| Edge | ES | EN |
+|---|---|---|
+| 🧬 Macro regime | BTC HMM dinámico con fallback heurístico y telemetría por pipeline | Dynamic BTC HMM with heuristic fallback and pipeline telemetry |
+| 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real | Up to `20` concurrent shadow trades to explore without touching real capital |
+| 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos | Tactical matrix requires valid samples before blocking symbols |
+| 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección | JSONL events for signal, filter, intent, fill and protection |
+| 📡 Live data | BTC por websocket con fallback REST y logging explícito de reconexión | BTC via websocket with REST fallback and explicit reconnect logging |
 
 ### 🏗️ Arquitectura en Resumen | Architecture at a Glance
 
@@ -72,6 +84,7 @@ flowchart LR
 | 3 | Validación walk-forward para modelos | Walk-forward model validation | ✅ Publicado |
 | 4 | Market Breadth interno con veto de LONG en `FEAR` | Internal Market Breadth with LONG veto during `FEAR` | ✅ Publicado |
 | 5 | Filtro macro HMM, telemetría de pipeline y eventos de ciclo de ejecución | Macro HMM filter, pipeline telemetry and execution lifecycle events | ✅ Publicado |
+| 6 | Exploración shadow ampliada, matriz táctica validada y limpieza de alertas pendientes | Expanded shadow exploration, validated tactical matrix and pending alert cleanup | ✅ Publicado |
 
 ---
 
@@ -129,6 +142,8 @@ Before starting, manually create `.env` with your operational variables and cred
 | Triage dinámico | ✅ Activo / Active | Top pares por liquidez, spread, volumen y latencia |
 | Motor de señales | ✅ Activo / Active | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
 | Filtro régimen BTC | ✅ Activo / Active | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
+| Shadow exploration | ✅ Activo / Active | Límite default `MAX_SHADOW_TRADES=20` con override por `.env` |
+| Matriz táctica | ✅ Activo / Active | Excluye `VETO_ERROR` y requiere muestra válida antes de bloquear/reducir símbolos |
 | Breakout watchlist | ✅ Activo / Active | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
 | Exit engine | ✅ Activo / Active | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
 | Reconciliación | ✅ Activo / Active | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
@@ -226,6 +241,7 @@ main.py
 | `PAPER_INITIAL_BALANCE` | **ES:** Capital virtual inicial <br> **EN:** Initial virtual capital |
 | `USE_TESTNET` | **ES:** Sandbox/testnet cuando el backend lo soporta <br> **EN:** Sandbox/testnet when backend supports it |
 | `EXECUTION_BACKEND` | **ES:** `live` o `shadow_live` <br> **EN:** `live` or `shadow_live` |
+| `MAX_SHADOW_TRADES` | **ES:** Máximo de operaciones shadow concurrentes; default `20` <br> **EN:** Max concurrent shadow trades; default `20` |
 | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | **ES:** Operación remota y alertas <br> **EN:** Remote operation and alerts |
 | `TRIAGE_MAX_WORKERS` | **ES:** Concurrencia del escaneo <br> **EN:** Scan concurrency |
 | `PARTIAL_FILL_TIMEOUT_SECONDS` | **ES:** Timeout para fills parciales <br> **EN:** Timeout for partial fills |
@@ -323,6 +339,8 @@ docker compose up --build -d
 - **ES:** `logs/execution_events.jsonl`: eventos estructurados de ejecución. <br> **EN:** `logs/execution_events.jsonl`: structured execution events.
 - **ES:** Runtime monitor con métricas de memoria y salud del proceso. <br> **EN:** Runtime monitor with memory metrics and process health.
 - **ES:** Estado de pipeline con fuente de precio BTC, edad WS, régimen HMM y confianza. <br> **EN:** Pipeline state with BTC price source, WS age, HMM regime and confidence.
+- **ES:** Websocket BTC loguea conexión inicial, cierre y reconexión para detectar degradación de datos en vivo. <br> **EN:** BTC websocket logs initial connection, close and reconnect to detect live-data degradation.
+- **ES:** Alertas `PENDING` se descartan cuando una entrada es bloqueada antes de enviar orden. <br> **EN:** `PENDING` alerts are discarded when an entry is blocked before order send.
 - **ES:** Scorecards y reportes de rendimiento diarios. <br> **EN:** Daily scorecards and performance reports.
 - **ES:** `watchdog` y heartbeat para supervisión externa. <br> **EN:** `watchdog` and heartbeat for external supervision.
 
@@ -338,6 +356,7 @@ docker compose up --build -d
 - `FILTER_APPLIED`
 - `RANGE_VETO`
 - `RANGE_PENALTY`
+- `PENDING_SEND_PERSISTED`
 - `PARTIAL_FILL_COMPLETED`
 - `PARTIAL_FILL_TIMEOUT_CANCEL`
 - `PARTIAL_FILL_CANCEL_FAILED`
@@ -409,6 +428,7 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 - **ES:** flows avanzados de runtime <br> **EN:** advanced runtime flows
 - **ES:** filtro HMM de régimen BTC y fallback heurístico <br> **EN:** BTC HMM regime filter and heuristic fallback
 - **ES:** telemetría de pipeline BTC por websocket y REST <br> **EN:** BTC pipeline telemetry via websocket and REST
+- **ES:** matriz táctica, límite shadow y descarte de alertas pendientes <br> **EN:** tactical matrix, shadow limit and pending alert discard
 - **ES:** watchdog y graceful shutdown <br> **EN:** watchdog and graceful shutdown
 - **ES:** guardrails de riesgo, leverage y smart exit <br> **EN:** risk guardrails, leverage and smart exit
 - **ES:** invariancia temporal y seguridad runtime <br> **EN:** temporal invariance and runtime safety

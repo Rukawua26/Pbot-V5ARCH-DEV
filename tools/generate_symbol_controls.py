@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "sniper_brain.db"
 REPORTS_DIR = ROOT / "docs" / "reports"
 CONTROLS_PATH = ROOT / "data_storage" / "symbol_controls.json"
+MIN_DECISION_TRADES = 5
 
 
 def _rows(conn: sqlite3.Connection):
@@ -35,6 +36,8 @@ def _rows(conn: sqlite3.Connection):
         ) AS expectancy_pct
       FROM trades
       WHERE symbol IS NOT NULL
+        AND COALESCE(side, '') != 'VETO_ERROR'
+        AND COALESCE(pnl_percent, 0) > -99.0
       GROUP BY symbol
     )
     SELECT
@@ -48,15 +51,15 @@ def _rows(conn: sqlite3.Connection):
       CASE WHEN gross_loss_usd > 0 THEN ROUND(gross_profit_usd / gross_loss_usd, 6) ELSE 0 END AS profit_factor,
       expectancy_pct,
       CASE
-        WHEN trades < 3 THEN 'OBSERVAR'
-        WHEN trades >= 3 AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 1.20 AND expectancy_pct > 0 AND win_rate_pct >= 50 THEN 'MANTENER'
-        WHEN trades >= 3 AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 0.90 AND expectancy_pct >= 0 AND win_rate_pct >= 45 THEN 'REDUCIR'
+        WHEN trades < {MIN_DECISION_TRADES} THEN 'OBSERVAR'
+        WHEN trades >= {MIN_DECISION_TRADES} AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 1.20 AND expectancy_pct > 0 AND win_rate_pct >= 50 THEN 'MANTENER'
+        WHEN trades >= {MIN_DECISION_TRADES} AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 0.90 AND expectancy_pct >= 0 AND win_rate_pct >= 45 THEN 'REDUCIR'
         ELSE 'BLOQUEAR'
       END AS decision,
       CASE
-        WHEN trades < 3 THEN 'Muestra insuficiente (<3)'
-        WHEN trades >= 3 AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 1.20 AND expectancy_pct > 0 AND win_rate_pct >= 50 THEN 'PF>=1.2, expectancy>0, WR>=50'
-        WHEN trades >= 3 AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 0.90 AND expectancy_pct >= 0 AND win_rate_pct >= 45 THEN 'PF>=0.9, expectancy>=0, WR>=45'
+        WHEN trades < {MIN_DECISION_TRADES} THEN 'Muestra insuficiente (<{MIN_DECISION_TRADES})'
+        WHEN trades >= {MIN_DECISION_TRADES} AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 1.20 AND expectancy_pct > 0 AND win_rate_pct >= 50 THEN 'PF>=1.2, expectancy>0, WR>=50'
+        WHEN trades >= {MIN_DECISION_TRADES} AND (CASE WHEN gross_loss_usd > 0 THEN gross_profit_usd / gross_loss_usd ELSE 0 END) >= 0.90 AND expectancy_pct >= 0 AND win_rate_pct >= 45 THEN 'PF>=0.9, expectancy>=0, WR>=45'
         ELSE 'PF/WR/expectancy debiles'
       END AS rule_reason
     FROM base
@@ -68,7 +71,7 @@ def _rows(conn: sqlite3.Connection):
         ELSE 4
       END,
       total_pnl_usd DESC;
-    """
+    """.format(MIN_DECISION_TRADES=MIN_DECISION_TRADES)
     return conn.execute(q).fetchall()
 
 
