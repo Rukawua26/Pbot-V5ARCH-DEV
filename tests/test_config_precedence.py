@@ -1,6 +1,6 @@
 import unittest
 
-from core.config.manager import Config
+from core.config.manager import Config, _env_bool, _env_float, _env_int
 from core.config.operational import OperationalConfig
 from core.config.strategy import StrategyConfig
 
@@ -28,3 +28,19 @@ class ConfigPrecedenceTest(unittest.TestCase):
 
     def test_default_max_shadow_trades_allows_broader_exploration(self):
         self.assertEqual(Config.MAX_SHADOW_TRADES, 20)
+
+    def test_config_env_parsers_fallback_on_invalid_values(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(
+            os.environ,
+            {
+                "TEST_FLOAT_SETTING": "bad",
+                "TEST_INT_SETTING": "also-bad",
+                "TEST_BOOL_SETTING": "off",
+            },
+        ):
+            self.assertEqual(_env_float("TEST_FLOAT_SETTING", 1.5), 1.5)
+            self.assertEqual(_env_int("TEST_INT_SETTING", 4), 4)
+            self.assertFalse(_env_bool("TEST_BOOL_SETTING", True))

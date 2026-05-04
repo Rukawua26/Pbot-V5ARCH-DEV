@@ -21,6 +21,22 @@ def _with_exit_state(order: Optional[dict], exit_state: str) -> Optional[dict]:
     return enriched
 
 
+def _parse_order_float(order: Optional[dict], *keys: str) -> Optional[float]:
+    if not isinstance(order, dict):
+        return None
+    for key in keys:
+        value = order.get(key)
+        if value is None:
+            info = order.get("info") if isinstance(order.get("info"), dict) else {}
+            value = info.get(key)
+        try:
+            if value is not None:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _execute_chase_limit_steps(
     self,
     symbol: str,
@@ -225,6 +241,67 @@ class ExecutionService:
                 return False
             time.sleep(0.5)
         return False
+
+    def _confirm_ioc_order_state(
+        self, symbol: str, order: Optional[dict], client_order_id: Optional[str]
+    ) -> Optional[dict]:
+        if not isinstance(order, dict):
+            return order
+
+        filled_amount = _parse_order_float(order, "filled", "executedQty") or 0.0
+        status = str(order.get("status") or "").lower()
+        if filled_amount > 0.0 or status in {"closed", "filled"}:
+            return order
+
+        order_id = order.get("id")
+        timeout_s = float(
+            getattr(Config, "ENTRY_IOC_CONFIRM_TIMEOUT_SECONDS", 2.0) or 0.0
+        )
+        deadline = time.time() + max(0.0, timeout_s)
+        last_seen = order
+
+        while time.time() <= deadline:
+            try:
+                fetched = None
+                if order_id:
+                    fetched = self._call_exchange(
+                        "confirm_ioc_fetch_order",
+                        lambda: self.exchange.fetch_order(order_id, symbol),
+                        retries=1,
+                        timeout_s=10.0,
+                    )
+                    self._track_api_weight("fetch_order", 1, "account")
+                elif client_order_id:
+                    fetched = self.fetch_order_by_client_id(symbol, client_order_id)
+
+                if isinstance(fetched, dict) and fetched:
+                    last_seen = fetched
+                    fetched_filled = (
+                        _parse_order_float(fetched, "filled", "executedQty") or 0.0
+                    )
+                    fetched_status = str(fetched.get("status") or "").lower()
+                    if fetched_filled > 0.0 or fetched_status in {"closed", "filled"}:
+                        self.logger.info(
+                            f"✅ IOC fill confirmado {symbol}: order_id={fetched.get('id', order_id)} "
+                            f"filled={fetched_filled:g} status={fetched_status or 'N/A'}"
+                        )
+                        return fetched
+                    if fetched_status in {"canceled", "cancelled", "expired", "rejected"}:
+                        return fetched
+            except (ccxt.NetworkError, ccxt.RequestTimeout, OrderLookupError) as error:
+                self.logger.warning(
+                    f"⚠️ IOC confirmación ambigua {symbol}/{order_id or client_order_id}: {error}"
+                )
+                break
+            except ccxt.ExchangeError as error:
+                self.logger.warning(
+                    f"⚠️ IOC consulta exchange falló {symbol}/{order_id or client_order_id}: {error}"
+                )
+                break
+
+            time.sleep(0.2)
+
+        return last_seen
 
     def _record_cancel_all_orders_success(self, symbol: str):
         self._cancel_all_failures.pop(symbol, None)
@@ -507,8 +584,14 @@ class ExecutionService:
                     "symbol": symbol,
                     "status": str(order.get("status", "")).lower(),
                     "clientOrderId": order.get("clientOrderId"),
+                    "filled": _parse_order_float(order, "executedQty") or 0.0,
+                    "remaining": _parse_order_float(order, "origQty") or 0.0,
+                    "average": _parse_order_float(order, "avgPrice"),
+                    "price": _parse_order_float(order, "price"),
                     "info": order,
                 }
+                if parsed["remaining"]:
+                    parsed["remaining"] = max(0.0, parsed["remaining"] - parsed["filled"])
                 return parsed
         except ccxt.OrderNotFound:
             return None
@@ -662,7 +745,7 @@ class ExecutionService:
             )
             self._track_api_weight("create_order", 1, "trading")
 
-            return order
+            return self._confirm_ioc_order_state(symbol, order, client_order_id)
         except Exception as e:
             if client_order_id:
                 try:

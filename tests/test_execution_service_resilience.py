@@ -33,6 +33,38 @@ class _ClientOrderLookupExchange:
         raise ccxt.RequestTimeout("create ack timeout")
 
 
+class _AmbiguousIocExchange:
+    def __init__(self):
+        self.timeout = 9000
+        self.fetch_attempts = 0
+
+    def price_to_precision(self, _symbol, price):
+        return str(price)
+
+    def create_order(self, symbol, type, side, amount, price, params):
+        return {
+            "id": "entry-1",
+            "symbol": symbol,
+            "type": type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "status": "open",
+            "filled": 0.0,
+            "params": params,
+        }
+
+    def fetch_order(self, order_id, symbol):
+        self.fetch_attempts += 1
+        return {
+            "id": order_id,
+            "symbol": symbol,
+            "status": "closed",
+            "filled": 0.1,
+            "average": 100.05,
+        }
+
+
 class _FlakyCancelExchange:
     def __init__(self):
         self.timeout = 0
@@ -360,5 +392,21 @@ class ExecutionServiceResilienceTest(unittest.TestCase):
         self.assertIsNotNone(order)
         self.assertEqual(order.get("id"), "ord-1")
         self.assertEqual(order.get("clientOrderId"), "cid-1")
+        self.assertEqual(order.get("filled"), 0.1)
+        self.assertEqual(order.get("average"), 101.0)
         self.assertEqual(service.exchange.create_attempts, 1)
         self.assertEqual(service.exchange.lookup_attempts, 1)
+
+    @patch("core.execution_service.Config.ENTRY_IOC_CONFIRM_TIMEOUT_SECONDS", 0.5)
+    @patch("core.execution_service.time.sleep", return_value=None)
+    def test_create_precision_order_confirms_ambiguous_ioc_fill(self, _sleep):
+        service = ExecutionService("k", "s")
+        service.exchange = _AmbiguousIocExchange()
+
+        order = service.create_precision_order(
+            "BTC/USDT", "BUY", 0.1, 100.0, client_order_id="cid-2"
+        )
+
+        self.assertEqual(order.get("status"), "closed")
+        self.assertEqual(order.get("filled"), 0.1)
+        self.assertEqual(service.exchange.fetch_attempts, 1)
