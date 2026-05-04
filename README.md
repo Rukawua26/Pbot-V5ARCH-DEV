@@ -29,7 +29,7 @@
 | ES | EN |
 |---|---|
 | Bot de trading cuantitativo diseñado para operar Binance Futures con enfoque en seguridad runtime y arquitectura modular. | Quantitative trading bot designed to operate on Binance Futures with focus on runtime safety and modular architecture. |
-| Escaneo dinámico de mercado en 1H con contexto macro 4H y filtros estructurales. | Dynamic market scanning on 1H with 4H macro context and structural filters. |
+| Escaneo dinámico de mercado en 1H con contexto macro 4H, régimen HMM de BTC y filtros estructurales. | Dynamic market scanning on 1H with 4H macro context, BTC HMM regime and structural filters. |
 | Separación clara entre lógica de decisión y ejecución, con adaptadores para modos reales y simulados. | Clear separation between decision logic and execution, with adapters for real and simulated modes. |
 | Protección de posiciones reales mediante reconciliación, `HARD SL` y cierres de emergencia. | Real position protection through reconciliation, `HARD SL` and emergency close procedures. |
 
@@ -40,7 +40,8 @@ flowchart LR
     A[Binance Futures] --> B[Data Service]
     B --> C[Triage Dinámico]
     C --> D[Análisis 1H + Contexto 4H]
-    D --> E[Agentes MT SR G]
+    D --> R[Filtro Régimen BTC HMM]
+    R --> E[Agentes MT SR G]
     E --> F[Filtros y Guardrails]
     F --> G{Decisión}
     G -->|PAPER / REAL| H[Execution Service]
@@ -56,6 +57,7 @@ flowchart LR
 |---|---|---|
 | 📡 Triage dinámico | Escanea pares por liquidez, spread, volumen y latencia | Scans pairs by liquidity, spread, volume and latency |
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final | Combines `MT`, `SR` and `G` agent votes for final decision |
+| 🧬 Régimen HMM | Clasifica BTC en `BULL_TREND`, `BEAR_TREND` o `RANGE` con fallback heurístico | Classifies BTC as `BULL_TREND`, `BEAR_TREND` or `RANGE` with heuristic fallback |
 | 🛡️ Seguridad runtime | Reconciliación, `HARD SL`, guardrails y cierre de emergencia | Reconciliation, `HARD SL`, guardrails and emergency close |
 | 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado | Simulates rejections, slippage and partial fills with separated backend |
 | 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram | Remote control, auditing and diagnostics via Telegram commands |
@@ -69,6 +71,7 @@ flowchart LR
 | 2 | Position sizing por distancia al `Stop Loss` | Stop-distance based position sizing | ✅ Publicado |
 | 3 | Validación walk-forward para modelos | Walk-forward model validation | ✅ Publicado |
 | 4 | Market Breadth interno con veto de LONG en `FEAR` | Internal Market Breadth with LONG veto during `FEAR` | ✅ Publicado |
+| 5 | Filtro macro HMM, telemetría de pipeline y eventos de ciclo de ejecución | Macro HMM filter, pipeline telemetry and execution lifecycle events | ✅ Publicado |
 
 ---
 
@@ -125,6 +128,7 @@ Before starting, manually create `.env` with your operational variables and cred
 | Runtime modular | ✅ Activo / Active | `Bot`, `BotFacade`, ciclos, IO loops y monitorización desacoplados |
 | Triage dinámico | ✅ Activo / Active | Top pares por liquidez, spread, volumen y latencia |
 | Motor de señales | ✅ Activo / Active | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
+| Filtro régimen BTC | ✅ Activo / Active | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
 | Breakout watchlist | ✅ Activo / Active | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
 | Exit engine | ✅ Activo / Active | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
 | Reconciliación | ✅ Activo / Active | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
@@ -170,6 +174,7 @@ main.py
 | `core/execution_service.py` | **ES:** Puerto de ejecución contra exchange <br> **EN:** Execution port against exchange |
 | `core/bot_guardian.py` | **ES:** Vigilancia y protecciones sobre posiciones activas <br> **EN:** Monitoring and protections over active positions |
 | `core/bot_wallet_sync.py` | **ES:** Sincronización de wallet y capital <br> **EN:** Wallet and capital synchronization |
+| `core/bot_market_state.py` | **ES:** Detección de régimen BTC HMM/heurística <br> **EN:** BTC HMM/heuristic regime detection |
 | `core/command_router.py` | **ES:** Router de comandos Telegram <br> **EN:** Telegram command router |
 | `core/signals/` | **ES:** Contexto, análisis, filtros y ejecución de señales <br> **EN:** Context, analysis, filters and signal execution |
 | `core/strategy/` | **ES:** Agentes, consenso y filtros de estrategia <br> **EN:** Agents, consensus and strategy filters |
@@ -228,6 +233,10 @@ main.py
 | `GLOBAL_ENTRY_COOLDOWN_SECONDS` | **ES:** Cooldown global de entradas <br> **EN:** Global entry cooldown |
 | `HARD_SL_ATTACH_MAX_RETRIES` | **ES:** Reintentos para adjuntar stop loss <br> **EN:** Retries to attach stop loss |
 | `WATCHDOG_HEARTBEAT_PATH` | **ES:** Ruta del heartbeat del watchdog <br> **EN:** Watchdog heartbeat path |
+| `HMM_REGIME_ENABLED` | **ES:** Activa filtro de régimen BTC HMM <br> **EN:** Enables BTC HMM regime filter |
+| `HMM_RANGE_VETO` | **ES:** Bloquea entradas reales en régimen `RANGE` cuando aplica <br> **EN:** Blocks real entries in `RANGE` regime when applicable |
+| `HMM_RANGE_PENALTY` | **ES:** Penalización de probabilidad en rango para aprendizaje/shadow <br> **EN:** Probability penalty in range for learning/shadow |
+| `WS_TICKER_MAX_AGE_SECONDS` | **ES:** Edad máxima de precio BTC por websocket antes de fallback REST <br> **EN:** Max websocket BTC price age before REST fallback |
 
 ### Variables Para `shadow_live`
 
@@ -256,6 +265,7 @@ pip install -r requirements.txt
 - `pandas`
 - `ta`, `pandas_ta`
 - `scikit-learn`, `xgboost`, `lightgbm`, `imbalanced-learn`
+- `hmmlearn`
 - `requests`, `websockets`, `websocket-client`
 - `optuna`
 
@@ -312,12 +322,22 @@ docker compose up --build -d
 - **ES:** `sniper.log`: log operativo principal. <br> **EN:** `sniper.log`: main operational log.
 - **ES:** `logs/execution_events.jsonl`: eventos estructurados de ejecución. <br> **EN:** `logs/execution_events.jsonl`: structured execution events.
 - **ES:** Runtime monitor con métricas de memoria y salud del proceso. <br> **EN:** Runtime monitor with memory metrics and process health.
+- **ES:** Estado de pipeline con fuente de precio BTC, edad WS, régimen HMM y confianza. <br> **EN:** Pipeline state with BTC price source, WS age, HMM regime and confidence.
 - **ES:** Scorecards y reportes de rendimiento diarios. <br> **EN:** Daily scorecards and performance reports.
 - **ES:** `watchdog` y heartbeat para supervisión externa. <br> **EN:** `watchdog` and heartbeat for external supervision.
 
 ### Eventos De Ejecución Relevantes | Relevant Execution Events
 
 - `ENTRY_ORDER_ACK`
+- `ORDER_INTENT_CREATED`
+- `ORDER_FILLED`
+- `ORDER_PROTECTION_ATTACHED`
+- `SIGNAL_ANALYZED`
+- `SIGNAL_EXECUTION_SELECTED`
+- `SIGNAL_EXECUTION_RESULT`
+- `FILTER_APPLIED`
+- `RANGE_VETO`
+- `RANGE_PENALTY`
 - `PARTIAL_FILL_COMPLETED`
 - `PARTIAL_FILL_TIMEOUT_CANCEL`
 - `PARTIAL_FILL_CANCEL_FAILED`
@@ -344,6 +364,7 @@ docker compose up --build -d
 - `/open`
 - `/targets`
 - `/signals`
+- `/pipeline`
 - `/shadow_stats`
 - `/sre_intent`
 - `/tiers`
@@ -386,6 +407,8 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 - **ES:** reconciliación y wallet sync <br> **EN:** reconciliation and wallet sync
 - **ES:** contratos de adaptadores de ejecución <br> **EN:** execution adapter contracts
 - **ES:** flows avanzados de runtime <br> **EN:** advanced runtime flows
+- **ES:** filtro HMM de régimen BTC y fallback heurístico <br> **EN:** BTC HMM regime filter and heuristic fallback
+- **ES:** telemetría de pipeline BTC por websocket y REST <br> **EN:** BTC pipeline telemetry via websocket and REST
 - **ES:** watchdog y graceful shutdown <br> **EN:** watchdog and graceful shutdown
 - **ES:** guardrails de riesgo, leverage y smart exit <br> **EN:** risk guardrails, leverage and smart exit
 - **ES:** invariancia temporal y seguridad runtime <br> **EN:** temporal invariance and runtime safety
