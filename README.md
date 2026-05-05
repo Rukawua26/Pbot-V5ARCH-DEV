@@ -2,14 +2,15 @@
 
 # Pbot V5ARCH DEV
 
-> **ES** Bot cuantitativo para Binance Futures con runtime modular, escaneo dinámico 1H, filtros estructurales, reconciliación segura y operación en modos `PAPER`, `REAL` y `shadow_live`.  
-> **EN** Quantitative trading bot for Binance Futures with modular runtime, dynamic 1H scanning, structural filters, safe reconciliation and operation in `PAPER`, `REAL` and `shadow_live` modes.
+> **ES** Bot cuantitativo runtime-first para Binance Futures con HMM Markov, escaneo dinámico 1H, ejecución segura, shadow lab y reconciliación defensiva.  
+> **EN** Runtime-first quantitative trading bot for Binance Futures with HMM Markov, dynamic 1H scanning, safe execution, shadow lab and defensive reconciliation.
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-22c55e)
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
+![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-41%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
@@ -18,7 +19,7 @@
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**  
 **Runtime-first trading bot: decision, execution, reconciliation and observability in a modular architecture.**
 
-`1H + 4H macro` • `BTC HMM regime` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
+`1H + 4H macro` • `BTC HMM + Markov probabilities` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -39,7 +40,7 @@
 
 | Edge | ES | EN |
 |---|---|---|
-| 🧬 Macro regime | BTC HMM dinámico con fallback heurístico y telemetría por pipeline | Dynamic BTC HMM with heuristic fallback and pipeline telemetry |
+| 🧬 Markov regime | BTC HMM publica probabilidades de transición y regula la confianza IA sin bloquear el Guardian | BTC HMM publishes transition probabilities and regulates AI confidence without blocking the Guardian |
 | 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real | Up to `20` concurrent shadow trades to explore without touching real capital |
 | 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos | Tactical matrix requires valid samples before blocking symbols |
 | 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección | JSONL events for signal, filter, intent, fill and protection |
@@ -52,9 +53,9 @@ flowchart LR
     A[Binance Futures] --> B[Data Service]
     B --> C[Triage Dinámico]
     C --> D[Análisis 1H + Contexto 4H]
-    D --> R[Filtro Régimen BTC HMM]
+    D --> R[BTC HMM + Markov Snapshot]
     R --> E[Agentes MT SR G]
-    E --> F[Filtros y Guardrails]
+    E --> F[Filtros, Markov Weight y Guardrails]
     F --> G{Decisión}
     G -->|PAPER / REAL| H[Execution Service]
     G -->|shadow_live| I[Shadow Execution Adapter]
@@ -69,7 +70,7 @@ flowchart LR
 |---|---|---|
 | 📡 Triage dinámico | Escanea pares por liquidez, spread, volumen y latencia | Scans pairs by liquidity, spread, volume and latency |
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final | Combines `MT`, `SR` and `G` agent votes for final decision |
-| 🧬 Régimen HMM | Clasifica BTC en `BULL_TREND`, `BEAR_TREND` o `RANGE` con fallback heurístico | Classifies BTC as `BULL_TREND`, `BEAR_TREND` or `RANGE` with heuristic fallback |
+| 🧬 HMM Markov | Clasifica BTC y calcula transición probable a `BULL_TREND`, `BEAR_TREND` o `RANGE` | Classifies BTC and calculates likely transition to `BULL_TREND`, `BEAR_TREND` or `RANGE` |
 | 🛡️ Seguridad runtime | Reconciliación, `HARD SL`, guardrails y cierre de emergencia | Reconciliation, `HARD SL`, guardrails and emergency close |
 | 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado | Simulates rejections, slippage and partial fills with separated backend |
 | 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram | Remote control, auditing and diagnostics via Telegram commands |
@@ -85,6 +86,7 @@ flowchart LR
 | 4 | Market Breadth interno con veto de LONG en `FEAR` | Internal Market Breadth with LONG veto during `FEAR` | ✅ Publicado |
 | 5 | Filtro macro HMM, telemetría de pipeline y eventos de ciclo de ejecución | Macro HMM filter, pipeline telemetry and execution lifecycle events | ✅ Publicado |
 | 6 | Exploración shadow ampliada, matriz táctica validada y limpieza de alertas pendientes | Expanded shadow exploration, validated tactical matrix and pending alert cleanup | ✅ Publicado |
+| 7 | HMM Markov como regulador probabilístico de `REAL`, `SHADOW` y `VETO` | HMM Markov as probabilistic regulator for `REAL`, `SHADOW` and `VETO` | ✅ Publicado |
 
 ---
 
@@ -151,6 +153,41 @@ Before starting, manually create `.env` with your operational variables and cred
 | Telemetría | ✅ Activo / Active | `logs/execution_events.jsonl`, runtime metrics y scorecards |
 | Operación remota | ✅ Activo / Active | Comandos Telegram para auditoría, inteligencia y control |
 | Docker/systemd | ✅ Disponible / Available | Despliegue en VPS o contenedor |
+
+---
+
+## 🧬 Markov Intelligence Layer
+
+El bot ya no trata el régimen `RANGE` como un interruptor ciego. El HMM publica un snapshot Markov en memoria con probabilidades de transición y la capa de filtros usa ese snapshot como regulador de volumen sobre la confianza IA.
+
+The bot no longer treats `RANGE` as a blind switch. The HMM publishes an in-memory Markov snapshot with transition probabilities and the filter layer uses it as a volume knob over AI confidence.
+
+| Señal Markov | Acción ES | Action EN |
+|---|---|---|
+| `RANGE` + breakout alto | Penalización leve, permite que una señal fuerte llegue a `REAL` o `SHADOW` | Light penalty, lets a strong signal reach `REAL` or `SHADOW` |
+| `RANGE` estándar | Penalización media, normalmente degrada a `SHADOW` | Medium penalty, usually degrades to `SHADOW` |
+| `RANGE` estancado | Veto preventivo `HMM_RANGE_STAGNANT` | Preventive `HMM_RANGE_STAGNANT` veto |
+| Tendencia alineada fresca | Boost controlado a la probabilidad final | Controlled boost to final probability |
+| Snapshot stale | Solo puede penalizar; no puede boostear riesgo real | Can only penalize; cannot boost real risk |
+
+Snapshot runtime ejemplo:
+
+```json
+{
+  "state": "RANGE",
+  "confidence": 0.72,
+  "bullish_breakout_prob": 82.0,
+  "bearish_reversal_prob": 12.0,
+  "range_prob": 6.0,
+  "model_version": "hmm_markov_v1"
+}
+```
+
+Observabilidad:
+
+- `/pipeline` muestra estado Markov, edad del snapshot y contadores de decisiones.
+- `logs/execution_events.jsonl` registra `MARKOV_REGIME_DECISION` cuando Markov modifica el comportamiento.
+- `system_meta["hmm_markov_snapshot"]` conserva el último snapshot para auditoría y restart.
 
 ---
 
@@ -250,8 +287,14 @@ main.py
 | `HARD_SL_ATTACH_MAX_RETRIES` | **ES:** Reintentos para adjuntar stop loss <br> **EN:** Retries to attach stop loss |
 | `WATCHDOG_HEARTBEAT_PATH` | **ES:** Ruta del heartbeat del watchdog <br> **EN:** Watchdog heartbeat path |
 | `HMM_REGIME_ENABLED` | **ES:** Activa filtro de régimen BTC HMM <br> **EN:** Enables BTC HMM regime filter |
-| `HMM_RANGE_VETO` | **ES:** Bloquea entradas reales en régimen `RANGE` cuando aplica <br> **EN:** Blocks real entries in `RANGE` regime when applicable |
+| `HMM_RANGE_VETO` | **ES:** Mantiene pre-veto defensivo cuando no hay snapshot Markov usable <br> **EN:** Keeps defensive pre-veto when no usable Markov snapshot exists |
 | `HMM_RANGE_PENALTY` | **ES:** Penalización de probabilidad en rango para aprendizaje/shadow <br> **EN:** Probability penalty in range for learning/shadow |
+| `MARKOV_BREAKOUT_MIN` | **ES:** Probabilidad mínima para tratar `RANGE` como breakout anticipado <br> **EN:** Minimum probability to treat `RANGE` as anticipated breakout |
+| `MARKOV_DEAD_ZONE_MAX` | **ES:** Debajo de este umbral `RANGE` se considera estancado y se veta <br> **EN:** Below this threshold `RANGE` is considered stagnant and vetoed |
+| `MARKOV_RANGE_BREAKOUT_WEIGHT` | **ES:** Peso aplicado a `RANGE` con breakout alto <br> **EN:** Weight applied to `RANGE` with high breakout probability |
+| `MARKOV_RANGE_STANDARD_WEIGHT` | **ES:** Peso aplicado a `RANGE` estándar <br> **EN:** Weight applied to standard `RANGE` |
+| `MARKOV_SNAPSHOT_MAX_AGE_SECONDS` | **ES:** Edad máxima para permitir boosts Markov <br> **EN:** Max age to allow Markov boosts |
+| `MARKOV_SNAPSHOT_STALE_SECONDS` | **ES:** Edad máxima para usar snapshot solo como penalizador <br> **EN:** Max age to use snapshot as penalty-only |
 | `WS_TICKER_MAX_AGE_SECONDS` | **ES:** Edad máxima de precio BTC por websocket antes de fallback REST <br> **EN:** Max websocket BTC price age before REST fallback |
 
 ### Variables Para `shadow_live`

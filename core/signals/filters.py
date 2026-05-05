@@ -12,6 +12,179 @@ def _normalize_filter_reason(reason):
     return text
 
 
+def _snapshot_age_seconds(snapshot):
+    try:
+        from datetime import datetime, timezone
+
+        ts_raw = snapshot.get("ts") if isinstance(snapshot, dict) else None
+        if not ts_raw:
+            return float("inf")
+        parsed = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+    except Exception:
+        return float("inf")
+
+
+def _get_markov_snapshot_mode(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot.get("is_ready"):
+        return "missing"
+    age = _snapshot_age_seconds(snapshot)
+    max_age = float(getattr(Config, "MARKOV_SNAPSHOT_MAX_AGE_SECONDS", 2 * 60 * 60))
+    stale_age = float(getattr(Config, "MARKOV_SNAPSHOT_STALE_SECONDS", 6 * 60 * 60))
+    if age <= max_age:
+        return "fresh"
+    if age <= stale_age:
+        return "stale_penalty_only"
+    return "expired"
+
+
+def _signal_markov_probability(snapshot, audit_signal):
+    if audit_signal == "BUY":
+        return float(snapshot.get("bullish_breakout_prob", snapshot.get("breakout_prob", 50.0)) or 0.0)
+    if audit_signal == "SELL":
+        return float(snapshot.get("bearish_reversal_prob", snapshot.get("breakout_prob", 50.0)) or 0.0)
+    return float(snapshot.get("breakout_prob", 50.0) or 50.0)
+
+
+def _record_markov_decision(
+    bot,
+    symbol,
+    audit_signal,
+    decision,
+    btc_regime,
+    snapshot_mode,
+    markov_prob,
+    regime_weight,
+    previous_range_veto,
+    filter_passed,
+    filter_reason,
+):
+    stats = getattr(bot, "markov_decision_stats", None)
+    if not isinstance(stats, dict):
+        stats = {}
+        bot.markov_decision_stats = stats
+    stats[decision] = int(stats.get(decision, 0) or 0) + 1
+
+    if decision == "missing_or_expired":
+        return
+
+    append_execution_event(
+        bot,
+        "MARKOV_REGIME_DECISION",
+        {
+            "symbol": symbol,
+            "side": audit_signal,
+            "decision": decision,
+            "btc_regime": btc_regime,
+            "snapshot_mode": snapshot_mode,
+            "markov_prob": markov_prob,
+            "regime_weight": float(regime_weight),
+            "previous_range_veto": bool(previous_range_veto),
+            "filter_passed": bool(filter_passed),
+            "filter_reason": str(filter_reason),
+        },
+    )
+
+
+def _apply_markov_regime_weight(
+    bot,
+    symbol,
+    audit_signal,
+    btc_regime,
+    regime_weight,
+    regime_reason,
+    range_veto,
+    filter_passed,
+    filter_reason,
+    ctx,
+):
+    snapshot = ctx.get("hmm_data") if isinstance(ctx, dict) else None
+    snapshot_mode = _get_markov_snapshot_mode(snapshot)
+    previous_range_veto = bool(range_veto)
+    if snapshot_mode in {"missing", "expired"}:
+        if isinstance(ctx, dict):
+            ctx["markov_snapshot_mode"] = snapshot_mode
+        _record_markov_decision(
+            bot,
+            symbol,
+            audit_signal,
+            "missing_or_expired",
+            btc_regime,
+            snapshot_mode,
+            None,
+            regime_weight,
+            previous_range_veto,
+            filter_passed,
+            filter_reason,
+        )
+        return regime_weight, regime_reason, range_veto, filter_passed, filter_reason, btc_regime
+
+    hmm_state = str(snapshot.get("state") or btc_regime)
+    markov_prob = _signal_markov_probability(snapshot, audit_signal)
+    if isinstance(ctx, dict):
+        ctx["btc_regime"] = hmm_state
+        ctx["markov_prob"] = markov_prob
+        ctx["markov_snapshot_mode"] = snapshot_mode
+
+    allow_boost = snapshot_mode == "fresh"
+    breakout_min = float(getattr(Config, "MARKOV_BREAKOUT_MIN", 75.0))
+    dead_zone_max = float(getattr(Config, "MARKOV_DEAD_ZONE_MAX", 30.0))
+    decision = None
+
+    if hmm_state == "RANGE":
+        range_veto = False
+        if markov_prob >= breakout_min:
+            regime_weight = float(getattr(Config, "MARKOV_RANGE_BREAKOUT_WEIGHT", 0.90))
+            regime_reason = "RANGE_BREAKOUT_ANTICIPATION"
+            decision = "range_breakout_allowed"
+            if filter_passed:
+                filter_reason = regime_reason
+        elif markov_prob < dead_zone_max:
+            regime_weight = 0.0
+            regime_reason = "HMM_RANGE_STAGNANT"
+            decision = "range_stagnant_veto"
+            filter_passed = False
+            filter_reason = f"HMM_RANGE_STAGNANT ({markov_prob:.1f}%)"
+        else:
+            regime_weight = float(getattr(Config, "MARKOV_RANGE_STANDARD_WEIGHT", 0.75))
+            regime_reason = "RANGE_MARKOV_PENALTY"
+            decision = "range_standard_penalty"
+            if filter_passed:
+                filter_reason = regime_reason
+    elif hmm_state in {"BULL_STRONG", "BULL_TREND"} and audit_signal == "BUY" and allow_boost:
+        regime_weight = float(getattr(Config, "MARKOV_BULL_STRONG_WEIGHT", 1.10))
+        regime_reason = "MARKOV_BULL_ALIGNED"
+        decision = "trend_boost"
+    elif hmm_state in {"BEAR_STRONG", "BEAR_TREND"} and audit_signal == "SELL" and allow_boost:
+        regime_weight = float(getattr(Config, "MARKOV_BEAR_STRONG_WEIGHT", 1.10))
+        regime_reason = "MARKOV_BEAR_ALIGNED"
+        decision = "trend_boost"
+
+    if not allow_boost and regime_weight > 1.0:
+        regime_weight = 1.0
+        regime_reason = f"{regime_reason}_STALE_CAPPED"
+        decision = "stale_capped"
+
+    if decision:
+        _record_markov_decision(
+            bot,
+            symbol,
+            audit_signal,
+            decision,
+            hmm_state,
+            snapshot_mode,
+            markov_prob,
+            regime_weight,
+            previous_range_veto,
+            filter_passed,
+            filter_reason,
+        )
+
+    return regime_weight, regime_reason, range_veto, filter_passed, filter_reason, hmm_state
+
+
 def _evaluate_bootstrap_heuristic(audit_signal, ctx):
     if audit_signal not in ["BUY", "SELL"] or not isinstance(ctx, dict):
         return {
@@ -149,6 +322,25 @@ def _apply_entry_filters_and_adjust_prob(
     btc_regime = bot._get_market_regime()
     regime_weight, regime_reason, range_veto = _resolve_btc_regime_adjustment(
         audit_signal, btc_regime
+    )
+    (
+        regime_weight,
+        regime_reason,
+        range_veto,
+        filter_passed,
+        filter_reason,
+        btc_regime,
+    ) = _apply_markov_regime_weight(
+        bot,
+        symbol,
+        audit_signal,
+        btc_regime,
+        regime_weight,
+        regime_reason,
+        range_veto,
+        filter_passed,
+        filter_reason,
+        ctx,
     )
     ctx["btc_regime"] = btc_regime
     ctx["regime_weight"] = regime_weight
@@ -345,6 +537,8 @@ def _apply_entry_filters_and_adjust_prob(
             "btc_regime": btc_regime,
             "regime_reason": regime_reason,
             "regime_weight": float(regime_weight),
+            "markov_prob": ctx.get("markov_prob"),
+            "markov_snapshot_mode": ctx.get("markov_snapshot_mode"),
         },
     )
 

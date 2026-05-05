@@ -1,5 +1,6 @@
 import threading
 import time
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -14,6 +15,87 @@ hmm_filter = DynamicHMMRegime(
 _last_hmm_retrain_ts = 0.0
 _hmm_retrain_lock = threading.Lock()
 _hmm_retrain_in_progress = False
+_last_hmm_snapshot_persist_ts = None
+_last_hmm_snapshot_persist_monotonic = 0.0
+_hmm_snapshot_persist_lock = threading.Lock()
+_HMM_MARKOV_META_KEY = "hmm_markov_snapshot"
+
+
+def _snapshot_age_seconds(snapshot) -> float:
+    try:
+        ts_raw = snapshot.get("ts") if isinstance(snapshot, dict) else None
+        if not ts_raw:
+            return float("inf")
+        parsed = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+    except Exception:
+        return float("inf")
+
+
+def _persist_hmm_snapshot_async(bot, snapshot) -> None:
+    global _last_hmm_snapshot_persist_ts, _last_hmm_snapshot_persist_monotonic
+    if not isinstance(snapshot, dict) or not snapshot.get("is_ready"):
+        return
+
+    brain = getattr(bot, "brain", None)
+    if brain is None or not hasattr(brain, "set_metadata_json"):
+        return
+
+    snapshot_ts = snapshot.get("ts")
+    with _hmm_snapshot_persist_lock:
+        now = time.monotonic()
+        min_interval = float(
+            getattr(Config, "MARKOV_SNAPSHOT_PERSIST_INTERVAL_SECONDS", 5 * 60)
+        )
+        if snapshot_ts == _last_hmm_snapshot_persist_ts:
+            return
+        if now - _last_hmm_snapshot_persist_monotonic < min_interval:
+            return
+        _last_hmm_snapshot_persist_ts = snapshot_ts
+        _last_hmm_snapshot_persist_monotonic = now
+
+    def _run_persist():
+        try:
+            db_lock = getattr(bot, "db_lock", None)
+            if db_lock is not None:
+                with db_lock:
+                    brain.set_metadata_json(_HMM_MARKOV_META_KEY, snapshot)
+            else:
+                brain.set_metadata_json(_HMM_MARKOV_META_KEY, snapshot)
+        except Exception as error:
+            log = getattr(bot, "log", None)
+            if callable(log):
+                log(f"⚠️ No se pudo persistir snapshot HMM Markov: {error}")
+
+    threading.Thread(
+        target=_run_persist,
+        daemon=True,
+        name="hmm-markov-snapshot-persist",
+    ).start()
+
+
+def _load_persisted_hmm_snapshot_if_needed(bot) -> None:
+    if hasattr(bot, "hmm_markov_snapshot"):
+        return
+    brain = getattr(bot, "brain", None)
+    if brain is None or not hasattr(brain, "get_metadata_json"):
+        return
+    try:
+        snapshot = brain.get_metadata_json(_HMM_MARKOV_META_KEY, default=None)
+        max_age = float(getattr(Config, "MARKOV_SNAPSHOT_STALE_SECONDS", 6 * 60 * 60))
+        if isinstance(snapshot, dict) and _snapshot_age_seconds(snapshot) <= max_age:
+            bot.hmm_markov_snapshot = snapshot
+    except Exception:
+        return
+
+
+def _publish_hmm_snapshot(bot, snapshot) -> None:
+    if not isinstance(snapshot, dict):
+        return
+    bot.hmm_markov_snapshot = dict(snapshot)
+    _persist_hmm_snapshot_async(bot, bot.hmm_markov_snapshot)
 
 
 def _get_cached_btc_1h(bot):
@@ -162,6 +244,7 @@ def _detect_market_regime_heuristic(bot, btc_data=None) -> str:
 
 
 def detect_market_regime(bot) -> str:
+    _load_persisted_hmm_snapshot_if_needed(bot)
     if not bool(getattr(Config, "HMM_REGIME_ENABLED", True)):
         regime = _detect_market_regime_heuristic(bot)
         bot.market_regime = regime
@@ -201,6 +284,10 @@ def detect_market_regime(bot) -> str:
         bot.market_regime_confidence = confidence
         bot.market_regime_source = "HMM"
         bot.market_regime = regime
+        if hasattr(hmm_filter, "predict_markov_snapshot"):
+            snapshot = hmm_filter.predict_markov_snapshot(btc_data)
+            if isinstance(snapshot, dict) and snapshot.get("is_ready"):
+                _publish_hmm_snapshot(bot, snapshot)
         return regime
     except Exception as error:
         bot.log(f"⚠️ Error detecting HMM market regime: {error}")

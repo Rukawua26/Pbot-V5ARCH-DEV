@@ -1,5 +1,6 @@
 import unittest
 import threading
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +38,34 @@ class DynamicHMMRegimeTests(unittest.TestCase):
 
         self.assertFalse(regime.dynamic_retrain(pd.DataFrame({"close": [1.0] * 120})))
         self.assertEqual(regime.predict_regime(pd.DataFrame({"close": [1.0] * 120})), ("UNKNOWN", 0.0))
+
+    def test_markov_snapshot_exposes_transition_probabilities(self):
+        class FakeModel:
+            transmat_ = np.array(
+                [
+                    [0.10, 0.80, 0.10],
+                    [0.15, 0.20, 0.65],
+                    [0.70, 0.20, 0.10],
+                ]
+            )
+
+            def predict_proba(self, _):
+                return np.array([[0.10, 0.80, 0.10]])
+
+        regime = DynamicHMMRegime()
+        regime.model = FakeModel()
+        regime.is_ready = True
+        regime.state_map = {0: "BEAR_TREND", 1: "RANGE", 2: "BULL_TREND"}
+        regime._transform_features = lambda _: np.array([[0.0, 0.0, 0.0]])
+
+        snapshot = regime.predict_markov_snapshot(pd.DataFrame({"close": [1.0] * 30}))
+
+        self.assertTrue(snapshot["is_ready"])
+        self.assertEqual(snapshot["state"], "RANGE")
+        self.assertAlmostEqual(snapshot["confidence"], 0.80)
+        self.assertAlmostEqual(snapshot["bullish_breakout_prob"], 54.0)
+        self.assertAlmostEqual(snapshot["bearish_reversal_prob"], 20.0)
+        self.assertAlmostEqual(snapshot["range_prob"], 26.0)
 
 
 class MarketStateHMMFallbackTests(unittest.TestCase):
@@ -197,6 +226,12 @@ class MarketStateHMMFallbackTests(unittest.TestCase):
             is_ready=True,
             dynamic_retrain=lambda *_: True,
             predict_regime=lambda *_: ("BULL_TREND", 0.90),
+            predict_markov_snapshot=lambda *_: {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "is_ready": True,
+                "state": "BULL_TREND",
+                "bullish_breakout_prob": 80.0,
+            },
             last_error=None,
         )
 
@@ -204,6 +239,49 @@ class MarketStateHMMFallbackTests(unittest.TestCase):
             self.assertEqual(market_state.detect_market_regime(bot), "BULL_TREND")
 
         fetch_mock.assert_not_called()
+        self.assertEqual(bot.hmm_markov_snapshot["state"], "BULL_TREND")
+
+    def test_detect_market_regime_publishes_snapshot_and_persists_async(self):
+        close = pd.Series([100.0 + i for i in range(220)])
+        btc_data = pd.DataFrame(
+            {
+                "close": close,
+                "high": close + 1,
+                "low": close - 1,
+                "adx": [30.0] * 220,
+            }
+        )
+        snapshot = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "is_ready": True,
+            "state": "RANGE",
+            "bullish_breakout_prob": 82.0,
+        }
+        brain = SimpleNamespace(set_metadata_json=MagicMock())
+        bot = SimpleNamespace(
+            market_btc_price=btc_data["close"].iloc[-1],
+            data_service=SimpleNamespace(data_cache={"BTC/USDT_1h": btc_data}),
+            brain=brain,
+            db_lock=threading.Lock(),
+            log=MagicMock(),
+        )
+        fake_hmm = SimpleNamespace(
+            is_ready=True,
+            dynamic_retrain=lambda *_: True,
+            predict_regime=lambda *_: ("RANGE", 0.90),
+            predict_markov_snapshot=lambda *_: snapshot,
+            last_error=None,
+        )
+
+        with patch.object(market_state, "hmm_filter", fake_hmm):
+            with patch.object(market_state.threading, "Thread") as thread_cls:
+                thread_obj = MagicMock()
+                thread_obj.start.side_effect = lambda: thread_cls.call_args.kwargs["target"]()
+                thread_cls.return_value = thread_obj
+                self.assertEqual(market_state.detect_market_regime(bot), "RANGE")
+
+        self.assertEqual(bot.hmm_markov_snapshot, snapshot)
+        brain.set_metadata_json.assert_called_once_with("hmm_markov_snapshot", snapshot)
 
     def test_detect_market_regime_uses_heuristic_when_hmm_disabled(self):
         close = pd.Series([300.0 - i for i in range(220)])
@@ -325,7 +403,7 @@ class RegimeRangeFilterTests(unittest.TestCase):
         self.assertEqual(filter_reason, "OK")
         self.assertEqual(updated_ctx["regime_reason"], "RANGE_PENALTY")
 
-    def test_range_veto_blocks_entry_and_skips_breakout_scan(self):
+    def test_range_veto_blocks_entry_without_markov_snapshot_and_skips_breakout_scan(self):
         ctx = {
             "rsi": 55.0,
             "adx": 22.0,
@@ -407,7 +485,7 @@ class RegimeRangeFilterTests(unittest.TestCase):
         self.assertEqual(filter_reason, "OK")
         self.assertEqual(updated_ctx["regime_reason"], "RANGE_PENALTY")
 
-    def test_range_veto_does_not_allow_shadow_prospect_in_real_mode(self):
+    def test_range_veto_does_not_allow_shadow_prospect_in_real_mode_without_markov(self):
         ctx = {
             "rsi": 55.0,
             "adx": 22.0,
@@ -452,6 +530,143 @@ class RegimeRangeFilterTests(unittest.TestCase):
         self.assertEqual(filter_reason, "RANGE REGIME VETO")
         self.assertEqual(updated_ctx["regime_reason"], "RANGE_VETO")
 
+    def test_markov_range_breakout_relaxes_range_veto_and_penalizes_lightly(self):
+        ctx = {
+            "rsi": 55.0,
+            "adx": 22.0,
+            "atr_pct": 0.01,
+            "close": 100.0,
+            "atr": 1.0,
+            "trend": "RANGO",
+            "tier": "IRON",
+            "hmm_data": {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "is_ready": True,
+                "state": "RANGE",
+                "bullish_breakout_prob": 82.0,
+                "bearish_reversal_prob": 10.0,
+            },
+        }
+        bot = self._build_bot("RANGE")
+
+        with patch.object(filters.Config, "HMM_RANGE_VETO", True):
+            with patch.object(filters.Config, "PAPER_MODE", False):
+                with patch.object(filters.Config, "MARKOV_BREAKOUT_MIN", 75.0):
+                    with patch.object(filters.Config, "MARKOV_RANGE_BREAKOUT_WEIGHT", 0.90):
+                        with patch.object(
+                            filters.Strategy,
+                            "check_entry_filters",
+                            return_value=(True, "OK", "CALM", {"DAY_WEIGHT": 1.0, "HOUR_WEIGHT": 1.0}),
+                        ):
+                            prob_final, filter_passed, filter_reason, updated_ctx = (
+                                filters._apply_entry_filters_and_adjust_prob(
+                                    bot,
+                                    "TEST/USDT",
+                                    "TEST/USDT",
+                                    pd.DataFrame(),
+                                    "BUY",
+                                    80.0,
+                                    ctx,
+                                    1.0,
+                                )
+                            )
+
+        self.assertEqual(prob_final, 72.0)
+        self.assertTrue(filter_passed)
+        self.assertEqual(filter_reason, "RANGE_BREAKOUT_ANTICIPATION")
+        self.assertEqual(updated_ctx["regime_reason"], "RANGE_BREAKOUT_ANTICIPATION")
+        self.assertEqual(updated_ctx["markov_prob"], 82.0)
+        self.assertEqual(bot.markov_decision_stats["range_breakout_allowed"], 1)
+
+    def test_markov_range_stagnant_vetoes_preventively(self):
+        ctx = {
+            "rsi": 55.0,
+            "adx": 22.0,
+            "atr_pct": 0.01,
+            "close": 100.0,
+            "atr": 1.0,
+            "trend": "RANGO",
+            "tier": "IRON",
+            "hmm_data": {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "is_ready": True,
+                "state": "RANGE",
+                "bullish_breakout_prob": 20.0,
+            },
+        }
+        bot = self._build_bot("RANGE")
+
+        with patch.object(filters.Config, "HMM_RANGE_VETO", True):
+            with patch.object(filters.Config, "PAPER_MODE", False):
+                with patch.object(filters.Config, "MARKOV_DEAD_ZONE_MAX", 30.0):
+                    with patch.object(
+                        filters.Strategy,
+                        "check_entry_filters",
+                        return_value=(True, "OK", "CALM", {"DAY_WEIGHT": 1.0, "HOUR_WEIGHT": 1.0}),
+                    ):
+                        prob_final, filter_passed, filter_reason, updated_ctx = (
+                            filters._apply_entry_filters_and_adjust_prob(
+                                bot,
+                                "TEST/USDT",
+                                "TEST/USDT",
+                                pd.DataFrame(),
+                                "BUY",
+                                80.0,
+                                ctx,
+                                1.0,
+                            )
+                        )
+
+        self.assertEqual(prob_final, 0.0)
+        self.assertFalse(filter_passed)
+        self.assertEqual(filter_reason, "HMM_RANGE_STAGNANT (20.0%)")
+        self.assertEqual(updated_ctx["regime_reason"], "HMM_RANGE_STAGNANT")
+        self.assertEqual(bot.markov_decision_stats["range_stagnant_veto"], 1)
+
+    def test_stale_markov_snapshot_can_penalize_but_not_boost(self):
+        stale_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        ctx = {
+            "rsi": 55.0,
+            "adx": 22.0,
+            "atr_pct": 0.01,
+            "close": 100.0,
+            "atr": 1.0,
+            "trend": "UP",
+            "tier": "IRON",
+            "hmm_data": {
+                "ts": stale_ts,
+                "is_ready": True,
+                "state": "BULL_TREND",
+                "bullish_breakout_prob": 90.0,
+            },
+        }
+        bot = self._build_bot("BULL_TREND")
+
+        with patch.object(filters.Config, "MARKOV_SNAPSHOT_MAX_AGE_SECONDS", 3600.0):
+            with patch.object(filters.Config, "MARKOV_SNAPSHOT_STALE_SECONDS", 6 * 3600.0):
+                with patch.object(filters.Config, "MARKOV_BULL_STRONG_WEIGHT", 1.10):
+                    with patch.object(
+                        filters.Strategy,
+                        "check_entry_filters",
+                        return_value=(True, "OK", "CALM", {"DAY_WEIGHT": 1.0, "HOUR_WEIGHT": 1.0}),
+                    ):
+                        prob_final, filter_passed, filter_reason, updated_ctx = (
+                            filters._apply_entry_filters_and_adjust_prob(
+                                bot,
+                                "TEST/USDT",
+                                "TEST/USDT",
+                                pd.DataFrame(),
+                                "BUY",
+                                80.0,
+                                ctx,
+                                1.0,
+                            )
+                        )
+
+        self.assertEqual(prob_final, 80.0)
+        self.assertTrue(filter_passed)
+        self.assertEqual(updated_ctx["markov_snapshot_mode"], "stale_penalty_only")
+
     def test_directional_regimes_keep_or_boost_aligned_weight(self):
         bull_weight, bull_reason, bull_veto = filters._resolve_btc_regime_adjustment(
             "BUY", "BULL_TREND"
@@ -495,7 +710,7 @@ class RegimePreVetoTests(unittest.TestCase):
             log=MagicMock(),
         )
 
-    def test_pre_veto_range_blocks_real_capital_before_strategy_analyze(self):
+    def test_pre_veto_range_blocks_real_capital_without_markov_snapshot(self):
         bot = self._build_bot("RANGE")
         df = self._build_df()
 
@@ -531,7 +746,7 @@ class RegimePreVetoTests(unittest.TestCase):
         analyze_mock.assert_called_once()
         self.assertEqual(analyze_mock.call_args.kwargs["market_regime"], "RANGE")
 
-    def test_pre_veto_range_blocks_real_even_if_shadow_backend_is_set(self):
+    def test_pre_veto_range_blocks_real_even_if_shadow_backend_is_set_without_markov(self):
         bot = self._build_bot("RANGE")
         bot.execution_mode = "shadow_live"
         df = self._build_df()
@@ -539,6 +754,52 @@ class RegimePreVetoTests(unittest.TestCase):
         with patch.object(signal_analyze.Config, "HMM_RANGE_VETO", True):
             with patch.object(signal_analyze.Config, "PAPER_MODE", False):
                 with patch.object(signal_analyze.Config, "EXECUTION_BACKEND", "shadow_live"):
+                    with patch.object(signal_analyze.Strategy, "analyze") as analyze_mock:
+                        result = signal_analyze._analyze_symbol_candidate(
+                            bot, "TEST/USDT", "TEST/USDT", df, df, elapsed=12
+                        )
+
+        self.assertIsNone(result)
+        analyze_mock.assert_not_called()
+
+    def test_pre_veto_range_allows_real_analysis_when_markov_not_bearish_extreme(self):
+        bot = self._build_bot("RANGE")
+        bot.hmm_markov_snapshot = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "is_ready": True,
+            "state": "RANGE",
+            "bearish_reversal_prob": 35.0,
+        }
+        df = self._build_df()
+        expected = ("BUY", "NONE", 100.0, 10.0, {}, {})
+
+        with patch.object(signal_analyze.Config, "HMM_RANGE_VETO", True):
+            with patch.object(signal_analyze.Config, "PAPER_MODE", False):
+                with patch.object(
+                    signal_analyze.Strategy,
+                    "analyze",
+                    return_value=expected,
+                ) as analyze_mock:
+                    result = signal_analyze._analyze_symbol_candidate(
+                        bot, "TEST/USDT", "TEST/USDT", df, df, elapsed=12
+                    )
+
+        self.assertEqual(result, expected)
+        analyze_mock.assert_called_once()
+
+    def test_pre_veto_range_blocks_real_when_markov_bearish_extreme(self):
+        bot = self._build_bot("RANGE")
+        bot.hmm_markov_snapshot = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "is_ready": True,
+            "state": "RANGE",
+            "bearish_reversal_prob": 90.0,
+        }
+        df = self._build_df()
+
+        with patch.object(signal_analyze.Config, "HMM_RANGE_VETO", True):
+            with patch.object(signal_analyze.Config, "PAPER_MODE", False):
+                with patch.object(signal_analyze.Config, "MARKOV_PREVETO_BEARISH_REVERSAL_MIN", 85.0):
                     with patch.object(signal_analyze.Strategy, "analyze") as analyze_mock:
                         result = signal_analyze._analyze_symbol_candidate(
                             bot, "TEST/USDT", "TEST/USDT", df, df, elapsed=12

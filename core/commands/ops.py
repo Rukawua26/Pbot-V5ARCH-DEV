@@ -70,12 +70,31 @@ def _handle_misc_commands(bot, text: str) -> bool:
             regime_conf_text = (
                 f"{float(regime_conf) * 100:.1f}%" if regime_conf is not None else "n/a"
             )
+            hmm_snapshot = getattr(bot, "hmm_markov_snapshot", {}) or {}
+            markov_state = hmm_snapshot.get("state", "UNKNOWN")
+            bullish_prob = float(hmm_snapshot.get("bullish_breakout_prob", 0.0) or 0.0)
+            bearish_prob = float(hmm_snapshot.get("bearish_reversal_prob", 0.0) or 0.0)
+            range_prob = float(hmm_snapshot.get("range_prob", 0.0) or 0.0)
+            markov_ts = hmm_snapshot.get("ts")
+            markov_age_text = "n/a"
+            if markov_ts:
+                parsed_ts = datetime.fromisoformat(str(markov_ts).replace("Z", "+00:00"))
+                if parsed_ts.tzinfo is None:
+                    parsed_ts = parsed_ts.replace(tzinfo=timezone.utc)
+                markov_age = max(0.0, (datetime.now(timezone.utc) - parsed_ts).total_seconds())
+                markov_age_text = f"{markov_age / 60:.1f}m"
+            markov_stats = getattr(bot, "markov_decision_stats", {}) or {}
             send_telegram_msg(
                 "🧬 *PIPELINE STATUS*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"📊 Régimen: {getattr(bot, 'market_regime', 'UNKNOWN')}\n"
                 f"🔎 Fuente régimen: {getattr(bot, 'market_regime_source', 'UNKNOWN')}\n"
                 f"🎯 Confianza HMM: {regime_conf_text}\n"
+                f"🧮 Markov: {markov_state} | age {markov_age_text}\n"
+                f"📈 Bull {bullish_prob:.1f}% | 📉 Bear {bearish_prob:.1f}% | ↔️ Range {range_prob:.1f}%\n"
+                f"🟢 Range breakout: {int(markov_stats.get('range_breakout_allowed', 0) or 0)} | "
+                f"🟡 Penaliza: {int(markov_stats.get('range_standard_penalty', 0) or 0)} | "
+                f"🔴 Stagnant: {int(markov_stats.get('range_stagnant_veto', 0) or 0)}\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"₿ BTC: ${float(getattr(bot, 'market_btc_price', 0.0) or 0.0):,.2f}\n"
                 f"📡 Fuente BTC: {getattr(bot, 'market_btc_price_source', 'UNKNOWN')}\n"

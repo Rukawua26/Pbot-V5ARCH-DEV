@@ -90,6 +90,7 @@ def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_si
         "model_z_score": _safe_series_float(df_main, "z_score", ind.get("z_score", 0.0)),
         "model_bb_pos": _safe_series_float(df_main, "bb_pos", bb_pos_raw),
         "model_bb_width": _safe_series_float(df_main, "bb_width", bb_width_raw),
+        "hmm_data": getattr(bot, "hmm_markov_snapshot", {}) or {},
     }
 
     ob_status = Strategy.detect_order_block(df_main, symbol)

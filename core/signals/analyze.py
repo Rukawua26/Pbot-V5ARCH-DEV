@@ -2,6 +2,45 @@ from config import Config
 from strategy import Strategy
 
 
+def _snapshot_age_seconds(snapshot):
+    try:
+        from datetime import datetime, timezone
+
+        ts_raw = snapshot.get("ts") if isinstance(snapshot, dict) else None
+        if not ts_raw:
+            return float("inf")
+        parsed = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+    except Exception:
+        return float("inf")
+
+
+def _is_markov_snapshot_usable(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot.get("is_ready"):
+        return False
+    max_age = float(getattr(Config, "MARKOV_SNAPSHOT_STALE_SECONDS", 6 * 60 * 60))
+    return _snapshot_age_seconds(snapshot) <= max_age
+
+
+def _should_pre_veto_regime(bot, market_regime):
+    if str(market_regime).upper() in {"CRASH", "PANIC", "BEAR_CRASH"}:
+        return True, f"Crash regime ({market_regime})"
+    if market_regime != "RANGE" or not bool(getattr(Config, "HMM_RANGE_VETO", False)):
+        return False, None
+
+    snapshot = getattr(bot, "hmm_markov_snapshot", None)
+    if not _is_markov_snapshot_usable(snapshot):
+        return True, f"Ranging market ({market_regime})"
+
+    bearish_prob = float(snapshot.get("bearish_reversal_prob", 0.0) or 0.0)
+    threshold = float(getattr(Config, "MARKOV_PREVETO_BEARISH_REVERSAL_MIN", 85.0))
+    if bearish_prob >= threshold:
+        return True, f"RANGE bearish reversal risk ({bearish_prob:.1f}% >= {threshold:.1f}%)"
+    return False, None
+
+
 def _is_shadow_learning_runtime(bot) -> bool:
     execution_mode = str(getattr(bot, "execution_mode", "") or "").lower()
     backend = str(getattr(Config, "EXECUTION_BACKEND", "live") or "live").lower()
@@ -85,16 +124,17 @@ def _analyze_symbol_candidate(bot, symbol_raw, symbol, df_main, df_4h, elapsed):
             return None
 
         market_regime = bot._get_market_regime()
-        if market_regime == "RANGE" and bool(getattr(Config, "HMM_RANGE_VETO", False)):
+        pre_veto, pre_veto_reason = _should_pre_veto_regime(bot, market_regime)
+        if pre_veto:
             protects_real_capital = not bool(getattr(Config, "PAPER_MODE", True))
             if protects_real_capital:
-                bot.log(f"⛔ REGIME VETO REAL {symbol}: Ranging market ({market_regime})")
+                bot.log(f"⛔ REGIME VETO REAL {symbol}: {pre_veto_reason}")
                 bot.update_radar(
                     symbol,
                     {"signal": "WAIT", "mode": "NONE"},
                     0.0,
                     "⚪",
-                    f"⛔ VETO REAL: Ranging market ({market_regime})",
+                    f"⛔ VETO REAL: {pre_veto_reason}",
                     {"tier": "IRON", "regime": market_regime},
                     response_ms=elapsed,
                 )

@@ -23,6 +23,18 @@ class OpsForceClearTest(unittest.TestCase):
             market_btc_price=65000.0,
             market_btc_price_source="WS_TICKER",
             market_btc_price_ts=10.0,
+            hmm_markov_snapshot={
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "state": "RANGE",
+                "bullish_breakout_prob": 82.0,
+                "bearish_reversal_prob": 12.0,
+                "range_prob": 6.0,
+            },
+            markov_decision_stats={
+                "range_breakout_allowed": 3,
+                "range_standard_penalty": 5,
+                "range_stagnant_veto": 1,
+            },
         )
 
         with patch("core.commands.ops.monotonic_now", return_value=12.5):
@@ -36,6 +48,9 @@ class OpsForceClearTest(unittest.TestCase):
         self.assertIn("87.0%", msg)
         self.assertIn("WS_TICKER", msg)
         self.assertIn("2.5s", msg)
+        self.assertIn("Markov", msg)
+        self.assertIn("82.0%", msg)
+        self.assertIn("Range breakout: 3", msg)
 
     @patch("core.commands.ops.send_telegram_msg")
     def test_sre_intent_reports_ratio(self, mocked_tg):

@@ -22,6 +22,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.shutdown_complete = threading.Event()
     bot._shutdown_thread = None
     bot.init_complete = threading.Event()
+    bot.startup_error = None
     bot._api_weight_logged = False
     bot.weight_tracker = None
     if has_weight_tracker and weight_tracker_cls is not None:
@@ -52,6 +53,14 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     now_mono = monotonic_now()
     bot._daily_report_next_ts = now_mono + 24 * 3600
     bot.breakout_overrides_today = 0
+    bot.markov_decision_stats = {
+        "range_breakout_allowed": 0,
+        "range_standard_penalty": 0,
+        "range_stagnant_veto": 0,
+        "trend_boost": 0,
+        "stale_capped": 0,
+        "missing_or_expired": 0,
+    }
     bot._mfe_alert_last_ts = 0.0
     bot.lock = threading.Lock()
     bot.price_lock = threading.Lock()

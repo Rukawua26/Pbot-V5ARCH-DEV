@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -152,3 +153,68 @@ class DynamicHMMRegime:
             self.last_error = str(error)
             logger.error(f"Fallo grave en HMM prediction: {error}")
             return "UNKNOWN", 0.0
+
+    def predict_markov_snapshot(self, df_recent: pd.DataFrame) -> Dict[str, object]:
+        """Return a non-blocking, read-only friendly snapshot of HMM transition odds."""
+        empty_snapshot: Dict[str, object] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "source": "HMM",
+            "state": "UNKNOWN",
+            "confidence": 0.0,
+            "state_probs": {},
+            "transition_probs": {},
+            "breakout_prob": 50.0,
+            "bullish_breakout_prob": 0.0,
+            "bearish_reversal_prob": 0.0,
+            "range_prob": 0.0,
+            "model_version": "hmm_markov_v1",
+            "is_ready": False,
+        }
+        if not self.is_ready or self.model is None:
+            return empty_snapshot
+
+        try:
+            x_recent = self._transform_features(df_recent)
+            if len(x_recent) == 0:
+                return empty_snapshot
+
+            last_obs = x_recent[-1].reshape(1, -1)
+            current_probs = self.model.predict_proba(last_obs)[0]
+            transition_matrix = getattr(self.model, "transmat_", None)
+            if transition_matrix is None:
+                return empty_snapshot
+
+            next_probs = np.asarray(current_probs).dot(np.asarray(transition_matrix))
+            state_id = int(np.argmax(current_probs))
+            state = self.state_map.get(state_id, "UNKNOWN")
+            confidence = float(current_probs[state_id])
+
+            state_probs: Dict[str, float] = {}
+            transition_probs: Dict[str, float] = {}
+            for hidden_id, label in self.state_map.items():
+                idx = int(hidden_id)
+                state_probs[label] = state_probs.get(label, 0.0) + float(current_probs[idx])
+                transition_probs[label] = transition_probs.get(label, 0.0) + float(next_probs[idx])
+
+            bullish = max(0.0, min(100.0, transition_probs.get("BULL_TREND", 0.0) * 100.0))
+            bearish = max(0.0, min(100.0, transition_probs.get("BEAR_TREND", 0.0) * 100.0))
+            range_prob = max(0.0, min(100.0, transition_probs.get("RANGE", 0.0) * 100.0))
+
+            return {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "source": "HMM",
+                "state": state,
+                "confidence": confidence,
+                "state_probs": state_probs,
+                "transition_probs": transition_probs,
+                "breakout_prob": max(bullish, bearish),
+                "bullish_breakout_prob": bullish,
+                "bearish_reversal_prob": bearish,
+                "range_prob": range_prob,
+                "model_version": "hmm_markov_v1",
+                "is_ready": True,
+            }
+        except Exception as error:
+            self.last_error = str(error)
+            logger.error(f"Fallo grave en HMM Markov snapshot: {error}")
+            return empty_snapshot
