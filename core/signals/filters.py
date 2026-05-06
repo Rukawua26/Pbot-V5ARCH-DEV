@@ -99,6 +99,7 @@ def _apply_markov_regime_weight(
     filter_passed,
     filter_reason,
     ctx,
+    prob_final=None,
 ):
     snapshot = ctx.get("hmm_data") if isinstance(ctx, dict) else None
     snapshot_mode = _get_markov_snapshot_mode(snapshot)
@@ -142,11 +143,19 @@ def _apply_markov_regime_weight(
             if filter_passed:
                 filter_reason = regime_reason
         elif markov_prob < dead_zone_max:
-            regime_weight = 0.0
+            # [HOTFIX v118.1] No vetar totalmente en dead zone — penalización severa (x0.30)
+            # Permite señales muy fuertes (>75%) operar en mercado lateral estancado
+            regime_weight = 0.30
             regime_reason = "HMM_RANGE_STAGNANT"
-            decision = "range_stagnant_veto"
-            filter_passed = False
-            filter_reason = f"HMM_RANGE_STAGNANT ({markov_prob:.1f}%)"
+            decision = "range_stagnant_penalty"
+            if prob_final is not None and prob_final >= 75.0:
+                # Señal fuerte permitida con penalización
+                if filter_passed:
+                    filter_reason = f"RANGE_STAGNANT_STRONG ({markov_prob:.1f}%)"
+            else:
+                # Señal débil o moderada → veto
+                filter_passed = False
+                filter_reason = f"HMM_RANGE_STAGNANT ({markov_prob:.1f}%)"
         else:
             regime_weight = float(getattr(Config, "MARKOV_RANGE_STANDARD_WEIGHT", 0.75))
             regime_reason = "RANGE_MARKOV_PENALTY"
@@ -342,6 +351,7 @@ def _apply_entry_filters_and_adjust_prob(
         filter_passed,
         filter_reason,
         ctx,
+        prob_final=prob_final,
     )
     ctx["btc_regime"] = btc_regime
     ctx["regime_weight"] = regime_weight
