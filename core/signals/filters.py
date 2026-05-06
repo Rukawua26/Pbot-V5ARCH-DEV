@@ -143,19 +143,13 @@ def _apply_markov_regime_weight(
             if filter_passed:
                 filter_reason = regime_reason
         elif markov_prob < dead_zone_max:
-            # [HOTFIX v118.1] No vetar totalmente en dead zone — penalización severa (x0.30)
-            # Permite señales muy fuertes (>75%) operar en mercado lateral estancado
-            regime_weight = 0.30
-            regime_reason = "HMM_RANGE_STAGNANT"
-            decision = "range_stagnant_penalty"
-            if prob_final is not None and prob_final >= 75.0:
-                # Señal fuerte permitida con penalización
-                if filter_passed:
-                    filter_reason = f"RANGE_STAGNANT_STRONG ({markov_prob:.1f}%)"
-            else:
-                # Señal débil o moderada → veto
-                filter_passed = False
-                filter_reason = f"HMM_RANGE_STAGNANT ({markov_prob:.1f}%)"
+            # [HOTFIX v118.1] Dead zone: aplicar penalización standard en lugar de veto total
+            # El mercado lateral estancado reduce probabilidades pero no bloquea señales válidas
+            regime_weight = float(getattr(Config, "MARKOV_RANGE_STANDARD_WEIGHT", 0.75))
+            regime_reason = "HMM_RANGE_PENALTY"
+            decision = "range_dead_zone_penalty"
+            if filter_passed:
+                filter_reason = regime_reason
         else:
             regime_weight = float(getattr(Config, "MARKOV_RANGE_STANDARD_WEIGHT", 0.75))
             regime_reason = "RANGE_MARKOV_PENALTY"
