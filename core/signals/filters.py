@@ -243,7 +243,8 @@ def _resolve_btc_regime_adjustment(audit_signal, btc_regime):
             regime_weight = 1.15
             regime_reason = "BEAR_ALIGNED"
         else:
-            regime_weight = 0.85
+            counter_weight = float(getattr(Config, "BEAR_COUNTER_WEIGHT", 0.70))
+            regime_weight = 0.85 * counter_weight
             regime_reason = "BEAR_COUNTER"
     elif btc_regime == "RANGE":
         regime_weight = max(0.0, float(getattr(Config, "HMM_RANGE_PENALTY", 0.5)))
@@ -382,6 +383,30 @@ def _apply_entry_filters_and_adjust_prob(
                 "paper_mode": bool(getattr(Config, "PAPER_MODE", True)),
             },
         )
+
+    # [BEAR_TREND PREVETO] Veto directo si hay alta probabilidad de reversión alcista
+    if (
+        filter_passed
+        and audit_signal == "BUY"
+        and btc_regime == "BEAR_TREND"
+    ):
+        bearish_reversal_min = float(
+            getattr(Config, "MARKOV_PREVETO_BEARISH_REVERSAL_MIN", 85.0)
+        )
+        hmm_data = ctx.get("hmm_data") if isinstance(ctx, dict) else None
+        if isinstance(hmm_data, dict) and hmm_data.get("is_ready"):
+            reversal_prob = float(
+                hmm_data.get("bearish_reversal_prob", 0.0) or 0.0
+            )
+            if reversal_prob >= bearish_reversal_min:
+                filter_passed = False
+                filter_reason = (
+                    f"BEAR_REVERSAL_VETO ({reversal_prob:.1f}% >= {bearish_reversal_min:.1f}%)"
+                )
+                bot.log(
+                    f"⛔ {symbol}: veto BUY en BEAR_TREND por reversión alcista "
+                    f"prob={reversal_prob:.1f}% [{regime_reason}]"
+                )
 
     if audit_signal == "BUY" and str(ctx.get("market_breadth_sentiment", "")).upper() == "FEAR":
         filter_passed = False
@@ -559,6 +584,13 @@ def _plan_execution_mode(
     should_execute = False
 
     REAL_THRESHOLD = Config.REAL_CONFIDENCE_MIN * 100
+
+    # [BEAR_TREND] Elevar umbral para BUY en régimen bajista
+    btc_regime_exec = bot._get_market_regime()
+    if btc_regime_exec == "BEAR_TREND" and audit_signal == "BUY":
+        bear_boost = float(getattr(Config, "BEAR_TREND_CONFIDENCE_BOOST", 10.0))
+        REAL_THRESHOLD += bear_boost
+
     SHADOW_MIN_THRESHOLD = float(
         getattr(
             Config,

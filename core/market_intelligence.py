@@ -340,6 +340,15 @@ def get_active_market_snapshot(bot):
 
         MAX_PAIRS = 50  # 50 pares — máximo cobertura del mercado
         MIN_VOL = Config.TRIAGE_MIN_VOL_24H  # $15M mínimo
+
+        # [BEAR_TREND] Reducir universo de pares en régimen bajista
+        try:
+            btc_regime = getattr(bot, "market_regime", "UNKNOWN")
+            if btc_regime == "BEAR_TREND":
+                MAX_PAIRS = int(getattr(Config, "BEAR_TREND_MAX_PAIRS", 15))
+                MIN_VOL = float(getattr(Config, "BEAR_TREND_MIN_VOL", 50_000_000))
+        except Exception:
+            bot.log("⚠️ BEAR_TREND pair reduction omitido, usando defaults")
         MAX_SPREAD = Config.TRIAGE_SPREAD_MAX  # 0.15% max
         MARKET_REFRESH = 300  # refresh mercado cada 5 min (suficiente para 1h)
 

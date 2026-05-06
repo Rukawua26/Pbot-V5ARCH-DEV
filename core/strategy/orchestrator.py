@@ -45,8 +45,8 @@ class StrategyOrchestrator:
                 "G": 0.35,
             },
             "BEAR_TREND": {
-                "MT": 0.50,
-                "SR": 0.15,
+                "MT": 0.35,
+                "SR": 0.30,
                 "G": 0.35,
             },
             "RANGE": {
@@ -224,5 +224,11 @@ class StrategyOrchestrator:
         nn_prob, nn_conf = self.consensus_nn.predict(votes)
         if nn_conf > 0.4:  # Aumentamos influencia si hay confianza
             p_final = (p_final * 0.6) + (nn_prob * 100 * 0.4)
+
+        # [BREAKOUT_CHECK] Penalizar si no hay breakout ready en régimen de rango o bear
+        if not context.get("breakout_ready", False):
+            regime = context.get("regime", "RANGE")
+            if regime in ("RANGE", "BEAR_TREND"):
+                p_final *= 0.85  # 15% penalización sin breakout confirmado
 
         return float(p_final), votes

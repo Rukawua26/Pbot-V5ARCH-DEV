@@ -442,7 +442,7 @@ class RiskEngine:
 
         # Lógica para LONG
         if side == "BUY":
-            if current_ai_score < 45.0:
+            if current_ai_score < 52.0:
                 return True, f"CONFIDENCE_FLOOR_VIOLATED_{current_ai_score:.1f}"
             if score_drop_pct > 0.30 and elapsed_mins <= 3.0:
                 return True, f"SUDDEN_CONFIDENCE_CRASH_{score_drop_pct * 100:.1f}%"

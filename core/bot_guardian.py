@@ -426,6 +426,36 @@ def run_guardian_loop(bot):
                                 )
                                 t["ghost_error_logged"] = True
 
+                    # PRE-HARD SL WARNING: evaluar trailing antes de llegar al Hard SL
+                    pre_sl_warning = max_loss * 0.5  # -1.5% para REAL, -2.5% para SHADOW
+                    if t["pnl"] <= pre_sl_warning and not t.get("pre_sl_warning_logged", False):
+                        t["pre_sl_warning_logged"] = True
+                        bot.log(
+                            f"⚠️ PRE-SL WARNING {s}: PnL {t['pnl']:.2f}%接近 Hard SL ({max_loss}%) | "
+                            f"forzando evaluación de trailing/BE"
+                        )
+                        # Forzar re-evaluación del exit engine
+                        if bool(getattr(Config, "EXIT_ENGINE_V1_ENABLED", True)):
+                            snap_ctx = t.get("market_snapshot", {}) or {}
+                            current_atr = float(
+                                t.get("entry_atr")
+                                or snap_ctx.get("atr")
+                                or snap_ctx.get("atr_pct", 0.0) * t.get("entry", 0.0)
+                                or 0.0
+                            )
+                            exit_eval = bot.exit_engine.evaluate_exit(
+                                trade=t,
+                                current_price=curr,
+                                current_atr=current_atr,
+                            )
+                            if bool(exit_eval.get("should_exit", False)):
+                                exit_reason = str(exit_eval.get("reason", "PRE_SL_EXIT"))
+                                bot.log(
+                                    f"🚨 PRE-SL EXIT {s}: {exit_reason} | PnL {t['pnl']:.2f}%"
+                                )
+                                bot.close_trade(s, exit_reason, curr)
+                                continue
+
                     # HARD STOP LOSS: Límite absoluto de pérdida
                     max_loss = (
                         Config.SHADOW_HARD_SL_PERCENT

@@ -103,7 +103,7 @@ def monitor_open_trades(bot):
 
             open_time = parse_datetime_utc(trade.get("open_time") or utc_now())
 
-            if utc_now() - open_time < timedelta(minutes=15):
+            if utc_now() - open_time < timedelta(minutes=5):
                 # bot.log(f"⏳ COOLDOWN ({symbol}): Ignorando bailout por juventud del trade.")
                 continue
             # 1. Obtener datos frescos (Sello Institucional: solo 1H + 4H)

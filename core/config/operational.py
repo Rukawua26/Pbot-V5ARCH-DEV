@@ -63,12 +63,12 @@ class OperationalConfig:
         os.getenv("NO_PRICE_EXIT_MIN_ESCALATION_SECONDS", "45")
     )
     NO_PRICE_ALLOW_MARKET_EXIT = _env_bool("NO_PRICE_ALLOW_MARKET_EXIT", False)
-    SMART_EXIT_THRESHOLD_REAL = float(os.getenv("SMART_EXIT_THRESHOLD_REAL", "0.70"))
+    SMART_EXIT_THRESHOLD_REAL = float(os.getenv("SMART_EXIT_THRESHOLD_REAL", "0.80"))
     SMART_EXIT_THRESHOLD_SHADOW = float(
         os.getenv("SMART_EXIT_THRESHOLD_SHADOW", "0.30")
     )
     MAX_ENTRY_SL_PCT = float(os.getenv("MAX_ENTRY_SL_PCT", "1.20"))
-    STOP_LOSS_ATR_MODIFIER = float(os.getenv("STOP_LOSS_ATR_MODIFIER", "1.5"))
+    STOP_LOSS_ATR_MODIFIER = float(os.getenv("STOP_LOSS_ATR_MODIFIER", "2.0"))
     ATR_SL_MULTIPLIER = STOP_LOSS_ATR_MODIFIER
 
     # --- ADOPCIÓN DE HUÉRFANOS ---
