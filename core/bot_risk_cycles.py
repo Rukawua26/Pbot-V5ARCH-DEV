@@ -4,12 +4,27 @@ from config import Config
 from notifier import send_telegram_msg
 
 
+def _btc_price_is_fresh(bot) -> bool:
+    max_age = float(getattr(Config, "BTC_RISK_MAX_PRICE_AGE_SECONDS", 90.0) or 90.0)
+    ts = float(getattr(bot, "market_btc_price_ts", 0.0) or 0.0)
+    if ts <= 0:
+        return False
+    return (time.monotonic() - ts) <= max_age
+
+
 def run_crash_predictor_cycle(bot) -> bool:
     if not (
         Config.CRASH_DETECTION_ENABLED
         and hasattr(bot, "market_btc_price")
         and bot.market_btc_price > 0
     ):
+        return False
+
+    if not _btc_price_is_fresh(bot):
+        bot.log(
+            "⚠️ Crash Predictor omitido: precio BTC sin timestamp fresco. "
+            "Manteniendo estado defensivo existente."
+        )
         return False
 
     try:
@@ -62,6 +77,10 @@ def run_crash_predictor_cycle(bot) -> bool:
 def run_btc_panic_cycle(bot):
     bot.btc_panic = bot.force_btc_panic
     try:
+        if not _btc_price_is_fresh(bot):
+            bot.log("⚠️ BTC Panic omitido: precio BTC stale o sin timestamp fresco")
+            return
+
         btc_data = bot._get_cached_btc_data()
         if btc_data is not None and len(btc_data) >= 2:
             last_close = btc_data["close"].iloc[-1]

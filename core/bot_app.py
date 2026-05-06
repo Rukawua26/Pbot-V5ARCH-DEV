@@ -437,6 +437,12 @@ def run_entrypoint():
         if not acquire_single_instance_lock(logger):
             raise SystemExit(1)
 
+        for warning in Config.env_warnings():
+            logger.warning(f"⚠️ CONFIG_ENV_FALLBACK: {warning}")
+        config_errors = Config.validate()
+        if config_errors:
+            raise RuntimeError("CONFIG_VALIDATION_FAILED: " + "; ".join(config_errors))
+
         bot = Bot()
         if (
             not getattr(bot, "main_loop", None)

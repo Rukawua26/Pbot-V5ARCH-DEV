@@ -26,6 +26,30 @@ def _is_public_sandbox_limitation(error) -> bool:
     return "does not have a testnet/sandbox URL for public endpoints" in str(error)
 
 
+def _is_timestamp_drift_error(error) -> bool:
+    message = str(error)
+    return "-1021" in message or "Timestamp for this request" in message
+
+
+def _sync_exchange_time(bot, exchange, reason: str) -> None:
+    if not hasattr(exchange, "load_time_difference"):
+        raise RuntimeError("Exchange no soporta load_time_difference()")
+
+    offset = exchange.load_time_difference()
+    bot.log(f"⏱️ Binance time sync aplicado ({reason}): offset={offset}ms")
+
+
+def _call_auth_read_with_time_resync(bot, action_name: str, call_fn):
+    try:
+        return call_fn()
+    except Exception as error:
+        if not _is_timestamp_drift_error(error):
+            raise
+        bot.log(f"⚠️ Binance timestamp drift en {action_name}: {error}. Resincronizando...")
+        _sync_exchange_time(bot, bot.execution.exchange, action_name)
+        return call_fn()
+
+
 def connect_to_binance(bot):
     try:
         bot.log("Conectando a Binance...")
@@ -83,7 +107,9 @@ def connect_to_binance(bot):
                 )
             if Config.BINANCE_API_KEY and Config.BINANCE_API_SECRET:
                 try:
-                    bot.execution.fetch_balance()
+                    _call_auth_read_with_time_resync(
+                        bot, "fetch_balance(PAPER)", bot.execution.fetch_balance
+                    )
                     bot.log("✅ Conectado: API Keys válidas y permisos de Futuros activos.")
                 except Exception as error:
                     bot.log(
@@ -99,7 +125,14 @@ def connect_to_binance(bot):
         else:
             # Verificación explícita de permisos
             try:
-                bot.execution.fetch_balance()
+                try:
+                    _sync_exchange_time(bot, exchange, "bootstrap REAL")
+                except Exception as error:
+                    bot.log(f"⚠️ Binance time sync previo falló; se validará con request autenticada: {error}")
+
+                _call_auth_read_with_time_resync(
+                    bot, "fetch_balance(REAL)", bot.execution.fetch_balance
+                )
                 bot.log("✅ Conectado: API Keys válidas y permisos de Futuros activos.")
 
                 try:
@@ -108,15 +141,29 @@ def connect_to_binance(bot):
                     if hasattr(bot.execution.exchange, "fetch_position_mode"):
                         try:
                             # Intentar primero con símbolo BTC
-                            mode = bot.execution.fetch_position_mode(symbol="BTC/USDT:USDT")
+                            mode = _call_auth_read_with_time_resync(
+                                bot,
+                                "fetch_position_mode(BTC/USDT:USDT)",
+                                lambda: bot.execution.fetch_position_mode(
+                                    symbol="BTC/USDT:USDT"
+                                ),
+                            )
                             bot.is_hedge_mode = mode.get("hedged", False)
                         except Exception:
                             # Fallback: intentar sin símbolo
-                            mode = bot.execution.fetch_position_mode()
+                            mode = _call_auth_read_with_time_resync(
+                                bot,
+                                "fetch_position_mode",
+                                bot.execution.fetch_position_mode,
+                            )
                             bot.is_hedge_mode = mode.get("hedged", False)
                     else:
                         # Fallback a endpoint directo
-                        mode = bot.execution.get_position_side_dual()
+                        mode = _call_auth_read_with_time_resync(
+                            bot,
+                            "get_position_side_dual",
+                            bot.execution.get_position_side_dual,
+                        )
                         bot.is_hedge_mode = mode["dualSidePosition"]
                     bot.log(
                         f"ℹ️ Modo de Posición: {'HEDGE' if bot.is_hedge_mode else 'ONE-WAY'}"

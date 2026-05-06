@@ -392,6 +392,15 @@ def _manage_partial_fill_trade(bot, symbol: str, trade: dict, info: dict):
                 f"⏱️ PARTIAL_FILL timeout {symbol}: cancelado remanente {remaining_estimated:.6f}"
             )
         except Exception as error:
+            trade["status"] = "PARTIAL_FILL_CANCEL_FAILED"
+            trade["partial_fill_pending"] = True
+            trade["remaining_amount"] = remaining_estimated
+            with bot.db_lock:
+                bot.brain.save_active_trade_state(symbol, trade)
+            with bot.lock:
+                bot.is_paused = True
+                bot.integrity_lock_active = True
+                setattr(bot, "halt_system_active", True)
             append_execution_event(
                 bot,
                 "PARTIAL_FILL_CANCEL_FAILED",
@@ -403,6 +412,11 @@ def _manage_partial_fill_trade(bot, symbol: str, trade: dict, info: dict):
                 },
             )
             bot.log(f"⚠️ No se pudo cancelar remanente parcial en {symbol}: {error}")
+            send_telegram_msg(
+                f"🛑 *PARTIAL_FILL_CANCEL_FAILED* {symbol}\n"
+                f"No se pudo cancelar remanente {remaining_estimated:.6f}. "
+                "HALT activado para reconciliación manual."
+            )
 
 
 def sync_wallet(bot):

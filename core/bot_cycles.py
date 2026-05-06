@@ -140,18 +140,21 @@ def run_market_context_cycle(bot, tickers):
     if ws_btc_price > 0 and ws_btc_age <= float(getattr(Config, "WS_TICKER_MAX_AGE_SECONDS", 15.0)):
         bot.market_btc_price = ws_btc_price
         bot.market_btc_price_source = "WS_TICKER"
+        bot.market_btc_price_ts = ws_btc_ts
     else:
         btc_ticker = tickers.get(
             "BTC/USDT:USDT", tickers.get("BTC/USDT", {"last": bot.market_btc_price})
         )
         bot.market_btc_price = float(btc_ticker.get("last", bot.market_btc_price))
         bot.market_btc_price_source = "REST_TICKER"
+        bot.market_btc_price_ts = monotonic_now()
 
     if bot.market_btc_price == 0:
         try:
             bot.log("📡 Recatando precio de BTC manualmente...")
             btc_t = bot.execution.fetch_ticker("BTC/USDT")
             bot.market_btc_price = float(btc_t["last"])
+            bot.market_btc_price_ts = monotonic_now()
         except (ccxt.NetworkError, ccxt.ExchangeError, KeyError, ValueError) as error:
             bot.log(f"⚠️ No se pudo rescatar BTC manualmente: {error}")
 

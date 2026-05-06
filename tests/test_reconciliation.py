@@ -133,7 +133,8 @@ class ReconciliationTest(unittest.TestCase):
         bot.brain.save_error_snapshot.assert_not_called()
         bot.brain.delete_active_trade_state.assert_not_called()
 
-    def test_marks_lost_when_no_position_and_no_open_order(self):
+    @patch("core.reconciliation.send_telegram_msg")
+    def test_marks_lost_when_no_position_and_no_open_order(self, mocked_tg):
         stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
         # Generar ID con nuevo formato
         missing_coid = generate_client_order_id("BTC/USDT", "BUY", 1712222222.123, "missing")
@@ -176,6 +177,7 @@ class ReconciliationTest(unittest.TestCase):
         self.assertEqual(
             bot.brain.save_error_snapshot.call_args[0][1], "INTENT_EXPIRED"
         )
+        mocked_tg.assert_called_once()
 
     def test_keeps_recent_pending_send_when_exchange_still_has_no_order(self):
         fresh_ts = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
@@ -740,6 +742,20 @@ class HaltRecoveryTest(unittest.TestCase):
         self.assertFalse(bot.integrity_lock_active)
         self.assertFalse(bot.halt_system_active)
         self.assertEqual(bot.balance, 100.0)
+
+    @patch("core.reconciliation.Config.HALT_RECOVERY_MAX_ATTEMPTS", 2)
+    def test_recover_halt_blocks_after_max_attempts(self):
+        bot = self._bot()
+
+        ok1, _ = recover_halt_if_exchange_consistent(bot, required_snapshots=3)
+        ok2, _ = recover_halt_if_exchange_consistent(bot, required_snapshots=3)
+        ok3, msg3 = recover_halt_if_exchange_consistent(bot, required_snapshots=3)
+
+        self.assertFalse(ok1)
+        self.assertFalse(ok2)
+        self.assertFalse(ok3)
+        self.assertIn("MAX_ATTEMPTS", msg3)
+        self.assertTrue(bot.halt_system_active)
 
     def test_recover_halt_blocks_when_local_real_trade_exists(self):
         bot = self._bot(

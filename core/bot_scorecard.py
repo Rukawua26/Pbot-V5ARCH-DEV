@@ -23,6 +23,16 @@ def send_daily_exit_scorecard(bot):
             ,
             (day_start.isoformat(), day_end.isoformat()),
         ).fetchall()
+        real_rows = conn.execute(
+            """
+            SELECT pnl_percent
+            FROM trades
+            WHERE is_shadow = 0
+              AND timestamp >= ?
+              AND timestamp < ?
+            """,
+            (day_start.isoformat(), day_end.isoformat()),
+        ).fetchall()
         conn.close()
 
         reason_keys = [
@@ -101,6 +111,11 @@ def send_daily_exit_scorecard(bot):
         )
         pf_all = bot._safe_div(gp_all, abs(gl_all))
 
+        real_total = len(real_rows)
+        real_wins = sum(1 for row in real_rows if float(row["pnl_percent"] or 0.0) > 0)
+        real_pnl = sum(float(row["pnl_percent"] or 0.0) for row in real_rows)
+        real_wr = bot._safe_div(real_wins, real_total) * 100.0
+
         watchlist = list(bot.breakout_agent.watchlist.keys())[:8]
         wl_txt = ", ".join(watchlist) if watchlist else "vacía"
         wl_sources = bot.breakout_agent.summary_by_source()
@@ -131,6 +146,8 @@ def send_daily_exit_scorecard(bot):
             f"Win Rate: {wr:.2f}%\n"
             f"Expectancy: {expectancy:+.4f}%\n"
             f"Profit Factor: {pf_all:.2f}\n\n"
+            "🚀 *REAL HOY:*\n"
+            f"- Trades: {real_total} | WR: {real_wr:.2f}% | PnL: {real_pnl:+.2f}%\n\n"
             "🧪 *DESGLOSE POR SALIDA:*\n"
             f"1) INVALIDACIÓN (Structural)\n{row_text('', 'STRUCTURAL_INVALIDATION')}\n\n"
             f"2) ESCAPE (Time Decay)\n{row_text('', 'TIME_DECAY_ESCAPE_VELOCITY')}\n\n"

@@ -1,6 +1,6 @@
 import unittest
 
-from core.config.manager import Config, _env_bool, _env_float, _env_int
+from core.config.manager import Config, _CONFIG_ENV_WARNINGS, _env_bool, _env_float, _env_int
 from core.config.operational import OperationalConfig
 from core.config.strategy import StrategyConfig
 
@@ -33,14 +33,29 @@ class ConfigPrecedenceTest(unittest.TestCase):
         import os
         from unittest.mock import patch
 
+        _CONFIG_ENV_WARNINGS.clear()
         with patch.dict(
             os.environ,
             {
                 "TEST_FLOAT_SETTING": "bad",
                 "TEST_INT_SETTING": "also-bad",
-                "TEST_BOOL_SETTING": "off",
+                "TEST_BOOL_SETTING": "unknown",
             },
         ):
             self.assertEqual(_env_float("TEST_FLOAT_SETTING", 1.5), 1.5)
             self.assertEqual(_env_int("TEST_INT_SETTING", 4), 4)
-            self.assertFalse(_env_bool("TEST_BOOL_SETTING", True))
+            self.assertTrue(_env_bool("TEST_BOOL_SETTING", True))
+        self.assertEqual(len(_CONFIG_ENV_WARNINGS), 3)
+
+    def test_config_validation_rejects_inconsistent_thresholds(self):
+        original_shadow = Config.SHADOW_MODE_MIN
+        original_real = Config.REAL_MODE_THRESHOLD
+        try:
+            Config.SHADOW_MODE_MIN = 75.0
+            Config.REAL_MODE_THRESHOLD = 70.0
+            errors = Config.validate()
+        finally:
+            Config.SHADOW_MODE_MIN = original_shadow
+            Config.REAL_MODE_THRESHOLD = original_real
+
+        self.assertTrue(any("SHADOW_MODE_MIN" in error for error in errors))

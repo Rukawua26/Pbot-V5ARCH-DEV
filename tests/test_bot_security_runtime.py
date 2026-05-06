@@ -84,6 +84,43 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         bot.sync_wallet.assert_not_called()
 
+    @patch("core.bot_connection.Config.USE_TESTNET", False)
+    @patch("core.bot_connection.Config.PAPER_MODE", False)
+    @patch("core.bot_connection.ccxt.binance")
+    def test_connect_to_binance_resyncs_time_on_timestamp_drift(self, mocked_binance):
+        exchange = MagicMock()
+        exchange.load_time_difference.return_value = -1250
+        mocked_binance.return_value = exchange
+
+        bot = SimpleNamespace(
+            log=MagicMock(),
+            is_paused=False,
+            integrity_lock_active=False,
+            halt_system_active=False,
+            execution=SimpleNamespace(
+                exchange=None,
+                load_markets=MagicMock(),
+                fetch_balance=MagicMock(
+                    side_effect=[
+                        RuntimeError(
+                            'binance {"code":-1021,"msg":"Timestamp for this request was 1000ms ahead of the server\'s time."}'
+                        ),
+                        {"USDT": {"total": 1}},
+                    ]
+                ),
+                fetch_position_mode=MagicMock(return_value={"hedged": False}),
+                get_position_side_dual=MagicMock(return_value={"dualSidePosition": False}),
+            ),
+            data_service=SimpleNamespace(exchange=None),
+            sync_wallet=MagicMock(),
+        )
+
+        connect_to_binance(bot)
+
+        self.assertEqual(bot.execution.fetch_balance.call_count, 2)
+        self.assertGreaterEqual(exchange.load_time_difference.call_count, 1)
+        bot.sync_wallet.assert_called_once()
+
     @patch("core.bot_connection.Config.PAPER_MODE", True)
     @patch("core.bot_connection.ccxt.binance")
     def test_connect_to_binance_keeps_booting_in_paper_when_balance_check_fails(

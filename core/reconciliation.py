@@ -476,7 +476,6 @@ def reconcile_bootstrap_state(bot):
                         f"🛑 ORDER_LOOKUP_FAILED en {symbol} activa HALT para modo REAL. "
                         f"Requiere intervención manual."
                     )
-                    from notifier import send_telegram_msg
                     send_telegram_msg(
                         f"🛑 *ORDER_LOOKUP_FAILED* {symbol} activó HALT en modo REAL. "
                         f"Error: {order_lookup_error[:100]}. Requiere intervención manual."
@@ -527,6 +526,11 @@ def reconcile_bootstrap_state(bot):
                     )
                     with bot.lock:
                         bot.active_trades.pop(symbol, None)
+                    send_telegram_msg(
+                        f"⚠️ *INTENT_EXPIRED* {symbol}\n"
+                        f"PENDING_SEND sin orden exchange tras {age:.1f}s. "
+                        "Intención descartada por reconciliación."
+                    )
                     intent_expired += 1
                     expired_symbols.add(symbol)
                 continue
@@ -683,11 +687,26 @@ def recover_halt_if_exchange_consistent(bot, required_snapshots: int = 2) -> tup
 
     fingerprint = {"exchange_flat": True, "balance": round(exchange_balance, 8)}
     state = getattr(bot, "_halt_recovery_state", {}) or {}
+    attempts = int(state.get("attempts", 0) or 0) + 1
+    max_attempts = int(getattr(Config, "HALT_RECOVERY_MAX_ATTEMPTS", 5) or 5)
+    if attempts > max_attempts:
+        bot._halt_recovery_state = {
+            "fingerprint": fingerprint,
+            "count": int(state.get("count", 0) or 0),
+            "attempts": attempts,
+        }
+        append_execution_event(
+            bot,
+            "HALT_RECOVERY_MAX_ATTEMPTS",
+            {"attempts": attempts, "max_attempts": max_attempts},
+        )
+        return False, f"RECOVERY_BLOCKED_MAX_ATTEMPTS: {attempts}/{max_attempts}"
+
     if state.get("fingerprint") == fingerprint:
         count = int(state.get("count", 0) or 0) + 1
     else:
         count = 1
-    bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count}
+    bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count, "attempts": attempts}
 
     if count < required:
         return False, f"RECOVERY_PENDING_CONSISTENT_SNAPSHOTS: {count}/{required}"
@@ -698,7 +717,7 @@ def recover_halt_if_exchange_consistent(bot, required_snapshots: int = 2) -> tup
         bot.integrity_lock_active = False
         bot.halt_system_active = False
         bot.is_paused = False
-        bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count}
+        bot._halt_recovery_state = {"fingerprint": fingerprint, "count": count, "attempts": 0}
     append_execution_event(
         bot,
         "HALT_RECOVERY_RELEASED",

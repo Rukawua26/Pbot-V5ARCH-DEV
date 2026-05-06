@@ -67,6 +67,17 @@ class DailyScorecardTest(unittest.TestCase):
                     "DYNAMIC_SL",
                     1,
                 ),
+                (
+                    "2026-04-27T11:00:00",
+                    "REAL/USDT",
+                    "SELL",
+                    1.0,
+                    0.8,
+                    1.0,
+                    "CLOSE",
+                    "MANUAL",
+                    0,
+                ),
             ],
         )
         conn.commit()
@@ -96,6 +107,8 @@ class DailyScorecardTest(unittest.TestCase):
         message = send_mock.call_args.args[0]
         self.assertIn("Fecha: 2026-04-27", message)
         self.assertIn("Total Trades (Shadow): 2", message)
+        self.assertIn("REAL HOY", message)
+        self.assertIn("Trades: 1 | WR: 100.00% | PnL: +0.80%", message)
         self.assertIn("Win Rate: 50.00%", message)
         self.assertIn("4) OTRAS SALIDAS", message)
         self.assertIn("Qty: 1 | PnL: -0.40%", message)

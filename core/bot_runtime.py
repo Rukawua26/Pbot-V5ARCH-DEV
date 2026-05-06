@@ -53,6 +53,7 @@ def run_initial_load(bot, dashboard_module):
         threading.Thread(target=bot._runtime_monitor_loop, daemon=True).start()
 
     except Exception as error:
+        bot.startup_error = error
         bot.log(f"❌ FALLO CRÍTICO EN CARGA: {error}")
         bot.is_running = False
         bot.init_complete.set()
@@ -136,3 +137,8 @@ def run_bot_runtime_loop(bot, dashboard_module, logger, shadow_logger):
         bot.save_cache(blocking=True)
         shadow_logger.stop()
         bot.log("✅ Caché y Logs guardados.")
+
+    startup_error = getattr(bot, "startup_error", None)
+    if startup_error is not None:
+        print(f"\n❌ FALLO CRÍTICO EN CARGA: {startup_error}", flush=True)
+        raise RuntimeError(f"BOOTSTRAP_FAILED: {startup_error}") from startup_error

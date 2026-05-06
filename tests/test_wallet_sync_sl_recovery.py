@@ -4,7 +4,7 @@ from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from core.bot_wallet_sync import sync_wallet
+from core.bot_wallet_sync import _manage_partial_fill_trade, sync_wallet
 
 
 class WalletSyncSlRecoveryTest(unittest.TestCase):
@@ -146,6 +146,45 @@ class WalletSyncSlRecoveryTest(unittest.TestCase):
         bot.execution.close_position.assert_called_once()
         self.assertNotIn("SOL/USDT", bot.active_trades)
         bot.brain.delete_active_trade_state.assert_called_once_with("SOL/USDT")
+
+    @patch("core.bot_wallet_sync.send_telegram_msg")
+    @patch("core.bot_wallet_sync.Config.PARTIAL_FILL_TIMEOUT_SECONDS", 1)
+    def test_partial_fill_cancel_failure_halts_for_manual_reconciliation(self, mocked_tg):
+        bot = self._base_bot()
+        bot.is_paused = False
+        bot.integrity_lock_active = False
+        bot.halt_system_active = False
+        bot.execution = SimpleNamespace(
+            fetch_open_orders=MagicMock(
+                return_value=[{"id": "entry-1", "clientOrderId": "cid-1"}]
+            ),
+            cancel_order=MagicMock(side_effect=RuntimeError("cancel down")),
+        )
+        trade = {
+            "symbol": "BTC/USDT",
+            "status": "PARTIAL_FILL_PENDING",
+            "partial_fill_pending": True,
+            "amount": 0.05,
+            "requested_amount": 0.10,
+            "entry": 100.0,
+            "entry_exchange_order_id": "entry-1",
+            "entry_client_order_id": "cid-1",
+            "partial_fill_started_at": "2026-05-04T00:00:00",
+        }
+
+        _manage_partial_fill_trade(
+            bot,
+            "BTC/USDT",
+            trade,
+            {"amount": 0.05, "entry": 100.0},
+        )
+
+        self.assertEqual(trade["status"], "PARTIAL_FILL_CANCEL_FAILED")
+        self.assertTrue(bot.is_paused)
+        self.assertTrue(bot.integrity_lock_active)
+        self.assertTrue(bot.halt_system_active)
+        bot.brain.save_active_trade_state.assert_called()
+        mocked_tg.assert_called_once()
 
     @patch("core.bot_wallet_sync.send_telegram_msg")
     @patch("core.bot_wallet_sync.Config.PAPER_MODE", False)
