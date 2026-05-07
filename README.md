@@ -21,7 +21,7 @@
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**  
 **Runtime-first trading bot: decision, execution, reconciliation and observability in a modular architecture.**
 
-`v118.4-PRO` • `1H + 4H macro` • `BTC HMM + Markov probabilities` • `25-pair triage cap` • `OI Delta filter` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
+`v118.4-PRO` • `1H + 4H macro` • `BTC HMM + Markov probabilities` • `30-pair triage cap` • `OI Delta filter` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -92,7 +92,7 @@ flowchart LR
 | 6 | Exploración shadow ampliada, matriz táctica validada y limpieza de alertas pendientes | Expanded shadow exploration, validated tactical matrix and pending alert cleanup | ✅ Publicado |
 | 7 | HMM Markov como regulador probabilístico de `REAL`, `SHADOW` y `VETO` | HMM Markov as probabilistic regulator for `REAL`, `SHADOW` and `VETO` | ✅ Publicado |
 | 8 | Dead zone Markov pasa de veto total a penalización estándar | Markov dead zone changes from hard veto to standard penalty | ✅ Publicado |
-| 9 | Escudo de liquidez: spread máximo 0.05% y radar concentrado en 25 pares | Liquidity shield: 0.05% max spread and radar focused on 25 pairs | ✅ Publicado |
+| 9 | Escudo de liquidez: spread máximo 0.05% y radar concentrado en 30 pares | Liquidity shield: 0.05% max spread and radar focused on 30 pairs | ✅ Publicado |
 | 10 | Filtro OI Delta para vetar short squeezes y long liquidations | OI Delta filter to veto short squeezes and long liquidations | ✅ Publicado |
 | 11 | `v118.4-PRO`: límite de triaje aplicado end-to-end a snapshot, radar y `pairs_to_scan` | `v118.4-PRO`: triage limit applied end-to-end to snapshot, radar and `pairs_to_scan` | ✅ Publicado |
 
@@ -305,7 +305,7 @@ main.py
 | `MARKOV_SNAPSHOT_MAX_AGE_SECONDS` | **ES:** Edad máxima para permitir boosts Markov <br> **EN:** Max age to allow Markov boosts |
 | `MARKOV_SNAPSHOT_STALE_SECONDS` | **ES:** Edad máxima para usar snapshot solo como penalizador <br> **EN:** Max age to use snapshot as penalty-only |
 | `WS_TICKER_MAX_AGE_SECONDS` | **ES:** Edad máxima de precio BTC por websocket antes de fallback REST <br> **EN:** Max websocket BTC price age before REST fallback |
-| `TOP_TRIAGE_COUNT` | **ES:** Límite configurable del universo de triage; default `25` y aplicado a snapshot dinámico, radar y `pairs_to_scan` <br> **EN:** Configurable triage universe limit; default `25` and applied to dynamic snapshot, radar and `pairs_to_scan` |
+| `TOP_TRIAGE_COUNT` | **ES:** Límite configurable del universo de triage; default `30` y aplicado a snapshot dinámico, radar y `pairs_to_scan` <br> **EN:** Configurable triage universe limit; default `30` and applied to dynamic snapshot, radar and `pairs_to_scan` |
 | `TRIAGE_SPREAD_MAX` | **ES:** Spread máximo de triage 0.05% para proteger trailing stop 0.3% <br> **EN:** 0.05% max triage spread to protect 0.3% trailing stop |
 | `ENTRY_SPREAD_VETO_THRESHOLD` | **ES:** Veto de entrada si spread supera 0.05% <br> **EN:** Entry veto when spread exceeds 0.05% |
 | `OI_FILTER_ENABLED` | **ES:** Activa filtro externo Open Interest Delta v118.3 <br> **EN:** Enables external Open Interest Delta filter v118.3 |

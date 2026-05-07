@@ -308,7 +308,7 @@ def acquire_targets(bot):
 
 def get_active_market_snapshot(bot):
     """
-    [DINÁMICO] Top Liquidez pura por Config.TOP_TRIAGE_COUNT (Elite 25).
+    [DINÁMICO] Top liquidez por Config.TOP_TRIAGE_COUNT (default 30).
     
     Lógica:
       - Stateless: Ya no mantiene pares fijos por RVOL.
@@ -467,4 +467,3 @@ def get_active_market_snapshot(bot):
         bot.log(f"⚠️ Error en get_active_market_snapshot: {e}")
         bot.log(f"TRACEBACK: {tb}")
         return []
-

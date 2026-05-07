@@ -129,7 +129,7 @@ class OperationalConfig:
 
     # --- SISTEMA DE TRIAJE CINÉTICO ---
     # [FASE 1: ESCUDO TÉRMICO] Filtros de Liquidez
-    TOP_TRIAGE_COUNT = 30
+    TOP_TRIAGE_COUNT = _env_int("TOP_TRIAGE_COUNT", 30)
     TRIAGE_SPREAD_MAX = 0.0005  # 0.05% max spread (anti-slippage — protege trailing stop 0.3%)
     TRIAGE_TIMEOUT_SECONDS = 4
     TRIAGE_MAX_WORKERS = int(os.getenv("TRIAGE_MAX_WORKERS", "16"))

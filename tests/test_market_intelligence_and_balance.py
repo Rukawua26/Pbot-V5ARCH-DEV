@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -194,6 +195,51 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         ranked = market_intelligence.get_active_market_snapshot(bot)
 
         self.assertEqual(len(ranked), 2)
+
+    @patch.object(market_intelligence.Config, "TOP_TRIAGE_COUNT", 5)
+    @patch.object(market_intelligence.Config, "BEAR_TREND_MAX_PAIRS", 5)
+    @patch.object(market_intelligence.Config, "TRIAGE_MIN_VOL_24H", 10_000_000)
+    @patch.object(market_intelligence.Config, "BEAR_TREND_MIN_VOL", 50_000_000)
+    @patch.object(market_intelligence.Config, "TRIAGE_SPREAD_MAX", 0.002)
+    def test_get_active_market_snapshot_revalidates_cached_volume_in_bear_trend(self):
+        cached_candidates = [
+            {
+                "symbol": "LOW/USDT",
+                "ticker": {**_ticker("LOW/USDT", volume=20_000_000, price=1.0), "bid": 0.999, "ask": 1.0},
+                "vol_24h": 20_000_000,
+                "last": 1.0,
+            },
+            {
+                "symbol": "HIGH/USDT",
+                "ticker": {**_ticker("HIGH/USDT", volume=80_000_000, price=1.0), "bid": 0.999, "ask": 1.0},
+                "vol_24h": 80_000_000,
+                "last": 1.0,
+            },
+        ]
+        execution = SimpleNamespace(
+            fetch_book_tickers=MagicMock(
+                return_value=[
+                    {"symbol": "LOWUSDT", "bidPrice": "0.999", "askPrice": "1.0"},
+                    {"symbol": "HIGHUSDT", "bidPrice": "0.999", "askPrice": "1.0"},
+                ]
+            ),
+            has_markets_loaded=MagicMock(return_value=True),
+            load_markets=MagicMock(),
+            fetch_tickers=MagicMock(),
+        )
+        bot = SimpleNamespace(
+            execution=execution,
+            weight_tracker=None,
+            market_regime="BEAR_TREND",
+            _market_cache={"candidates": cached_candidates},
+            _market_cache_ts=time.time(),
+            log=MagicMock(),
+        )
+
+        ranked = market_intelligence.get_active_market_snapshot(bot)
+
+        self.assertEqual([item["symbol"] for item in ranked], ["HIGH/USDT"])
+        execution.fetch_tickers.assert_not_called()
 
     @patch.object(bot_cycles.Config, "TOP_TRIAGE_COUNT", 2)
     def test_run_triage_cycle_exposes_only_top_triage_symbols_to_pairs_to_scan(self):
