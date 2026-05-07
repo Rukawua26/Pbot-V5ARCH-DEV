@@ -1,6 +1,7 @@
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown
 from core.execution_telemetry import append_execution_event
+from core.signals.oi_filter import fetch_oi_delta, validate_signal_with_oi
 from core.time_utils import utc_now, utc_now_iso
 from strategy import Strategy
 
@@ -418,6 +419,52 @@ def _apply_entry_filters_and_adjust_prob(
         filter_reason = f"MARKET_BREADTH_FEAR: FEAR ({dump_ratio * 100:.0f}% dump)"
         bot.log(f"⛔ {symbol}: veto LONG por Market Breadth FEAR ({dump_ratio * 100:.0f}% dump)")
 
+    # [OI DELTA v118.3] Veto por senal falsa (short squeeze / long liquidation)
+    if filter_passed and audit_signal in ["BUY", "SELL"]:
+        if bool(getattr(Config, "OI_FILTER_ENABLED", False)):
+            try:
+                oi_delta_pct, oi_current = fetch_oi_delta(bot, symbol)
+                if isinstance(ctx, dict):
+                    ctx["oi_delta_pct"] = oi_delta_pct
+                    ctx["oi_current"] = oi_current
+                if oi_delta_pct is not None:
+                    delta_price_pct = 0.0
+                    if df_main is not None and not df_main.empty and len(df_main) >= 5:
+                        price_now = float(df_main["close"].iloc[-1])
+                        price_prev = float(df_main["close"].iloc[-5])
+                        if price_prev > 0:
+                            delta_price_pct = (price_now - price_prev) / price_prev
+                    oi_verdict = validate_signal_with_oi(
+                        audit_signal, delta_price_pct, oi_delta_pct
+                    )
+                    if isinstance(ctx, dict):
+                        ctx["oi_verdict"] = oi_verdict
+                    if oi_verdict == "VETO":
+                        filter_passed = False
+                        filter_reason = (
+                            f"OI_DELTA_VETO: {audit_signal} falso "
+                            f"(OI Δ={oi_delta_pct * 100:.2f}%, precio Δ={delta_price_pct * 100:.2f}%)"
+                        )
+                        bot.log(f"⛔ {symbol}: {filter_reason}")
+                        append_execution_event(
+                            bot,
+                            "OI_DELTA_VETO",
+                            {
+                                "symbol": symbol,
+                                "side": audit_signal,
+                                "oi_delta_pct": oi_delta_pct,
+                                "delta_price_pct": delta_price_pct,
+                                "oi_current": oi_current,
+                            },
+                        )
+                    elif oi_verdict == "CONFIRMED":
+                        bot.log(
+                            f"✅ {symbol}: OI confirma {audit_signal} "
+                            f"(OI Δ=+{oi_delta_pct * 100:.2f}%)"
+                        )
+            except Exception as oi_err:
+                bot.log(f"⚠️ {symbol}: OI filter error (ignorado): {oi_err}")
+
     # [SHOCK MAP] Veto por falta de espacio operativo
     # Regla: si la distancia al próximo SHOCK < 1.0%, no se dispara.
     if filter_passed and audit_signal in ["BUY", "SELL"]:
@@ -568,6 +615,8 @@ def _apply_entry_filters_and_adjust_prob(
             "regime_weight": float(regime_weight),
             "markov_prob": ctx.get("markov_prob"),
             "markov_snapshot_mode": ctx.get("markov_snapshot_mode"),
+            "oi_delta_pct": ctx.get("oi_delta_pct"),
+            "oi_verdict": ctx.get("oi_verdict"),
         },
     )
 

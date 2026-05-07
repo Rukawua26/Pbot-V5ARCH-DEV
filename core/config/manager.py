@@ -126,6 +126,11 @@ class Config(OperationalConfig, StrategyConfig):
     BREAKOUT_EXTREME_IA_PROB = _env_float("BREAKOUT_EXTREME_IA_PROB", 75.0)
     DIRECTIONAL_COHERENCE_FILTER = _env_bool("DIRECTIONAL_COHERENCE_FILTER", True)
 
+    # --- Open Interest Delta Filter (v118.3) ---
+    OI_FILTER_ENABLED = _env_bool("OI_FILTER_ENABLED", True)
+    OI_DELTA_THRESHOLD = _env_float("OI_DELTA_THRESHOLD", 0.005)
+    OI_CACHE_TTL_SECONDS = _env_int("OI_CACHE_TTL_SECONDS", 60)
+
     # --- Exit Engine v118 (dinámico) ---
     EXIT_ENGINE_V1_ENABLED = _env_bool("EXIT_ENGINE_V1_ENABLED", True)
     EXIT_TIME_DECAY_BARS = _env_int("EXIT_TIME_DECAY_BARS", 4)

@@ -642,6 +642,21 @@ class ExecutionService:
         self._track_api_weight("fetch_funding_rate", 1, "market")
         return fr
 
+    def fetch_open_interest(self, symbol: str) -> Optional[dict]:
+        """Fetch Open Interest para un simbolo de futuros. Peso API: 1."""
+        try:
+            oi = self._call_exchange(
+                "fetch_open_interest",
+                lambda: self.exchange.fetch_open_interest(symbol),
+                retries=1,
+                timeout_s=10.0,
+            )
+            self._track_api_weight("fetch_open_interest", 1, "market")
+            return oi
+        except Exception as error:
+            self.logger.warning(f"⚠️ OI fetch falló para {symbol}: {error}")
+            return None
+
     def fetch_order_book(self, symbol: str, limit: int = 20):
         ob = self.exchange.fetch_order_book(symbol, limit=limit)
         self._track_api_weight("fetch_order_book", 1, "market")
