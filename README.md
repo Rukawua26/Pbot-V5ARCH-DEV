@@ -11,15 +11,16 @@
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
-![Coverage](https://img.shields.io/badge/Coverage-41%25-22c55e)
+![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
+![Risk](https://img.shields.io/badge/Risk_Engine-v118.3-red)
 
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**  
 **Runtime-first trading bot: decision, execution, reconciliation and observability in a modular architecture.**
 
-`1H + 4H macro` • `BTC HMM + Markov probabilities` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
+`1H + 4H macro` • `BTC HMM + Markov probabilities` • `OI Delta filter` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -43,6 +44,7 @@
 | 🧬 Markov regime | BTC HMM publica probabilidades de transición y regula la confianza IA sin bloquear el Guardian | BTC HMM publishes transition probabilities and regulates AI confidence without blocking the Guardian |
 | 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real | Up to `20` concurrent shadow trades to explore without touching real capital |
 | 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos | Tactical matrix requires valid samples before blocking symbols |
+| 🛡️ OI Delta filter | Veta short squeezes y long liquidations antes de ejecución | Vetoes short squeezes and long liquidations before execution |
 | 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección | JSONL events for signal, filter, intent, fill and protection |
 | 📡 Live data | BTC por websocket con fallback REST y logging explícito de reconexión | BTC via websocket with REST fallback and explicit reconnect logging |
 
@@ -55,7 +57,7 @@ flowchart LR
     C --> D[Análisis 1H + Contexto 4H]
     D --> R[BTC HMM + Markov Snapshot]
     R --> E[Agentes MT SR G]
-    E --> F[Filtros, Markov Weight y Guardrails]
+    E --> F[Filtros, Markov Weight, OI Delta y Guardrails]
     F --> G{Decisión}
     G -->|PAPER / REAL| H[Execution Service]
     G -->|shadow_live| I[Shadow Execution Adapter]
@@ -71,6 +73,7 @@ flowchart LR
 | 📡 Triage dinámico | Escanea pares por liquidez, spread, volumen y latencia | Scans pairs by liquidity, spread, volume and latency |
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final | Combines `MT`, `SR` and `G` agent votes for final decision |
 | 🧬 HMM Markov | Clasifica BTC y calcula transición probable a `BULL_TREND`, `BEAR_TREND` o `RANGE` | Classifies BTC and calculates likely transition to `BULL_TREND`, `BEAR_TREND` or `RANGE` |
+| 🛡️ OI Delta | Compara precio reciente vs Open Interest para vetar squeezes/liquidaciones falsas | Compares recent price vs Open Interest to veto fake squeezes/liquidations |
 | 🛡️ Seguridad runtime | Reconciliación, `HARD SL`, guardrails y cierre de emergencia | Reconciliation, `HARD SL`, guardrails and emergency close |
 | 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado | Simulates rejections, slippage and partial fills with separated backend |
 | 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram | Remote control, auditing and diagnostics via Telegram commands |
@@ -87,6 +90,9 @@ flowchart LR
 | 5 | Filtro macro HMM, telemetría de pipeline y eventos de ciclo de ejecución | Macro HMM filter, pipeline telemetry and execution lifecycle events | ✅ Publicado |
 | 6 | Exploración shadow ampliada, matriz táctica validada y limpieza de alertas pendientes | Expanded shadow exploration, validated tactical matrix and pending alert cleanup | ✅ Publicado |
 | 7 | HMM Markov como regulador probabilístico de `REAL`, `SHADOW` y `VETO` | HMM Markov as probabilistic regulator for `REAL`, `SHADOW` and `VETO` | ✅ Publicado |
+| 8 | Dead zone Markov pasa de veto total a penalización estándar | Markov dead zone changes from hard veto to standard penalty | ✅ Publicado |
+| 9 | Escudo de liquidez: spread máximo 0.05% y radar concentrado en 25 pares | Liquidity shield: 0.05% max spread and radar focused on 25 pairs | ✅ Publicado |
+| 10 | Filtro OI Delta para vetar short squeezes y long liquidations | OI Delta filter to veto short squeezes and long liquidations | ✅ Publicado |
 
 ---
 
@@ -144,6 +150,7 @@ Before starting, manually create `.env` with your operational variables and cred
 | Triage dinámico | ✅ Activo / Active | Top pares por liquidez, spread, volumen y latencia |
 | Motor de señales | ✅ Activo / Active | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
 | Filtro régimen BTC | ✅ Activo / Active | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
+| Filtro OI Delta | ✅ Activo / Active | Open Interest externo con cache TTL para vetar short squeezes y long liquidations |
 | Shadow exploration | ✅ Activo / Active | Límite default `MAX_SHADOW_TRADES=20` con override por `.env` |
 | Matriz táctica | ✅ Activo / Active | Excluye `VETO_ERROR` y requiere muestra válida antes de bloquear/reducir símbolos |
 | Breakout watchlist | ✅ Activo / Active | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
@@ -166,7 +173,7 @@ The bot no longer treats `RANGE` as a blind switch. The HMM publishes an in-memo
 |---|---|---|
 | `RANGE` + breakout alto | Penalización leve, permite que una señal fuerte llegue a `REAL` o `SHADOW` | Light penalty, lets a strong signal reach `REAL` or `SHADOW` |
 | `RANGE` estándar | Penalización media, normalmente degrada a `SHADOW` | Medium penalty, usually degrades to `SHADOW` |
-| `RANGE` estancado | Veto preventivo `HMM_RANGE_STAGNANT` | Preventive `HMM_RANGE_STAGNANT` veto |
+| `RANGE` estancado | Penalización estándar, no veto total, para no bloquear señales válidas | Standard penalty, not hard veto, to avoid blocking valid signals |
 | Tendencia alineada fresca | Boost controlado a la probabilidad final | Controlled boost to final probability |
 | Snapshot stale | Solo puede penalizar; no puede boostear riesgo real | Can only penalize; cannot boost real risk |
 
@@ -290,12 +297,18 @@ main.py
 | `HMM_RANGE_VETO` | **ES:** Mantiene pre-veto defensivo cuando no hay snapshot Markov usable <br> **EN:** Keeps defensive pre-veto when no usable Markov snapshot exists |
 | `HMM_RANGE_PENALTY` | **ES:** Penalización de probabilidad en rango para aprendizaje/shadow <br> **EN:** Probability penalty in range for learning/shadow |
 | `MARKOV_BREAKOUT_MIN` | **ES:** Probabilidad mínima para tratar `RANGE` como breakout anticipado <br> **EN:** Minimum probability to treat `RANGE` as anticipated breakout |
-| `MARKOV_DEAD_ZONE_MAX` | **ES:** Debajo de este umbral `RANGE` se considera estancado y se veta <br> **EN:** Below this threshold `RANGE` is considered stagnant and vetoed |
+| `MARKOV_DEAD_ZONE_MAX` | **ES:** Debajo de este umbral `RANGE` se considera estancado y aplica penalización estándar <br> **EN:** Below this threshold `RANGE` is considered stagnant and applies standard penalty |
 | `MARKOV_RANGE_BREAKOUT_WEIGHT` | **ES:** Peso aplicado a `RANGE` con breakout alto <br> **EN:** Weight applied to `RANGE` with high breakout probability |
 | `MARKOV_RANGE_STANDARD_WEIGHT` | **ES:** Peso aplicado a `RANGE` estándar <br> **EN:** Weight applied to standard `RANGE` |
 | `MARKOV_SNAPSHOT_MAX_AGE_SECONDS` | **ES:** Edad máxima para permitir boosts Markov <br> **EN:** Max age to allow Markov boosts |
 | `MARKOV_SNAPSHOT_STALE_SECONDS` | **ES:** Edad máxima para usar snapshot solo como penalizador <br> **EN:** Max age to use snapshot as penalty-only |
 | `WS_TICKER_MAX_AGE_SECONDS` | **ES:** Edad máxima de precio BTC por websocket antes de fallback REST <br> **EN:** Max websocket BTC price age before REST fallback |
+| `TOP_TRIAGE_COUNT` | **ES:** Universo de triage concentrado en 25 pares líquidos <br> **EN:** Triage universe focused on 25 liquid pairs |
+| `TRIAGE_SPREAD_MAX` | **ES:** Spread máximo de triage 0.05% para proteger trailing stop 0.3% <br> **EN:** 0.05% max triage spread to protect 0.3% trailing stop |
+| `ENTRY_SPREAD_VETO_THRESHOLD` | **ES:** Veto de entrada si spread supera 0.05% <br> **EN:** Entry veto when spread exceeds 0.05% |
+| `OI_FILTER_ENABLED` | **ES:** Activa filtro externo Open Interest Delta v118.3 <br> **EN:** Enables external Open Interest Delta filter v118.3 |
+| `OI_DELTA_THRESHOLD` | **ES:** Umbral mínimo de cambio OI relevante; default `0.005` <br> **EN:** Minimum relevant OI change threshold; default `0.005` |
+| `OI_CACHE_TTL_SECONDS` | **ES:** TTL del cache OI por símbolo; default `60` <br> **EN:** Per-symbol OI cache TTL; default `60` |
 
 ### Variables Para `shadow_live`
 
@@ -382,6 +395,7 @@ docker compose up --build -d
 - **ES:** `logs/execution_events.jsonl`: eventos estructurados de ejecución. <br> **EN:** `logs/execution_events.jsonl`: structured execution events.
 - **ES:** Runtime monitor con métricas de memoria y salud del proceso. <br> **EN:** Runtime monitor with memory metrics and process health.
 - **ES:** Estado de pipeline con fuente de precio BTC, edad WS, régimen HMM y confianza. <br> **EN:** Pipeline state with BTC price source, WS age, HMM regime and confidence.
+- **ES:** `FILTER_APPLIED` incluye `oi_delta_pct` y `oi_verdict` cuando el filtro OI está activo. <br> **EN:** `FILTER_APPLIED` includes `oi_delta_pct` and `oi_verdict` when the OI filter is active.
 - **ES:** Websocket BTC loguea conexión inicial, cierre y reconexión para detectar degradación de datos en vivo. <br> **EN:** BTC websocket logs initial connection, close and reconnect to detect live-data degradation.
 - **ES:** Alertas `PENDING` se descartan cuando una entrada es bloqueada antes de enviar orden. <br> **EN:** `PENDING` alerts are discarded when an entry is blocked before order send.
 - **ES:** Scorecards y reportes de rendimiento diarios. <br> **EN:** Daily scorecards and performance reports.
@@ -399,6 +413,7 @@ docker compose up --build -d
 - `FILTER_APPLIED`
 - `RANGE_VETO`
 - `RANGE_PENALTY`
+- `OI_DELTA_VETO`
 - `PENDING_SEND_PERSISTED`
 - `PARTIAL_FILL_COMPLETED`
 - `PARTIAL_FILL_TIMEOUT_CANCEL`
@@ -464,12 +479,17 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 ./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
+Estado local verificado: `397` tests `unittest` OK (`1` skipped) y `396` tests `pytest` OK (`1` skipped).  
+Verified local state: `397` `unittest` tests OK (`1` skipped) and `396` `pytest` tests OK (`1` skipped).
+
 ### Cobertura Destacada En `tests/` | Highlighted Coverage in `tests/`
 
 - **ES:** reconciliación y wallet sync <br> **EN:** reconciliation and wallet sync
 - **ES:** contratos de adaptadores de ejecución <br> **EN:** execution adapter contracts
 - **ES:** flows avanzados de runtime <br> **EN:** advanced runtime flows
 - **ES:** filtro HMM de régimen BTC y fallback heurístico <br> **EN:** BTC HMM regime filter and heuristic fallback
+- **ES:** filtro Open Interest Delta y cache de OI <br> **EN:** Open Interest Delta filter and OI cache
+- **ES:** helpers de ejecución, risk engine y trade manager <br> **EN:** execution, risk engine and trade manager helpers
 - **ES:** telemetría de pipeline BTC por websocket y REST <br> **EN:** BTC pipeline telemetry via websocket and REST
 - **ES:** matriz táctica, límite shadow y descarte de alertas pendientes <br> **EN:** tactical matrix, shadow limit and pending alert discard
 - **ES:** watchdog y graceful shutdown <br> **EN:** watchdog and graceful shutdown

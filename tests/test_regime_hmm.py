@@ -578,7 +578,10 @@ class RegimeRangeFilterTests(unittest.TestCase):
         self.assertEqual(updated_ctx["markov_prob"], 82.0)
         self.assertEqual(bot.markov_decision_stats["range_breakout_allowed"], 1)
 
-    def test_markov_range_stagnant_vetoes_preventively(self):
+    def test_markov_range_stagnant_applies_penalty(self):
+        """[HOTFIX v118.1] Dead zone ahora aplica penalización estándar (x0.75)
+        en lugar de veto total. El mercado lateral estancado reduce probabilidades
+        pero no bloquea señales válidas."""
         ctx = {
             "rsi": 55.0,
             "adx": 22.0,
@@ -599,29 +602,30 @@ class RegimeRangeFilterTests(unittest.TestCase):
         with patch.object(filters.Config, "HMM_RANGE_VETO", True):
             with patch.object(filters.Config, "PAPER_MODE", False):
                 with patch.object(filters.Config, "MARKOV_DEAD_ZONE_MAX", 30.0):
-                    with patch.object(
-                        filters.Strategy,
-                        "check_entry_filters",
-                        return_value=(True, "OK", "CALM", {"DAY_WEIGHT": 1.0, "HOUR_WEIGHT": 1.0}),
-                    ):
-                        prob_final, filter_passed, filter_reason, updated_ctx = (
-                            filters._apply_entry_filters_and_adjust_prob(
-                                bot,
-                                "TEST/USDT",
-                                "TEST/USDT",
-                                pd.DataFrame(),
-                                "BUY",
-                                80.0,
-                                ctx,
-                                1.0,
+                    with patch.object(filters.Config, "MARKOV_RANGE_STANDARD_WEIGHT", 0.75):
+                        with patch.object(
+                            filters.Strategy,
+                            "check_entry_filters",
+                            return_value=(True, "OK", "CALM", {"DAY_WEIGHT": 1.0, "HOUR_WEIGHT": 1.0}),
+                        ):
+                            prob_final, filter_passed, filter_reason, updated_ctx = (
+                                filters._apply_entry_filters_and_adjust_prob(
+                                    bot,
+                                    "TEST/USDT",
+                                    "TEST/USDT",
+                                    pd.DataFrame(),
+                                    "BUY",
+                                    80.0,
+                                    ctx,
+                                    1.0,
+                                )
                             )
-                        )
 
-        self.assertEqual(prob_final, 0.0)
-        self.assertFalse(filter_passed)
-        self.assertEqual(filter_reason, "HMM_RANGE_STAGNANT (20.0%)")
-        self.assertEqual(updated_ctx["regime_reason"], "HMM_RANGE_STAGNANT")
-        self.assertEqual(bot.markov_decision_stats["range_stagnant_veto"], 1)
+        # Penalización: 80 * 0.75 = 60.0 — no veto total (HOTFIX v118.1)
+        self.assertEqual(prob_final, 60.0)
+        self.assertTrue(filter_passed)
+        self.assertEqual(updated_ctx["regime_reason"], "HMM_RANGE_PENALTY")
+        self.assertEqual(bot.markov_decision_stats["range_dead_zone_penalty"], 1)
 
     def test_stale_markov_snapshot_can_penalize_but_not_boost(self):
         stale_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
