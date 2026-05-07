@@ -273,12 +273,15 @@ class MarketStateHMMFallbackTests(unittest.TestCase):
             last_error=None,
         )
 
-        with patch.object(market_state, "hmm_filter", fake_hmm):
-            with patch.object(market_state.threading, "Thread") as thread_cls:
-                thread_obj = MagicMock()
-                thread_obj.start.side_effect = lambda: thread_cls.call_args.kwargs["target"]()
-                thread_cls.return_value = thread_obj
-                self.assertEqual(market_state.detect_market_regime(bot), "RANGE")
+        with patch.object(market_state.Config, "MARKOV_SNAPSHOT_PERSIST_INTERVAL_SECONDS", 0):
+            market_state._last_hmm_snapshot_persist_ts = None
+            market_state._last_hmm_snapshot_persist_monotonic = 0.0
+            with patch.object(market_state, "hmm_filter", fake_hmm):
+                with patch.object(market_state.threading, "Thread") as thread_cls:
+                    thread_obj = MagicMock()
+                    thread_obj.start.side_effect = lambda: thread_cls.call_args.kwargs["target"]()
+                    thread_cls.return_value = thread_obj
+                    self.assertEqual(market_state.detect_market_regime(bot), "RANGE")
 
         self.assertEqual(bot.hmm_markov_snapshot, snapshot)
         brain.set_metadata_json.assert_called_once_with("hmm_markov_snapshot", snapshot)

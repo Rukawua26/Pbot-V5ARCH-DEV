@@ -591,7 +591,8 @@ def reconcile_bootstrap_state(bot):
                 bot.available_balance = Config.PAPER_INITIAL_BALANCE
             if not float(getattr(bot, "daily_initial_balance", 0.0) or 0.0):
                 bot.daily_initial_balance = Config.PAPER_INITIAL_BALANCE
-            bot.integrity_lock_active = False
+            if not bool(getattr(bot, "halt_system_active", False)):
+                bot.integrity_lock_active = False
             return
 
         # Integrity lock por discrepancia de balance

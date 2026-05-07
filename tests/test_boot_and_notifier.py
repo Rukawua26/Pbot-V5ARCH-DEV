@@ -27,10 +27,13 @@ class BootAndNotifierTest(unittest.TestCase):
 
     @patch("notifier.telegram_post")
     def test_notification_queue_falls_back_without_markdown(self, mocked_post):
-        mocked_post.side_effect = [
-            _Response(400, "Bad Request: can't parse entities"),
-            _Response(200, "ok"),
-        ]
+        def _post_response(_method, **kwargs):
+            payload = kwargs.get("json") or kwargs.get("data") or {}
+            if payload.get("parse_mode") == "Markdown":
+                return _Response(400, "Bad Request: can't parse entities")
+            return _Response(200, "ok")
+
+        mocked_post.side_effect = _post_response
         queue = NotificationQueue(max_retries=1, rate_limit_seconds=0)
         queue.running = False
 
@@ -58,10 +61,13 @@ class BootAndNotifierTest(unittest.TestCase):
 
     @patch("notifier.telegram_post")
     def test_notification_queue_photo_falls_back_without_markdown(self, mocked_post):
-        mocked_post.side_effect = [
-            _Response(400, "Bad Request: can't parse entities"),
-            _Response(200, "ok"),
-        ]
+        def _post_response(_method, **kwargs):
+            payload = kwargs.get("json") or kwargs.get("data") or {}
+            if payload.get("parse_mode") == "Markdown":
+                return _Response(400, "Bad Request: can't parse entities")
+            return _Response(200, "ok")
+
+        mocked_post.side_effect = _post_response
         queue = NotificationQueue(max_retries=1, rate_limit_seconds=0)
         queue.running = False
 
@@ -105,7 +111,10 @@ class BootAndNotifierTest(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.05)
         queue.stop()
 
-    def test_notification_queue_keeps_fifo_inside_priority(self):
+    @patch("notifier.Config.TELEGRAM_CHAT_ID", "1")
+    @patch("notifier.Config.TELEGRAM_TOKEN", "token")
+    @patch("notifier.threading.Thread")
+    def test_notification_queue_keeps_fifo_inside_priority(self, _mocked_thread):
         queue = NotificationQueue(max_retries=1, rate_limit_seconds=0)
         queue.running = False
         queue.send("first", Priority.INFO)
