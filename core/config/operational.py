@@ -119,8 +119,8 @@ class OperationalConfig:
 
     # --- SISTEMA DE TRIAJE CINÉTICO ---
     # [FASE 1: ESCUDO TÉRMICO] Filtros de Liquidez
-    TOP_TRIAGE_COUNT = 50
-    TRIAGE_SPREAD_MAX = 0.0015  # 0.15% max spread (anti-slippage)
+    TOP_TRIAGE_COUNT = 25  # Reducido de 50 — concentrar en top liquidez, reservar API para OI
+    TRIAGE_SPREAD_MAX = 0.0005  # 0.05% max spread (anti-slippage — protege trailing stop 0.3%)
     TRIAGE_TIMEOUT_SECONDS = 4
     TRIAGE_MAX_WORKERS = int(os.getenv("TRIAGE_MAX_WORKERS", "16"))
     TRIAGE_MIN_VOL_24H = 15_000_000  # $15M mínimo (filtro anti-basura)
@@ -129,7 +129,7 @@ class OperationalConfig:
     LATENCY_QUARANTINE_SECONDS = 300
 
     # [FASE 2: GATILLO SEGURO] Filtros de Pre-Ejecución
-    ENTRY_SPREAD_VETO_THRESHOLD = 0.0015  # 0.15% - veto si >
+    ENTRY_SPREAD_VETO_THRESHOLD = 0.0005  # 0.05% - veto si > (protege trailing stop 0.3%)
 
     # --- CONTROLES TÁCTICOS POR SÍMBOLO (Decision Matrix) ---
     SYMBOL_CONTROLS_REFRESH_SECONDS = int(
