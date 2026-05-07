@@ -9,6 +9,10 @@ import pandas as pd
 import ta.trend as ta_trend
 
 from config import Config
+from core.market_intelligence import (
+    build_operable_targets,
+    get_candidate_pool_limit,
+)
 from core.time_utils import monotonic_now
 from notifier import send_telegram_msg
 
@@ -109,14 +113,16 @@ def run_market_refresh_cycle(bot):
 
 
 def run_triage_cycle(bot):
-    triage_snapshot = bot._get_active_market_snapshot()
-    tickers = {item["symbol"]: item["ticker"] for item in triage_snapshot}
+    raw_snapshot = bot._get_active_market_snapshot(pool_limit=get_candidate_pool_limit(bot))
+    tickers = {item["symbol"]: item["ticker"] for item in raw_snapshot}
     tickers.update(getattr(bot, "_snapshot_tickers", {}))
 
-    top_count = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 25) or 25))
-    new_triage_symbols = [item["symbol"] for item in triage_snapshot[:top_count]]
+    triage_snapshot = build_operable_targets(bot, raw_snapshot)
+    new_triage_symbols = [item["symbol"] for item in triage_snapshot]
     if new_triage_symbols:
         bot.pairs_to_scan = new_triage_symbols
+    elif raw_snapshot:
+        bot.pairs_to_scan = []
 
     return triage_snapshot, tickers
 

@@ -54,8 +54,9 @@ def run_main_logic(bot):
 
     bot.init_complete.wait()
 
-    if hasattr(bot, "ws_manager") and getattr(bot.ws_manager, "is_running", False) is False:
-        bot.ws_manager.start_background()
+    ws_manager = getattr(bot, "ws_manager", None)
+    if ws_manager and getattr(ws_manager, "is_running", False) is False:
+        ws_manager.start_background()
 
     threading.Thread(target=bot._guardian_loop, daemon=True).start()
 
@@ -109,8 +110,8 @@ def run_main_logic(bot):
                 continue
 
             if not bot.pairs_to_scan:
-                bot.log("⚠️ Lista de objetivos vacía. Reintentando adquisición...")
-                bot.acquire_targets()
+                bot.log("⚠️ Lista de objetivos vacía tras triaje. Esperando siguiente ciclo...")
+                bot._run_cycle_wait_and_api_log()
                 continue
 
             signal_stats = {

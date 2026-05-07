@@ -63,8 +63,8 @@ class BotFacade:
     def acquire_targets(self):
         return acquire_targets(self)
 
-    def _get_active_market_snapshot(self):
-        return get_active_market_snapshot(self)
+    def _get_active_market_snapshot(self, pool_limit=None):
+        return get_active_market_snapshot(self, pool_limit=pool_limit)
 
     def _run_market_refresh_cycle(self):
         return run_market_refresh_cycle(self)

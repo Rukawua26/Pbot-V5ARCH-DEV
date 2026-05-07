@@ -93,7 +93,7 @@ class OperationalConfig:
 
     ENABLE_UI = _env_bool("ENABLE_UI", True)
     FORCE_UI = _env_bool("FORCE_UI", False)
-    SCAN_INTERVAL = 60  # 60s optimizado para timeframe 1h
+    SCAN_INTERVAL = 300  # 300s (5min) para timeframe 1h
     LOG_FILE = "sniper.log"
     LOG_LIMIT = 100
 
@@ -133,7 +133,8 @@ class OperationalConfig:
     TRIAGE_SPREAD_MAX = 0.0005  # 0.05% max spread (anti-slippage — protege trailing stop 0.3%)
     TRIAGE_TIMEOUT_SECONDS = 4
     TRIAGE_MAX_WORKERS = int(os.getenv("TRIAGE_MAX_WORKERS", "16"))
-    TRIAGE_MIN_VOL_24H = 15_000_000  # $15M mínimo (filtro anti-basura)
+    TRIAGE_CANDIDATE_POOL_MULTIPLIER = _env_int("TRIAGE_CANDIDATE_POOL_MULTIPLIER", 3)
+    TRIAGE_MAX_CANDIDATE_POOL = _env_int("TRIAGE_MAX_CANDIDATE_POOL", 100)
     TRIAGE_RVOL_EMA_ALPHA = 0.02
     LATENCY_VETO_MS = 4500
     LATENCY_QUARANTINE_SECONDS = 300

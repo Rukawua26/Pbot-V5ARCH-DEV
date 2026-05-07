@@ -12,6 +12,227 @@ def _is_not_expired_until(value, now_utc):
         return False
 
 
+def get_effective_triage_count(bot):
+    target_count = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 30) or 30))
+    try:
+        if getattr(bot, "market_regime", "UNKNOWN") == "BEAR_TREND":
+            bear_max = max(1, int(getattr(Config, "BEAR_TREND_MAX_PAIRS", target_count) or target_count))
+            return min(target_count, bear_max)
+    except Exception:
+        bot.log("⚠️ BEAR_TREND target reduction omitido, usando TOP_TRIAGE_COUNT")
+    return target_count
+
+
+def get_candidate_pool_limit(bot):
+    target_count = get_effective_triage_count(bot)
+    multiplier = max(1, int(getattr(Config, "TRIAGE_CANDIDATE_POOL_MULTIPLIER", 3) or 3))
+    max_pool = max(target_count, int(getattr(Config, "TRIAGE_MAX_CANDIDATE_POOL", 100) or 100))
+
+    if hasattr(bot, "weight_tracker") and bot.weight_tracker:
+        try:
+            if bot.weight_tracker.should_block("market"):
+                return target_count
+        except Exception as error:
+            bot.log(f"⚠️ API Weight check omitido para pool de triaje: {error}")
+
+    return min(target_count * multiplier, max_pool)
+
+
+def _snapshot_tickers(snapshot):
+    return {item["symbol"]: item.get("ticker", {}) for item in snapshot}
+
+
+def apply_hard_operability_filters(bot, snapshot):
+    load_controls = getattr(
+        bot,
+        "_load_runtime_symbol_controls",
+        lambda: {"blocked": set(), "preferred": set()},
+    )
+    controls = load_controls()
+    blocked = controls.get("blocked", set())
+
+    clean_blacklist = set()
+    if hasattr(bot.brain, "get_symbol_blacklist"):
+        symbol_blacklist = bot.brain.get_symbol_blacklist()
+        clean_blacklist = {s.split("/")[0] for s in symbol_blacklist}
+        if clean_blacklist:
+            bot.log(f"   - 🚫 Símbolos vetados: {sorted(clean_blacklist)}")
+
+    filtered = []
+    for item in snapshot:
+        symbol = item["symbol"]
+        base = symbol.split("/")[0]
+        ticker = item.get("ticker", {})
+
+        if base in blocked:
+            continue
+
+        if base in clean_blacklist:
+            continue
+
+        if bot.restricted_sectors:
+            sector = next(
+                (
+                    k
+                    for k, v in Config.SECTORS.items()
+                    if any(s.lower() in base.lower() for s in v)
+                ),
+                "OTHE",
+            )
+            if sector in bot.restricted_sectors:
+                continue
+
+        try:
+            if not bot.data_service.audit_symbol_maturity(symbol):
+                continue
+            is_safe, ar_reason = bot.risk_engine.check_anti_revenge_blacklist(symbol)
+        except Exception as error:
+            bot.log(f"⚠️ Error en filtros duros para {symbol}: {error}")
+            continue
+
+        if not is_safe:
+            bot.log(
+                f"🚫 [v118] ANTI-REVENGE: {symbol} bloqueado temporalmente: {ar_reason}"
+            )
+            continue
+
+        try:
+            quote_volume = float(ticker.get("quoteVolume", item.get("vol_24h", 0)) or 0)
+            percentage = float(ticker.get("percentage", 0) or 0)
+            if abs(percentage) >= 40.0:
+                continue
+            if abs(percentage) > 15.0 and quote_volume < Config.MIN_VOLUME_24H * 2:
+                bot.log(f"⚠️ Anti-Pump: {symbol} descartado (Volátil/Bajo Liq).")
+                continue
+        except Exception:
+            filtered.append(item)
+            continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def apply_tactical_priority(bot, candidates):
+    load_controls = getattr(
+        bot,
+        "_load_runtime_symbol_controls",
+        lambda: {"blocked": set(), "preferred": set()},
+    )
+    controls = load_controls()
+    preferred = controls.get("preferred", set())
+
+    cat_a = []
+    cat_b = []
+    cat_c = []
+    for item in candidates:
+        ticker = item.get("ticker", {})
+        price = float(ticker.get("last", item.get("last", 0)) or 0)
+        volume = float(ticker.get("quoteVolume", item.get("vol_24h", 0)) or 0)
+        if price < Config.PRICE_PRIORITY_LIMIT:
+            if volume >= 10_000_000:
+                cat_a.append(item)
+            else:
+                cat_b.append(item)
+        else:
+            cat_c.append(item)
+
+    def get_symbol_score(item):
+        try:
+            perf = bot.brain.get_symbol_performance(item["symbol"])
+            wr = perf.get("wr", 50)
+            trades = perf.get("trades", 0)
+            if trades >= 5:
+                return wr * 0.7 + (min(trades, 50) * 0.3)
+            return 50
+        except Exception:
+            return 50
+
+    cat_a.sort(key=get_symbol_score, reverse=True)
+    cat_b.sort(key=get_symbol_score, reverse=True)
+    cat_c.sort(key=get_symbol_score, reverse=True)
+
+    half_a = int(len(cat_a) * Config.RADAR_PRIORITY_HIGH_VOL_LOW_PRICE)
+    half_b = int(len(cat_b) * Config.RADAR_PRIORITY_HIGH_WR)
+    prioritized = (
+        cat_a[:half_a]
+        + cat_b[:half_b]
+        + cat_a[half_a:]
+        + cat_c[: int(len(cat_c) * Config.RADAR_PRIORITY_OTHERS)]
+        + cat_b[half_b:]
+        + cat_c[int(len(cat_c) * Config.RADAR_PRIORITY_OTHERS) :]
+    )
+
+    if preferred:
+        preferred_items = [item for item in prioritized if item["symbol"].split("/")[0] in preferred]
+        other_items = [item for item in prioritized if item["symbol"].split("/")[0] not in preferred]
+        prioritized = preferred_items + other_items
+        if preferred_items:
+            bot.log(
+                f"   - ⭐ Priorización táctica: {len(preferred_items)} símbolos MANTENER al frente"
+            )
+
+    return prioritized
+
+
+def build_operable_targets(bot, snapshot):
+    safe_candidates = apply_hard_operability_filters(bot, snapshot)
+    tactical_targets = apply_tactical_priority(bot, safe_candidates)
+    return tactical_targets[: get_effective_triage_count(bot)]
+
+
+def seed_targets_state(bot, targets, snapshot):
+    target_symbols = [item["symbol"] for item in targets]
+    bot.pairs_to_scan = target_symbols
+    snapshot_by_symbol = {item["symbol"]: item for item in snapshot}
+
+    with bot.lock:
+        existing_syms = {i["symbol"] for i in bot.scanner_history}
+        for symbol in target_symbols:
+            if symbol in existing_syms:
+                continue
+            base = symbol.split("/")[0]
+            sector = next(
+                (
+                    k
+                    for k, v in Config.SECTORS.items()
+                    if any(s.lower() in base.lower() for s in v)
+                ),
+                "OTHE",
+            )
+            item = snapshot_by_symbol.get(symbol, {})
+            vol_24h = float(item.get("vol_24h", 0.0) or 0.0)
+            bot.scanner_history.append(
+                {
+                    "symbol": symbol,
+                    "sector": sector,
+                    "tech_checklist": "⏳ PENDING",
+                    "ob": "⚪",
+                    "ia_prob": "---",
+                    "ia_shadow": "⏳",
+                    "ia_real": "⏳",
+                    "result": "EN COLA...",
+                    "signal": "WAIT",
+                    "rsi_val": 0,
+                    "adx_val": 0,
+                    "z_score": 0.0,
+                    "vol_24h": vol_24h,
+                    "trend_val": "N/A",
+                    "funding_rate": 0.0,
+                    "votos": {},
+                }
+            )
+
+    btc_ticker = _snapshot_tickers(snapshot).get("BTC/USDT") or _snapshot_tickers(snapshot).get("BTC/USDT:USDT")
+    if btc_ticker:
+        bot.market_btc_price = float(btc_ticker["last"])
+
+    bot.log(
+        f"✅ Radar {Config.VERSION}: {len(target_symbols)} monedas en mira. BTC: ${bot.market_btc_price}"
+    )
+    bot.log(f"📋 Objetivos: {', '.join(target_symbols)}")
+
+
 def acquire_targets(bot):
     """Fase 2: Selección Dinámica de Líderes con Prioridad Inteligente (v110.3)"""
     bot.log("🎯 Buscando pares líderes...")
@@ -23,242 +244,31 @@ def acquire_targets(bot):
         }
         cleanup_expired_cooldowns(bot)
 
-        tickers = bot.execution.fetch_tickers(params={"type": "future"})
-        # Incluir todos los futuros USDT devueltos por Binance.
-        all_future_tickers = [t for s, t in tickers.items() if "/USDT" in s]
-
-        if not all_future_tickers:
-            bot.log(
-                f"⚠️ Alerta: fetch_tickers devolvió {len(tickers)} items. Reintentando..."
-            )
-            return {}
-        else:
-            # 1. Filtramos por volumen para tener un pool robusto (Real + Shadow)
-            top_pool = sorted(
-                all_future_tickers,
-                key=lambda x: x.get("quoteVolume", 0),
-                reverse=True,
-            )[: Config.MAX_REAL_PAIRS + Config.MAX_SHADOW_PAIRS]
-
-            # 2. Filtro de Volumen y Madurez v118.5
-            valid_pool = []
-            for t in top_pool:
-                symbol = t.get("symbol")
-                if not symbol:
-                    continue
-
-                # Filtrar por volumen mínimo primero (más rápido)
-                if t.get("quoteVolume", 0) < Config.TRIAGE_MIN_VOL_24H:
-                    continue
-
-                # Auditoría de madurez del símbolo antes de escanear.
-                if not bot.data_service.audit_symbol_maturity(symbol):
-                    # Si fue rechazado, lo removemos de cualquier lista activa
-                    if symbol in bot.pairs_to_scan:
-                        bot.pairs_to_scan.remove(symbol)
-                    continue
-
-                valid_pool.append(t)
-
-            # --- PUMP & DUMP PROTECTION (Anti-Burbuja) ---
-            valid_pool = [
-                t for t in valid_pool if abs(float(t.get("percentage", 0) or 0)) < 40.0
-            ]
-
-            # 3. PRIORIZACIÓN INTELIGENTE (v110.3)
-            # Categoría A: Precio < $3 Y Alto Volumen
-            # Categoría B: Precio < $3 Y Bajo Volumen
-            # Categoría C: Precio >= $3
-            cat_a = []  # Alta prioridad: precio bajo, alto volumen
-            cat_b = []  # Media prioridad: precio bajo, bajo volumen
-            cat_c = []  # Baja prioridad: precio alto
-
-            for t in valid_pool:
-                symbol = t["symbol"]
-                precio = t.get("last", 0)
-                volumen = t.get("quoteVolume", 0)
-
-                if precio < Config.PRICE_PRIORITY_LIMIT:
-                    if volumen >= 10_000_000:  # $10M+
-                        cat_a.append(symbol)
-                    else:
-                        cat_b.append(symbol)
-                else:
-                    cat_c.append(symbol)
-
-            # 4. Obtener WR histórico de cada símbolo y reordenar
-            def get_symbol_score(sym):
-                """Puntaje basado en WR histórico y volumen"""
+        snapshot = bot._get_active_market_snapshot(pool_limit=get_candidate_pool_limit(bot))
+        tickers = _snapshot_tickers(snapshot)
+        if not snapshot:
+            bot.log("⚠️ Snapshot dinámico vacío en acquire_targets.")
+            if bot.market_btc_price == 0:
                 try:
-                    perf = bot.brain.get_symbol_performance(sym)
-                    wr = perf.get("wr", 50)  # 0-100
-                    trades = perf.get("trades", 0)
+                    btc_t = bot.execution.fetch_ticker("BTC/USDT")
+                    bot.market_btc_price = float(btc_t["last"])
+                except Exception as error:
+                    bot.log(f"⚠️ No se pudo rescatar BTC ticker con snapshot vacío: {error}")
+            return {}
 
-                    # Si tiene trades recientes, usar su WR; si no, usar 50 como neutral
-                    if trades >= 5:
-                        return wr * 0.7 + (
-                            min(trades, 50) * 0.3
-                        )  # Ponderar WR y experiencia
-                    return 50
-                except Exception:
-                    return 50
+        targets = build_operable_targets(bot, snapshot)
+        if not targets:
+            bot.pairs_to_scan = []
+            bot.log("⚠️ Snapshot válido, pero sin objetivos tras filtros operativos.")
+            return tickers
 
-            # Ordenar cada categoría por WR histórico
-            cat_a.sort(key=get_symbol_score, reverse=True)
-            cat_b.sort(key=get_symbol_score, reverse=True)
-            cat_c.sort(key=get_symbol_score, reverse=True)
-
-            # Combinar: 50% cat_a, 30% cat_b, 20% cat_c
-            half_a = int(len(cat_a) * Config.RADAR_PRIORITY_HIGH_VOL_LOW_PRICE)
-            half_b = int(len(cat_b) * Config.RADAR_PRIORITY_HIGH_WR)
-
-            new_list = (
-                cat_a[:half_a]
-                + cat_b[:half_b]
-                + cat_a[half_a:]
-                + cat_c[: int(len(cat_c) * Config.RADAR_PRIORITY_OTHERS)]
-                + cat_b[half_b:]
-            )
-
-            # 5. Filtrado por Sector Blacklist
-            if bot.restricted_sectors:
-                new_list = [
-                    p
-                    for p in new_list
-                    if next(
-                        (
-                            k
-                            for k, v in Config.SECTORS.items()
-                            if any(s.lower() in p.split("/")[0].lower() for s in v)
-                        ),
-                        "OTHE",
-                    )
-                    not in bot.restricted_sectors
-                ]
-
-            # Filtrado por blacklist persistida en el brain.
-            if hasattr(bot.brain, "get_symbol_blacklist"):
-                symbol_blacklist = bot.brain.get_symbol_blacklist()
-                # Normalizar blacklist para comparación (quitar /USDT si existe)
-                clean_blacklist = [s.split("/")[0] for s in symbol_blacklist]
-                if clean_blacklist:
-                    new_list = [
-                        p for p in new_list if p.split("/")[0] not in clean_blacklist
-                    ]
-                    bot.log(f"   - 🚫 Símbolos vetados: {clean_blacklist}")
-
-            controls = bot._load_runtime_symbol_controls()
-            blocked = controls.get("blocked", set())
-            preferred = controls.get("preferred", set())
-            if blocked:
-                before = len(new_list)
-                new_list = [p for p in new_list if p.split("/")[0] not in blocked]
-                removed = before - len(new_list)
-                if removed > 0:
-                    bot.log(
-                        f"   - 🧱 Matriz de decisión: {removed} símbolos bloqueados"
-                    )
-
-            if preferred:
-                preferred_pairs = [p for p in new_list if p.split("/")[0] in preferred]
-                others = [p for p in new_list if p.split("/")[0] not in preferred]
-                new_list = preferred_pairs + others
-                if preferred_pairs:
-                    bot.log(
-                        f"   - ⭐ Priorización táctica: {len(preferred_pairs)} símbolos MANTENER al frente"
-                    )
-
-            bot.pairs_to_scan = new_list
+        seed_targets_state(bot, targets, snapshot)
 
         # La lista se construye desde el mercado activo, no desde Config.PAIRS.
-        if len(bot.pairs_to_scan) < Config.TOP_TRIAGE_COUNT:
+        if len(bot.pairs_to_scan) < get_effective_triage_count(bot):
             bot.log(
                 f"⚠️ Solo {len(bot.pairs_to_scan)} pares filtrados (lista dinámica del mercado)."
             )
-
-        # --- FASE 2: FILTRO ANTI-PUMP & DUMP (Volumen Irracional) ---
-        # Compara volumen de últimos 15m vs promedio 24h (aprox).
-        # Si el volumen reciente es > 500% del promedio, se descarta por riesgo de manipulación.
-        safe_list = []
-        for p in bot.pairs_to_scan:
-            # Blacklist dinámica anti-revenge.
-            is_safe, ar_reason = bot.risk_engine.check_anti_revenge_blacklist(p)
-            if not is_safe:
-                bot.log(
-                    f"🚫 [v118] ANTI-REVENGE: {p} bloqueado temporalmente: {ar_reason}"
-                )
-                continue
-
-            try:
-                t = tickers.get(
-                    p.replace("/", "") if ":" not in p else p.split(":")[0]
-                ) or tickers.get(p)
-                if not t:
-                    safe_list.append(p)
-                    continue
-
-                avg_15m_vol = (
-                    float(t["quoteVolume"]) / 96
-                    if t.get("quoteVolume") and float(t["quoteVolume"]) > 0
-                    else 0.0
-                )  # 96 periodos de 15m en 24h
-                # Nota: Para ser precisos requeriría fetch_ohlcv, pero por velocidad usamos heurística
-                # Si el cambio de precio es > 15% y no es una corrección, sospechamos.
-                if (
-                    abs(float(t["percentage"])) > 15.0
-                    and float(t["quoteVolume"]) < Config.MIN_VOLUME_24H * 2
-                ):
-                    bot.log(f"⚠️ Anti-Pump: {p} descartado (Volátil/Bajo Liq).")
-                    continue
-                safe_list.append(p)
-            except Exception:
-                safe_list.append(p)
-        bot.pairs_to_scan = safe_list
-
-        # Inicializar radar con todos los objetivos como PENDING.
-        with bot.lock:
-            existing_syms = {i["symbol"] for i in bot.scanner_history}
-            for p in bot.pairs_to_scan:
-                if p not in existing_syms:
-                    base = p.split("/")[0]
-                    sector = next(
-                        (
-                            k
-                            for k, v in Config.SECTORS.items()
-                            if any(s.lower() in base.lower() for s in v)
-                        ),
-                        "OTHE",
-                    )
-                    vol_24h = 0.0
-                    if tickers:
-                        clean_p = p.split(":")[0]
-                        if clean_p in tickers:
-                            vol_24h = float(tickers[clean_p].get("quoteVolume", 0) or 0)
-                        else:
-                            for key, val in tickers.items():
-                                if key.split("/")[0] == base:
-                                    vol_24h = float(val.get("quoteVolume", 0) or 0)
-                                    break
-                    bot.scanner_history.append(
-                        {
-                            "symbol": p,
-                            "sector": sector,
-                            "tech_checklist": "⏳ PENDING",
-                            "ob": "⚪",
-                            "ia_prob": "---",
-                            "ia_shadow": "⏳",
-                            "ia_real": "⏳",
-                            "result": "EN COLA...",
-                            "signal": "WAIT",
-                            "rsi_val": 0,
-                            "adx_val": 0,
-                            "z_score": 0.0,
-                            "vol_24h": vol_24h,
-                            "trend_val": "N/A",
-                            "funding_rate": 0.0,
-                            "votos": {},
-                        }
-                    )
 
         # Auto-recuperación del precio BTC si no vino en el batch.
         if "BTC/USDT" in tickers or "BTC/USDT:USDT" in tickers:
@@ -272,22 +282,16 @@ def acquire_targets(bot):
             except Exception as error:
                 bot.log(f"⚠️ No se pudo rescatar BTC ticker en acquire_targets: {error}")
 
-        bot.log(
-            f"✅ Radar {Config.VERSION}: {len(bot.pairs_to_scan)} monedas en mira. BTC: ${bot.market_btc_price}"
-        )
-        bot.log(f"📋 Objetivos: {', '.join(bot.pairs_to_scan)}")
         return tickers
 
     except Exception as e:
         bot.log(f"⚠️ Error en acquire_targets: {e}")
         # Fallback resiliente: reutilizar snapshot dinámico si está disponible.
         try:
-            ranked = bot._get_active_market_snapshot()
-            if ranked:
-                bot.pairs_to_scan = [
-                    r["symbol"]
-                    for r in ranked[: int(getattr(Config, "TOP_TRIAGE_COUNT", 50))]
-                ]
+            ranked = bot._get_active_market_snapshot(pool_limit=get_candidate_pool_limit(bot))
+            targets = build_operable_targets(bot, ranked) if ranked else []
+            if targets:
+                seed_targets_state(bot, targets, ranked)
                 bot.log(
                     f"♻️ Fallback acquire_targets: {len(bot.pairs_to_scan)} pares desde snapshot dinámico."
                 )
@@ -306,7 +310,7 @@ def acquire_targets(bot):
         return {}
 
 
-def get_active_market_snapshot(bot):
+def get_active_market_snapshot(bot, pool_limit=None):
     """
     [DINÁMICO] Top liquidez por Config.TOP_TRIAGE_COUNT (default 30).
     
@@ -327,18 +331,17 @@ def get_active_market_snapshot(bot):
         if not hasattr(bot, "_market_cache_ts"):
             bot._market_cache_ts = 0
 
-        MAX_PAIRS = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 25) or 25))
-        MIN_VOL = float(getattr(Config, "TRIAGE_MIN_VOL_24H", 15_000_000))
-
+        requested_limit = pool_limit if pool_limit is not None else getattr(Config, "TOP_TRIAGE_COUNT", 25)
+        MAX_PAIRS = max(1, int(requested_limit or 25))
         # [BEAR_TREND] Reducir universo de pares en régimen bajista
         try:
             btc_regime = getattr(bot, "market_regime", "UNKNOWN")
             if btc_regime == "BEAR_TREND":
-                MAX_PAIRS = min(
-                    MAX_PAIRS,
-                    max(1, int(getattr(Config, "BEAR_TREND_MAX_PAIRS", 15) or 15)),
-                )
-                MIN_VOL = float(getattr(Config, "BEAR_TREND_MIN_VOL", 50_000_000))
+                if pool_limit is None:
+                    MAX_PAIRS = min(
+                        MAX_PAIRS,
+                        max(1, int(getattr(Config, "BEAR_TREND_MAX_PAIRS", 15) or 15)),
+                    )
         except Exception:
             bot.log("⚠️ BEAR_TREND pair reduction omitido, usando defaults")
             
@@ -380,20 +383,17 @@ def get_active_market_snapshot(bot):
                             continue
                         clean_sym = Config.sanitize_symbol(symbol)
                         if clean_sym and clean_sym.endswith("/USDT"):
-                            # Filtro inicial de min_vol
                             vol_24h = float(ticker.get("quoteVolume", 0) or 0)
                             last = float(ticker.get("last", 0) or 0)
-                            if vol_24h < MIN_VOL:
+                            if vol_24h <= 0:
                                 base_vol = float(ticker.get("baseVolume", 0) or 0)
                                 vol_24h = base_vol * last
-                                
-                            if vol_24h >= MIN_VOL:
-                                all_candidates.append({
-                                    "symbol": clean_sym,
-                                    "ticker": ticker,
-                                    "vol_24h": vol_24h,
-                                    "last": last
-                                })
+                            all_candidates.append({
+                                "symbol": clean_sym,
+                                "ticker": ticker,
+                                "vol_24h": vol_24h,
+                                "last": last
+                            })
 
                     bot._market_cache = {
                         "candidates": all_candidates,
@@ -417,10 +417,6 @@ def get_active_market_snapshot(bot):
             ticker = cand["ticker"]
             last = cand["last"]
             vol_24h = cand["vol_24h"]
-
-            # [FIX] Respetar MIN_VOL dinámico si mercado cambia tras el cache
-            if vol_24h < MIN_VOL:
-                continue
 
             # Spread check
             raw_key = sym.replace("/", "").replace(":USDT", "")

@@ -101,7 +101,6 @@ class Config(OperationalConfig, StrategyConfig):
 
     # --- BEAR_TREND pair universe reduction ---
     BEAR_TREND_MAX_PAIRS = _env_int("BEAR_TREND_MAX_PAIRS", 15)
-    BEAR_TREND_MIN_VOL = _env_float("BEAR_TREND_MIN_VOL", 50_000_000)
     BEAR_TREND_CONFIDENCE_BOOST = _env_float("BEAR_TREND_CONFIDENCE_BOOST", 10.0)
 
     # --- Mapa de SHOCKS (filtro de espacio operativo) ---
