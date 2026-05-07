@@ -308,10 +308,10 @@ def acquire_targets(bot):
 
 def get_active_market_snapshot(bot):
     """
-    [DINÁMICO] 50 pares — fetch_tickers batch — Lista viva.
+    [DINÁMICO] pares top por Config.TOP_TRIAGE_COUNT — fetch_tickers batch — Lista viva.
 
     Lógica:
-      - Lista persistente (bot._dynamic_pair_list) de máx 50 pares
+      - Lista persistente (bot._dynamic_pair_list) limitada por Config.TOP_TRIAGE_COUNT
       - fetch_tickers() batch cada 5 min (peso 40) para refresh mercado
       - Verificación de volumen ≥10M y spread ≤0.5% cada ciclo
       - Si un par baja de 10M → se saca → se busca reemplazo
@@ -338,14 +338,17 @@ def get_active_market_snapshot(bot):
         if not hasattr(bot, "_vol_ema"):
             bot._vol_ema = {}
 
-        MAX_PAIRS = 50  # 50 pares — máximo cobertura del mercado
+        MAX_PAIRS = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 25) or 25))
         MIN_VOL = Config.TRIAGE_MIN_VOL_24H  # $15M mínimo
 
         # [BEAR_TREND] Reducir universo de pares en régimen bajista
         try:
             btc_regime = getattr(bot, "market_regime", "UNKNOWN")
             if btc_regime == "BEAR_TREND":
-                MAX_PAIRS = int(getattr(Config, "BEAR_TREND_MAX_PAIRS", 15))
+                MAX_PAIRS = min(
+                    MAX_PAIRS,
+                    max(1, int(getattr(Config, "BEAR_TREND_MAX_PAIRS", 15) or 15)),
+                )
                 MIN_VOL = float(getattr(Config, "BEAR_TREND_MIN_VOL", 50_000_000))
         except Exception:
             bot.log("⚠️ BEAR_TREND pair reduction omitido, usando defaults")
@@ -458,7 +461,7 @@ def get_active_market_snapshot(bot):
             kept.append(sym)
 
         removed_count = len(bot._dynamic_pair_list) - len(kept)
-        bot._dynamic_pair_list = kept
+        bot._dynamic_pair_list = kept[:MAX_PAIRS]
         slots_free = MAX_PAIRS - len(bot._dynamic_pair_list)
 
         # --- PASO 2: Llenar slots vacíos desde cache ---
@@ -471,7 +474,7 @@ def get_active_market_snapshot(bot):
             offset = bot._market_scan_offset % max(len(all_candidates), 1)
             scanned = 0
             found = 0
-            # [FIX] Si faltan muchos slots, escanear más agresivo para acercar 50/50.
+            # [FIX] Si faltan muchos slots, escanear más agresivo para completar el cupo.
             # Cap al total de candidatos para no iterar infinito.
             batch_size = min(
                 len(all_candidates),

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from core import bot_balance_ops
+from core import bot_cycles
 from core import bot_market_state
 from core import market_intelligence
 from core.strategy.regime_hmm import DynamicHMMRegime
@@ -170,6 +171,49 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         self.assertNotIn("LOWVOL/USDT", symbols)
         self.assertEqual(len(bot._dynamic_pair_list), 2)
         execution.load_markets.assert_not_called()
+
+    @patch.object(market_intelligence.Config, "TOP_TRIAGE_COUNT", 2)
+    @patch.object(market_intelligence.Config, "TRIAGE_MIN_VOL_24H", 10_000_000)
+    @patch.object(market_intelligence.Config, "TRIAGE_SPREAD_MAX", 0.002)
+    def test_get_active_market_snapshot_caps_dynamic_pair_list_to_top_triage_count(self):
+        tickers = {
+            f"SYM{i}/USDT": {
+                **_ticker(f"SYM{i}/USDT", volume=90_000_000 - i, price=1.0),
+                "bid": 0.999,
+                "ask": 1.0,
+            }
+            for i in range(5)
+        }
+        execution = SimpleNamespace(
+            fetch_book_tickers=MagicMock(return_value=[]),
+            has_markets_loaded=MagicMock(return_value=True),
+            load_markets=MagicMock(),
+            fetch_tickers=MagicMock(return_value=tickers),
+        )
+        bot = SimpleNamespace(execution=execution, weight_tracker=None, log=MagicMock())
+
+        ranked = market_intelligence.get_active_market_snapshot(bot)
+
+        self.assertEqual(len(ranked), 2)
+        self.assertEqual(len(bot._dynamic_pair_list), 2)
+
+    @patch.object(bot_cycles.Config, "TOP_TRIAGE_COUNT", 2)
+    def test_run_triage_cycle_exposes_only_top_triage_symbols_to_pairs_to_scan(self):
+        snapshot = [
+            {"symbol": "A/USDT", "ticker": {}},
+            {"symbol": "B/USDT", "ticker": {}},
+            {"symbol": "C/USDT", "ticker": {}},
+        ]
+        bot = SimpleNamespace(
+            _get_active_market_snapshot=MagicMock(return_value=snapshot),
+            _snapshot_tickers={},
+            pairs_to_scan=[],
+        )
+
+        triage_snapshot, _ = bot_cycles.run_triage_cycle(bot)
+
+        self.assertEqual(triage_snapshot, snapshot)
+        self.assertEqual(bot.pairs_to_scan, ["A/USDT", "B/USDT"])
 
     @patch.object(market_intelligence.Config, "TRIAGE_MIN_VOL_24H", 10_000_000)
     @patch.object(market_intelligence.Config, "TRIAGE_SPREAD_MAX", 0.002)

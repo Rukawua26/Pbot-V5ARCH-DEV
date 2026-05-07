@@ -12,10 +12,20 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 class OperationalConfig:
     """Configuración de infraestructura, conectividad y sistema."""
 
-    VERSION = "v118-PRO"
+    VERSION = "v118.4-PRO"
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
@@ -119,7 +129,7 @@ class OperationalConfig:
 
     # --- SISTEMA DE TRIAJE CINÉTICO ---
     # [FASE 1: ESCUDO TÉRMICO] Filtros de Liquidez
-    TOP_TRIAGE_COUNT = 25  # Reducido de 50 — concentrar en top liquidez, reservar API para OI
+    TOP_TRIAGE_COUNT = _env_int("TOP_TRIAGE_COUNT", 25)  # Concentrar radar en top liquidez
     TRIAGE_SPREAD_MAX = 0.0005  # 0.05% max spread (anti-slippage — protege trailing stop 0.3%)
     TRIAGE_TIMEOUT_SECONDS = 4
     TRIAGE_MAX_WORKERS = int(os.getenv("TRIAGE_MAX_WORKERS", "16"))

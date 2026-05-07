@@ -113,7 +113,8 @@ def run_triage_cycle(bot):
     tickers = {item["symbol"]: item["ticker"] for item in triage_snapshot}
     tickers.update(getattr(bot, "_snapshot_tickers", {}))
 
-    new_triage_symbols = [item["symbol"] for item in triage_snapshot]
+    top_count = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 25) or 25))
+    new_triage_symbols = [item["symbol"] for item in triage_snapshot[:top_count]]
     if new_triage_symbols:
         bot.pairs_to_scan = new_triage_symbols
 
