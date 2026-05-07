@@ -1,14 +1,20 @@
 """
-SNIPER AI v118.3 - OI Delta Filter
-==================================
-Filtro externo rigido de Open Interest.
+SNIPER AI v118.3 — OI Delta Filter
+===================================
+Filtro externo rígido de Open Interest.
+Detecta señales falsas (short squeeze, long liquidation) comparando
+la dirección del precio con el cambio en Open Interest.
 
-Detecta senales falsas (short squeeze, long liquidation) comparando la
-direccion del precio con el cambio en Open Interest.
+Reglas:
+  BUY  + precio↑ + OI↑ (>threshold)  → CONFIRMED (dinero nuevo apoyando subida)
+  BUY  + precio↑ + OI↓ (<-threshold) → VETO (short squeeze, subida falsa)
+  SELL + precio↓ + OI↑ (>threshold)  → CONFIRMED (dinero nuevo apoyando caída)
+  SELL + precio↓ + OI↓ (<-threshold) → VETO (long liquidation, caída falsa)
+  Todo lo demás                       → NEUTRAL (sin datos suficientes)
 """
 
-import logging
 import time
+import logging
 from typing import Optional, Tuple
 
 from config import Config
@@ -26,6 +32,7 @@ def _get_cached_oi(symbol: str) -> Optional[float]:
         return None
     ttl = float(getattr(Config, "OI_CACHE_TTL_SECONDS", 60))
     if time.time() - entry["ts"] > ttl * 3:
+        # Dato demasiado viejo (3x TTL), no sirve como referencia
         return None
     return entry["oi"]
 
@@ -40,16 +47,17 @@ def fetch_oi_delta(bot, symbol: str) -> Tuple[Optional[float], Optional[float]]:
     Obtiene el OI actual y calcula el delta contra el valor cacheado.
 
     Returns:
-        (oi_delta_pct, oi_current) - delta como fraccion (0.01 = 1%),
-        o (None, None) si no hay dato util.
+        (oi_delta_pct, oi_current) — delta como fracción (0.01 = 1%), o (None, None)
     """
     if not bool(getattr(Config, "OI_FILTER_ENABLED", False)):
         return None, None
+
     try:
         execution = getattr(bot, "execution", None)
         if execution is None:
             return None, None
 
+        # Verificar rate limiter antes de hacer la llamada
         weight_tracker = getattr(bot, "weight_tracker", None)
         if weight_tracker and weight_tracker.should_block("market"):
             return None, None
@@ -64,13 +72,16 @@ def fetch_oi_delta(bot, symbol: str) -> Tuple[Optional[float], Optional[float]]:
 
         oi_previous = _get_cached_oi(symbol)
         _update_oi_cache(symbol, oi_current)
+
         if oi_previous is None or oi_previous <= 0:
+            # Primera lectura — no hay delta aún, solo cachear
             return None, oi_current
 
         oi_delta_pct = (oi_current - oi_previous) / oi_previous
         return oi_delta_pct, oi_current
-    except Exception as error:
-        logger.warning(f"⚠️ OI delta calc falló para {symbol}: {error}")
+
+    except Exception as e:
+        logger.warning(f"⚠️ OI delta calc falló para {symbol}: {e}")
         return None, None
 
 
@@ -78,7 +89,12 @@ def validate_signal_with_oi(
     audit_signal: str, delta_price_pct: float, oi_delta_pct: Optional[float]
 ) -> str:
     """
-    Valida la senal contra el cambio de OI.
+    Valida la señal contra el cambio de OI.
+
+    Args:
+        audit_signal: "BUY" o "SELL"
+        delta_price_pct: cambio de precio reciente como fracción (0.01 = 1%)
+        oi_delta_pct: cambio de OI como fracción, o None si no hay dato
 
     Returns:
         "CONFIRMED" | "VETO" | "NEUTRAL"
@@ -87,14 +103,16 @@ def validate_signal_with_oi(
         return "NEUTRAL"
 
     threshold = float(getattr(Config, "OI_DELTA_THRESHOLD", 0.005))
+
     if audit_signal == "BUY":
         if delta_price_pct > 0 and oi_delta_pct > threshold:
-            return "CONFIRMED"
-        if delta_price_pct > 0 and oi_delta_pct < -threshold:
-            return "VETO"
+            return "CONFIRMED"  # Dinero nuevo apoyando la subida
+        elif delta_price_pct > 0 and oi_delta_pct < -threshold:
+            return "VETO"  # Short squeeze — subida falsa
     elif audit_signal == "SELL":
         if delta_price_pct < 0 and oi_delta_pct > threshold:
-            return "CONFIRMED"
-        if delta_price_pct < 0 and oi_delta_pct < -threshold:
-            return "VETO"
+            return "CONFIRMED"  # Dinero nuevo apoyando la caída
+        elif delta_price_pct < 0 and oi_delta_pct < -threshold:
+            return "VETO"  # Long liquidation — caída falsa
+
     return "NEUTRAL"

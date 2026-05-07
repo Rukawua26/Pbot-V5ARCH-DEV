@@ -169,7 +169,6 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         self.assertIn("BETA/USDT", symbols)
         self.assertNotIn("BULL/USDT", symbols)
         self.assertNotIn("LOWVOL/USDT", symbols)
-        self.assertEqual(len(bot._dynamic_pair_list), 2)
         execution.load_markets.assert_not_called()
 
     @patch.object(market_intelligence.Config, "TOP_TRIAGE_COUNT", 2)
@@ -195,7 +194,6 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         ranked = market_intelligence.get_active_market_snapshot(bot)
 
         self.assertEqual(len(ranked), 2)
-        self.assertEqual(len(bot._dynamic_pair_list), 2)
 
     @patch.object(bot_cycles.Config, "TOP_TRIAGE_COUNT", 2)
     def test_run_triage_cycle_exposes_only_top_triage_symbols_to_pairs_to_scan(self):
@@ -239,11 +237,8 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         bot = SimpleNamespace(
             execution=execution,
             weight_tracker=None,
-            _dynamic_pair_list=["KEEP/USDT", "WIDE/USDT", "MISSING/USDT"],
-            _market_scan_offset=0,
             _market_cache={},
             _market_cache_ts=0,
-            _vol_ema={},
             log=MagicMock(),
         )
 

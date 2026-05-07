@@ -1,17 +1,12 @@
 """Tests para el filtro de Open Interest Delta v118.3."""
 
 import unittest
-
-from core.signals.oi_filter import (
-    _get_cached_oi,
-    _oi_cache,
-    _update_oi_cache,
-    validate_signal_with_oi,
-)
+from unittest.mock import patch
+from core.signals.oi_filter import validate_signal_with_oi, _oi_cache, _update_oi_cache, _get_cached_oi
 
 
 class OIValidationTests(unittest.TestCase):
-    """Tests para la logica de validacion OI + precio."""
+    """Tests para la lógica de validación OI + precio."""
 
     def test_buy_confirmed_price_up_oi_up(self):
         result = validate_signal_with_oi("BUY", 0.02, 0.01)
@@ -42,12 +37,12 @@ class OIValidationTests(unittest.TestCase):
         self.assertEqual(result, "NEUTRAL")
 
     def test_buy_neutral_price_down(self):
-        """BUY con precio bajando no entra en ninguna regla -> NEUTRAL."""
+        """BUY con precio bajando no entra en ninguna regla → NEUTRAL."""
         result = validate_signal_with_oi("BUY", -0.02, 0.01)
         self.assertEqual(result, "NEUTRAL")
 
     def test_sell_neutral_price_up(self):
-        """SELL con precio subiendo no entra en ninguna regla -> NEUTRAL."""
+        """SELL con precio subiendo no entra en ninguna regla → NEUTRAL."""
         result = validate_signal_with_oi("SELL", 0.02, 0.01)
         self.assertEqual(result, "NEUTRAL")
 
@@ -66,7 +61,7 @@ class OICacheTests(unittest.TestCase):
         self.assertIsNone(_get_cached_oi("UNKNOWN/USDT"))
 
     def test_cache_expired_returns_none(self):
-        _oi_cache["BTC/USDT"] = {"oi": 50000.0, "ts": 0.0}
+        _oi_cache["BTC/USDT"] = {"oi": 50000.0, "ts": 0.0}  # Timestamp antiguo
         self.assertIsNone(_get_cached_oi("BTC/USDT"))
 
 

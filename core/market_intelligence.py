@@ -308,38 +308,27 @@ def acquire_targets(bot):
 
 def get_active_market_snapshot(bot):
     """
-    [DINÁMICO] pares top por Config.TOP_TRIAGE_COUNT — fetch_tickers batch — Lista viva.
-
+    [DINÁMICO] Top Liquidez pura por Config.TOP_TRIAGE_COUNT (Elite 25).
+    
     Lógica:
-      - Lista persistente (bot._dynamic_pair_list) limitada por Config.TOP_TRIAGE_COUNT
-      - fetch_tickers() batch cada 5 min (peso 40) para refresh mercado
-      - Verificación de volumen ≥10M y spread ≤0.5% cada ciclo
-      - Si un par baja de 10M → se saca → se busca reemplazo
-      - Rotación de candidatos para cubrir todo el mercado
-
-    Peso API:
-      - Ciclo normal (cache hit): ~1 (solo BookTicker)
-      - Con refresh (cada 5 min): +40
-      - Promedio: ~9/min = 12,960/día (5.4% del límite diario ✅)
-
+      - Stateless: Ya no mantiene pares fijos por RVOL.
+      - Refresh mercado cada 5 min (peso 40) para armar pool de liquidez diaria.
+      - En cada ciclo (peso 1), evalúa spreads reales.
+      - Ordena todos los futuros activos por quoteVolume (24h liquidez real).
+      - Toma los top Config.TOP_TRIAGE_COUNT pares que pasen el filtro de spread.
+    
     Returns:
-        List[Dict]: Pares activos ordenados por RVOL desc.
+        List[Dict]: Pares activos ordenados por volumen bruto desc.
     """
     try:
-        # Inicializar lista dinámica persistente
-        if not hasattr(bot, "_dynamic_pair_list"):
-            bot._dynamic_pair_list = []
-        if not hasattr(bot, "_market_scan_offset"):
-            bot._market_scan_offset = 0
+        # Inicializar cachés de mercado si no existen
         if not hasattr(bot, "_market_cache"):
             bot._market_cache = {}
         if not hasattr(bot, "_market_cache_ts"):
             bot._market_cache_ts = 0
-        if not hasattr(bot, "_vol_ema"):
-            bot._vol_ema = {}
 
         MAX_PAIRS = max(1, int(getattr(Config, "TOP_TRIAGE_COUNT", 25) or 25))
-        MIN_VOL = Config.TRIAGE_MIN_VOL_24H  # $15M mínimo
+        MIN_VOL = float(getattr(Config, "TRIAGE_MIN_VOL_24H", 15_000_000))
 
         # [BEAR_TREND] Reducir universo de pares en régimen bajista
         try:
@@ -352,8 +341,9 @@ def get_active_market_snapshot(bot):
                 MIN_VOL = float(getattr(Config, "BEAR_TREND_MIN_VOL", 50_000_000))
         except Exception:
             bot.log("⚠️ BEAR_TREND pair reduction omitido, usando defaults")
-        MAX_SPREAD = Config.TRIAGE_SPREAD_MAX  # 0.15% max
-        MARKET_REFRESH = 300  # refresh mercado cada 5 min (suficiente para 1h)
+            
+        MAX_SPREAD = float(getattr(Config, "TRIAGE_SPREAD_MAX", 0.0005))
+        MARKET_REFRESH = 300  # 5 min
 
         # --- CAPA 0: BookTicker para spreads reales (peso ~1) ---
         bid_ask_map = {}
@@ -371,78 +361,66 @@ def get_active_market_snapshot(bot):
         # --- CAPA 1: Refresh del mercado cada 5 min (peso 40) ---
         now = time.time()
         if now - bot._market_cache_ts > MARKET_REFRESH or not bot._market_cache:
-            bot.log("📡 [TRIAJE] Refresh mercado completo (cada 5 min)...")
+            bot.log("📡 [TRIAJE ELITE] Refresh mercado completo (cada 5 min)...")
             try:
                 if not bot.execution.has_markets_loaded():
                     bot.execution.load_markets()
 
-                if bot.weight_tracker and bot.weight_tracker.should_block("market"):
-                    bot.log(
-                        "🛑 [TRIAJE] Saltando refresh mercado por presión de API Weight"
-                    )
-                    raw_tickers = {}
+                if hasattr(bot, "weight_tracker") and bot.weight_tracker and bot.weight_tracker.should_block("market"):
+                    bot.log("🛑 [TRIAJE] Saltando refresh mercado por presión de API Weight")
                 else:
                     raw_tickers = bot.execution.fetch_tickers(params={"type": "future"})
+                    
+                    # Construir pool de candidatos inicial
+                    all_candidates = []
+                    for symbol, ticker in raw_tickers.items():
+                        if not (symbol.endswith("/USDT") or symbol.endswith("/USDT:USDT")):
+                            continue
+                        if any(x in symbol for x in ["DOWN", "UP", "BEAR", "BULL", "_", "BUSD", "USDC"]):
+                            continue
+                        clean_sym = Config.sanitize_symbol(symbol)
+                        if clean_sym and clean_sym.endswith("/USDT"):
+                            # Filtro inicial de min_vol
+                            vol_24h = float(ticker.get("quoteVolume", 0) or 0)
+                            last = float(ticker.get("last", 0) or 0)
+                            if vol_24h < MIN_VOL:
+                                base_vol = float(ticker.get("baseVolume", 0) or 0)
+                                vol_24h = base_vol * last
+                                
+                            if vol_24h >= MIN_VOL:
+                                all_candidates.append({
+                                    "symbol": clean_sym,
+                                    "ticker": ticker,
+                                    "vol_24h": vol_24h,
+                                    "last": last
+                                })
 
-                # Construir pool de candidatos
-                all_candidates = []
-                for symbol, ticker in raw_tickers.items():
-                    if not (symbol.endswith("/USDT") or symbol.endswith("/USDT:USDT")):
-                        continue
-                    if any(
-                        x in symbol
-                        for x in ["DOWN", "UP", "BEAR", "BULL", "_", "BUSD", "USDC"]
-                    ):
-                        continue
-                    clean_sym = Config.sanitize_symbol(symbol)
-                    if clean_sym and clean_sym.endswith("/USDT"):
-                        all_candidates.append((clean_sym, ticker))
-
-                bot._market_cache = {
-                    "tickers": raw_tickers,
-                    "candidates": all_candidates,
-                }
-                bot._market_cache_ts = now
-                bot.log(
-                    f"✅ [TRIAJE] {len(all_candidates)} candidatos cacheados "
-                    f"(peso=40, próximo refresh en {MARKET_REFRESH}s)"
-                )
+                    bot._market_cache = {
+                        "candidates": all_candidates,
+                    }
+                    bot._market_cache_ts = now
+                    bot.log(f"✅ [TRIAJE] {len(all_candidates)} candidatos liquidez cacheados")
             except Exception as e_tickers:
                 bot.log(f"⚠️ [TRIAJE] fetch_tickers falló: {e_tickers}")
-                # Mantener último cache válido para no dejar el bot ciego.
-                if not bot._market_cache:
-                    bot._market_cache = {"tickers": {}, "candidates": []}
-        else:
-            bot.log(
-                f"📦 [TRIAJE] Usando cache de mercado ({int(now - bot._market_cache_ts)}s atrás)"
-            )
+                if getattr(bot, "_market_cache", None) is None:
+                    bot._market_cache = {"candidates": []}
 
-        raw_tickers = bot._market_cache.get("tickers", {})
         all_candidates = bot._market_cache.get("candidates", [])
 
-        # --- PASO 1: Verificar pares actuales con datos del cache ---
-        kept = []
-        for sym in list(bot._dynamic_pair_list):
-            ticker = (
-                raw_tickers.get(sym)
-                or raw_tickers.get(sym + ":USDT")
-                or raw_tickers.get(sym.replace("/", ""))
-            )
-            if not ticker:
-                bot.log(f"🔻 [DINÁMICO] {sym} sin ticker → removido")
-                continue
+        # --- PASO 2: Ordenar estrictamente por liquidez (quoteVolume) ---
+        # Garantiza que evaluamos los megacaps primero
+        all_candidates.sort(key=lambda x: x["vol_24h"], reverse=True)
 
-            vol_24h = float(ticker.get("quoteVolume", 0) or 0)
-            last = float(ticker.get("last", 0) or 0)
+        ranked = []
+        for cand in all_candidates:
+            sym = cand["symbol"]
+            ticker = cand["ticker"]
+            last = cand["last"]
+            vol_24h = cand["vol_24h"]
 
+            # [FIX] Respetar MIN_VOL dinámico si mercado cambia tras el cache
             if vol_24h < MIN_VOL:
-                base_vol = float(ticker.get("baseVolume", 0) or 0)
-                vol_24h = base_vol * last
-                if vol_24h < MIN_VOL:
-                    bot.log(
-                        f"🔻 [DINÁMICO] {sym} vol=${vol_24h:,.0f} < ${MIN_VOL:,.0f} → removido"
-                    )
-                    continue
+                continue
 
             # Spread check
             raw_key = sym.replace("/", "").replace(":USDT", "")
@@ -455,127 +433,38 @@ def get_active_market_snapshot(bot):
                 spread = (ask - bid) / last if (last > 0 and ask > bid) else None
 
             if spread is None or spread > MAX_SPREAD:
-                bot.log(f"🔻 [DINÁMICO] {sym} spread={spread} → removido")
                 continue
 
-            kept.append(sym)
+            # Agregar a los Top
+            ranked.append({
+                "symbol": sym,
+                "symbol_raw": sym,
+                "rvol": 1.0,  # Legacy alias fallback
+                "vol_24h": vol_24h,
+                "status": "ACTIVE",
+                "ticker": ticker,
+            })
+            
+            if len(ranked) >= MAX_PAIRS:
+                break
 
-        removed_count = len(bot._dynamic_pair_list) - len(kept)
-        bot._dynamic_pair_list = kept[:MAX_PAIRS]
-        slots_free = MAX_PAIRS - len(bot._dynamic_pair_list)
+        # [Opcional] Limpiar viejas variables stateful de memoria para ahorrar estado
+        if hasattr(bot, "_dynamic_pair_list"): del bot._dynamic_pair_list
+        if hasattr(bot, "_vol_ema"): del bot._vol_ema
+        if hasattr(bot, "_market_scan_offset"): del bot._market_scan_offset
 
-        # --- PASO 2: Llenar slots vacíos desde cache ---
-        if slots_free > 0:
-            bot.log(
-                f"🔍 [DINÁMICO] {slots_free} slot(s) libre(s) — buscando reemplazos..."
-            )
-
-            existing_set = set(bot._dynamic_pair_list)
-            offset = bot._market_scan_offset % max(len(all_candidates), 1)
-            scanned = 0
-            found = 0
-            # [FIX] Si faltan muchos slots, escanear más agresivo para completar el cupo.
-            # Cap al total de candidatos para no iterar infinito.
-            batch_size = min(
-                len(all_candidates),
-                max(200, slots_free * 80),
-            )
-
-            for i in range(batch_size):
-                idx = (offset + i) % len(all_candidates)
-                if idx >= len(all_candidates):
-                    break
-
-                sym, ticker = all_candidates[idx]
-                scanned += 1
-
-                if sym in existing_set:
-                    continue
-
-                vol_24h = float(ticker.get("quoteVolume", 0) or 0)
-                last = float(ticker.get("last", 0) or 0)
-
-                if vol_24h < MIN_VOL:
-                    base_vol = float(ticker.get("baseVolume", 0) or 0)
-                    vol_24h = base_vol * last
-                    if vol_24h < MIN_VOL:
-                        continue
-
-                # Spread check
-                raw_key = sym.replace("/", "").replace(":USDT", "")
-                book_data = bid_ask_map.get(raw_key)
-                if book_data:
-                    spread = (book_data["ask"] - book_data["bid"]) / book_data["ask"]
-                else:
-                    ask = float(ticker.get("ask", 0) or 0)
-                    bid = float(ticker.get("bid", 0) or 0)
-                    spread = (ask - bid) / last if (last > 0 and ask > bid) else None
-
-                if spread is None or spread > MAX_SPREAD:
-                    continue
-
-                # RVOL
-                ema_vol = bot._vol_ema.get(sym, vol_24h)
-                rvol = vol_24h / ema_vol if ema_vol > 0 else 1.0
-                alpha = Config.TRIAGE_RVOL_EMA_ALPHA
-                bot._vol_ema[sym] = (alpha * vol_24h) + ((1 - alpha) * ema_vol)
-
-                bot._dynamic_pair_list.append(sym)
-                existing_set.add(sym)
-                found += 1
-                bot.log(
-                    f"🔼 [DINÁMICO] {sym} agregado (vol=${vol_24h:,.0f}, rvol={rvol:.1f})"
-                )
-
-                if len(bot._dynamic_pair_list) >= MAX_PAIRS:
-                    break
-
-            bot._market_scan_offset = (offset + scanned) % max(len(all_candidates), 1)
-            bot.log(
-                f"🔄 [DINÁMICO] Escaneados {scanned} candidatos, encontrados {found} reemplazos"
-            )
-
-        # --- PASO 3: Construir ranked con RVOL ---
-        ranked = []
-        for sym in bot._dynamic_pair_list:
-            ticker = (
-                raw_tickers.get(sym)
-                or raw_tickers.get(sym + ":USDT")
-                or raw_tickers.get(sym.replace("/", ""))
-            )
-            if not ticker:
-                continue
-
-            vol_24h = float(ticker.get("quoteVolume", 0) or 0)
-            ema_vol = bot._vol_ema.get(sym, vol_24h)
-            rvol = vol_24h / ema_vol if ema_vol > 0 else 1.0
-
-            ranked.append(
-                {
-                    "symbol": sym,
-                    "symbol_raw": sym,
-                    "rvol": rvol,
-                    "vol_24h": vol_24h,
-                    "status": "ACTIVE",
-                    "ticker": ticker,
-                }
-            )
-
-        ranked.sort(key=lambda x: x["rvol"], reverse=True)
-        top_symbols = [f"{item['symbol']} ({item['rvol']:.1f})" for item in ranked]
-
+        top_symbols = [f"{item['symbol']} (${item['vol_24h']/1_000_000:.0f}M)" for item in ranked[:5]]
         bot.log(
-            f"🎯 TRIAJE DINÁMICO: {len(ranked)}/{MAX_PAIRS} pares activos | "
-            f"{removed_count} removidos este ciclo | "
-            f"Top: {', '.join(top_symbols)}"
+            f"🎯 ELITE TRIAJE: {len(ranked)}/{MAX_PAIRS} pares activos (Pura Liquidez) | "
+            f"Top 5: {', '.join(top_symbols)}"
         )
 
         return ranked
 
     except Exception as e:
         import traceback
-
         tb = traceback.format_exc()
-        bot.log(f"⚠️ Error en _get_active_market_snapshot: {e}")
+        bot.log(f"⚠️ Error en get_active_market_snapshot: {e}")
         bot.log(f"TRACEBACK: {tb}")
         return []
+
