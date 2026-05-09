@@ -54,6 +54,13 @@ def connect_to_binance(bot):
     try:
         bot.log("Conectando a Binance...")
 
+        if not Config.PAPER_MODE and not Config.ALLOW_REAL_TRADING:
+            raise RuntimeError(
+                "REAL_MODE_BLOCKED: ALLOW_REAL_TRADING no está habilitado. "
+                "Configure ALLOW_REAL_TRADING=true en el entorno para operar con capital real. "
+                "Esta protección evita activación accidental."
+            )
+
         # [v118] Soporte para Testnet
         # [V118-PRO] Session pooling para evitar fugas de sockets
         session = requests.Session()
@@ -184,10 +191,11 @@ def connect_to_binance(bot):
                 ) from error
 
         if not Config.PAPER_MODE:
+            mode_tag = "TESTNET" if Config.USE_TESTNET else "REAL"
+            bot.log(f"🔥 MODO {mode_tag}: sincronizando wallet...")
             bot.sync_wallet()
-        bot.log(
-            f"🛡️ MODO OPERATIVO: {'📝 PAPER (Simulado)' if Config.PAPER_MODE else '🔥 REAL (Dinero Real)'}"
-        )
+        mode_label = "TESTNET" if Config.USE_TESTNET else ("📝 PAPER (Simulado)" if Config.PAPER_MODE else "🔥 REAL (Dinero Real)")
+        bot.log(f"🛡️ MODO OPERATIVO: {mode_label}")
     except Exception as error:
         bot.log(f"❌ ERROR FATAL: {error}")
         raise RuntimeError(

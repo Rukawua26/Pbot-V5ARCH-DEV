@@ -432,6 +432,30 @@ class Bot(BotFacade):
         return run_fetch_pair_data(self, symbol)
 
 
+def _check_real_mode_guardrails():
+    errors = []
+    if not Config.PAPER_MODE:
+        if not Config.ALLOW_REAL_TRADING:
+            errors.append("ALLOW_REAL_TRADING=false: modo REAL no permitido.")
+        if Config.USE_TESTNET:
+            errors.append("USE_TESTNET=true con PAPER_MODE=false es incoherente.")
+        if Config.MAX_OPEN_TRADES > 3:
+            errors.append("MAX_OPEN_TRADES debe ser <= 3 en modo REAL.")
+        if Config.MAX_RISK_USD > 50:
+            errors.append("MAX_RISK_USD debe ser <= 50 en modo REAL.")
+        if not Config.TELEGRAM_TOKEN or not Config.TELEGRAM_CHAT_ID:
+            errors.append("TELEGRAM no configurado: obligatorio en modo REAL.")
+        logger.warning(
+            "🔥 MODO REAL ACTIVADO - El bot operará con capital real. "
+            "Verifique que las configuraciones de riesgo sean apropiadas."
+        )
+    else:
+        mode_detail = "TESTNET" if Config.USE_TESTNET else "PAPER (simulado)"
+        logger.info(f"📝 MODO {mode_detail} - Sin riesgo de capital real.")
+    if errors:
+        raise RuntimeError("REAL_MODE_GUARDRAILS: " + "; ".join(errors))
+
+
 def run_entrypoint():
     try:
         if not acquire_single_instance_lock(logger):
@@ -442,6 +466,8 @@ def run_entrypoint():
         config_errors = Config.validate()
         if config_errors:
             raise RuntimeError("CONFIG_VALIDATION_FAILED: " + "; ".join(config_errors))
+
+        _check_real_mode_guardrails()
 
         bot = Bot()
         if (

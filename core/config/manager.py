@@ -224,6 +224,36 @@ class Config(OperationalConfig, StrategyConfig):
     @classmethod
     def validate(cls) -> list[str]:
         errors = []
+
+        # --- Guardrails de seguridad obligatorios ---
+        if not cls.PAPER_MODE and not cls.ALLOW_REAL_TRADING:
+            errors.append(
+                "REQUIERE_ALLOW_REAL_TRADING: modo REAL requiere ALLOW_REAL_TRADING=true explícito. "
+                "Esto evita activación accidental de trading con capital real."
+            )
+
+        if not cls.PAPER_MODE:
+            if not cls.BINANCE_API_KEY or not cls.BINANCE_API_SECRET:
+                errors.append(
+                    "REAL_MODE_SIN_KEYS: modo REAL requiere BINANCE_API_KEY y BINANCE_API_SECRET."
+                )
+            if cls.MAX_OPEN_TRADES < 1 or cls.MAX_OPEN_TRADES > 5:
+                errors.append(
+                    "REAL_MODE_MAX_TRADES: en modo REAL, MAX_OPEN_TRADES debe estar entre 1 y 5."
+                )
+            if cls.MAX_RISK_USD <= 0 or cls.MAX_RISK_USD > 100:
+                errors.append(
+                    "REAL_MODE_MAX_RISK: en modo REAL, MAX_RISK_USD debe estar entre 0 y 100."
+                )
+            if float(cls.RISK_PER_TRADE_PERCENT) <= 0 or float(cls.RISK_PER_TRADE_PERCENT) > 2.0:
+                errors.append(
+                    "REAL_MODE_RISK_PCT: en modo REAL, RISK_PER_TRADE_PERCENT debe estar entre 0% y 2%."
+                )
+            if not cls.TELEGRAM_TOKEN or not cls.TELEGRAM_CHAT_ID:
+                errors.append(
+                    "REAL_MODE_TELEGRAM: modo REAL requiere TELEGRAM_TOKEN y TELEGRAM_CHAT_ID."
+                )
+
         if not (0.0 < float(cls.RISK_PER_TRADE_PERCENT) <= 5.0):
             errors.append("RISK_PER_TRADE_PERCENT debe estar en (0, 5]")
         if int(cls.MAX_OPEN_TRADES) < 0 or int(cls.MAX_OPEN_TRADES) > 20:

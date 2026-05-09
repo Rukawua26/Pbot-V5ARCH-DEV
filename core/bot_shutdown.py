@@ -3,6 +3,7 @@ import time
 
 from config import Config
 from core.execution_telemetry import append_execution_event
+from core.trade_state import TradeStatus
 
 
 def _order_type_upper(order: dict) -> str:
@@ -54,7 +55,7 @@ def _finalize_partial_flags(bot):
     with bot.lock:
         snapshot = dict(getattr(bot, "active_trades", {}) or {})
 
-    partial_status = {"PARTIAL_FILL_PENDING", "PARTIAL_FILL"}
+    partial_status = {TradeStatus.PARTIAL_FILL_PENDING.value, TradeStatus.PARTIAL_FILL.value}
     for symbol, trade in snapshot.items():
         if not isinstance(trade, dict):
             continue
@@ -63,8 +64,8 @@ def _finalize_partial_flags(bot):
             continue
         trade["remaining_amount"] = 0.0
         trade["partial_fill_pending"] = False
-        trade["status"] = "CLOSED"
-        trade["entry_order_status"] = "CLOSED"
+        trade["status"] = TradeStatus.CLOSED.value
+        trade["entry_order_status"] = TradeStatus.CLOSED.value
         trade["entry_order_finalized_by_shutdown"] = True
         with bot.db_lock:
             bot.brain.save_active_trade_state(symbol, trade)

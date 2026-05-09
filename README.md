@@ -125,7 +125,7 @@ pip install -r requirements.txt
 ./.venv/bin/python main.py
 ```
 
-Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales según el modo que vayas a usar.
+Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales según el modo que vayas a usar. Para operación real, sigue `docs/runbooks/real-trading.md` y `docs/runbooks/recovery.md`; si no puedes completar esos checks, no uses `REAL`.
 
 ---
 
@@ -161,7 +161,8 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Exit engine | ✅ Activo | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
 | Reconciliación | ✅ Activo | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
 | Ejecución segura | ✅ Activo | `HARD SL`, cierres de emergencia y protecciones de runtime |
-| Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
+ | Seguridad operativa | ✅ Activo | Modo REAL bloqueado por defecto; requiere `ALLOW_REAL_TRADING=true` explícito + guardrails |
+ | Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
 | Operación remota | ✅ Activo | Comandos Telegram para auditoría, inteligencia y control |
 | Docker/systemd | ✅ Disponible | Despliegue en VPS o contenedor |
 
@@ -300,6 +301,9 @@ main.py
 | `OI_FILTER_ENABLED` | Activa filtro externo Open Interest Delta v118.3 |
 | `OI_DELTA_THRESHOLD` | Umbral mínimo de cambio OI relevante; default `0.005` |
 | `OI_CACHE_TTL_SECONDS` | TTL del cache OI por símbolo; default `60` |
+| `PAPER_MODE` | Activa simulación sin capital real; default `true`. Para REAL: `false` + `ALLOW_REAL_TRADING=true` |
+| `ALLOW_REAL_TRADING` | Habilita trading con capital real; default `false`. Requiere `PAPER_MODE=false`. Guardrails de seguridad validan parámetros antes de permitir REAL. |
+| `USE_TESTNET` | Usa testnet de Binance Futures; default `false`. Recomendado para validación antes de REAL. |
 | `MTF_FILTER_ENABLED` | Activa confirmación multi-timeframe `15m/5m` como filtro del dueño `1h`; default `false` |
 | `CVD_FILTER_ENABLED` | Activa CVD rolling por `aggTrade`; default `false` |
 | `CVD_WINDOW_SECONDS` | Ventana rolling CVD; default `300` |
@@ -500,6 +504,58 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 ```
 
 Estado local verificado: `453` tests `unittest` OK (`1` skipped).
+
+### Testnet E2E Opt-In
+
+La suite `tests/integration/test_binance_testnet_execution_flow.py` valida contra Binance Futures Testnet el flujo `entry → HARD SL → close → flat`. Está desactivada por defecto porque envía órdenes reales de testnet.
+
+```bash
+RUN_BINANCE_TESTNET_E2E=true \
+BINANCE_TESTNET_API_KEY="..." \
+BINANCE_TESTNET_API_SECRET="..." \
+BINANCE_TESTNET_SYMBOL="BTC/USDT" \
+BINANCE_TESTNET_ORDER_AMOUNT="0.001" \
+./.venv/bin/python -m unittest tests.integration.test_binance_testnet_execution_flow
+```
+
+Si falla, no lo ignores: primero verifica en Binance Testnet que no quede posición abierta ni orden stop viva antes de repetir.
+
+### Walk-Forward Backtest
+
+`tools/walk_forward_backtest.py` ejecuta optimización en ventana de entrenamiento y validación cronológica fuera de muestra usando `core.backtester.VectorBacktester`. No demuestra edge por sí solo; genera evidencia para aceptar o descartar parámetros.
+
+```bash
+./.venv/bin/python tools/walk_forward_backtest.py \
+  --candles data/BTCUSDT_1h.csv \
+  --train-months 8 \
+  --val-months 4 \
+  --min-windows 2 \
+  --output reports/walk_forward_backtest.json
+```
+
+Lectura exigente: si las ventanas de validación no sostienen profit factor, retorno neto y drawdown razonables fuera de muestra, la estrategia no tiene permiso intelectual para pasar a `REAL`.
+
+### Ablation Backtest
+
+`tools/ablation_backtest.py` compara el baseline `mt_sr_regime` contra variantes `mt_only`, `sr_only` y `equal_weight` con los mismos supuestos de ejecución. Si el baseline no supera consistentemente sus variantes, el régimen ponderado no está justificando su complejidad.
+
+```bash
+./.venv/bin/python tools/ablation_backtest.py \
+  --candles data/BTCUSDT_1h.csv \
+  --output reports/ablation_backtest.json
+```
+
+### REAL Readiness Gate
+
+`tools/real_readiness_check.py` bloquea activación REAL si faltan guardrails o si el reporte walk-forward no cumple mínimos configurables.
+
+```bash
+./.venv/bin/python tools/real_readiness_check.py \
+  --require-walk-forward \
+  --walk-forward-report reports/walk_forward_backtest.json \
+  --min-profit-factor 1.2 \
+  --max-drawdown 0.20
+```
 
 ### Cobertura Destacada en `tests/`
 
