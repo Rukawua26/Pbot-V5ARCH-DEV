@@ -505,6 +505,21 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 
 Estado local verificado: `453` tests `unittest` OK (`1` skipped).
 
+### Testnet E2E Opt-In
+
+La suite `tests/integration/test_binance_testnet_execution_flow.py` valida contra Binance Futures Testnet el flujo `entry → HARD SL → close → flat`. Está desactivada por defecto porque envía órdenes reales de testnet.
+
+```bash
+RUN_BINANCE_TESTNET_E2E=true \
+BINANCE_TESTNET_API_KEY="..." \
+BINANCE_TESTNET_API_SECRET="..." \
+BINANCE_TESTNET_SYMBOL="BTC/USDT" \
+BINANCE_TESTNET_ORDER_AMOUNT="0.001" \
+./.venv/bin/python -m unittest tests.integration.test_binance_testnet_execution_flow
+```
+
+Si falla, no lo ignores: primero verifica en Binance Testnet que no quede posición abierta ni orden stop viva antes de repetir.
+
 ### Cobertura Destacada en `tests/`
 
 - reconciliación y wallet sync
