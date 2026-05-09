@@ -31,6 +31,7 @@ models/
 .sniperai.lock
 
 # Data/cache artifacts
+data/
 data_storage/
 backups/
 docs/reports/*.csv

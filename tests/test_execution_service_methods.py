@@ -15,6 +15,7 @@ class TestExecutionServiceInit(unittest.TestCase):
             "apiKey": "key123",
             "secret": "secret456",
             "enableRateLimit": True,
+            "adjustForTimeDifference": True,
             "options": {"defaultType": "future"},
         })
         self.assertEqual(service.logger.name, "Execution")

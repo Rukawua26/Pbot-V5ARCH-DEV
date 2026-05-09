@@ -310,6 +310,7 @@ def build_execution_gateway(config, execution_service_cls):
     execution = execution_service_cls(config.BINANCE_API_KEY, config.BINANCE_API_SECRET)
 
     if bool(getattr(config, "USE_TESTNET", False)):
+        execution.exchange.options['disableFuturesSandboxWarning'] = True
         try:
             execution.exchange.set_sandbox_mode(True)
         except Exception as error:

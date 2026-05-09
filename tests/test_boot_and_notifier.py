@@ -13,6 +13,11 @@ class _Response:
 
 
 class BootAndNotifierTest(unittest.TestCase):
+    def setUp(self):
+        from notifier import get_queue
+        q = get_queue()
+        q.running = False
+
     @patch("core.bot_app.acquire_single_instance_lock", return_value=True)
     @patch("core.bot_app.Bot", side_effect=RuntimeError("boot failed"))
     def test_run_entrypoint_exits_non_zero_on_fatal_boot(

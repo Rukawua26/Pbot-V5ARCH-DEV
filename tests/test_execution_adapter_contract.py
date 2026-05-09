@@ -10,7 +10,7 @@ from core.execution_adapters import ShadowExecutionAdapter, build_execution_gate
 class _FakeExecutionService:
     def __init__(self, _api_key, _api_secret):
         self.logger = MagicMock()
-        self.exchange = SimpleNamespace(set_sandbox_mode=MagicMock())
+        self.exchange = SimpleNamespace(set_sandbox_mode=MagicMock(), options={})
         self.last_hard_sl_error = ""
 
     def fetch_ticker(self, _symbol):

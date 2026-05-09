@@ -77,6 +77,7 @@ def connect_to_binance(bot):
                 raise RuntimeError(
                     "La clase de exchange actual no soporta sandbox/testnet de forma nativa."
                 )
+            exchange.options['disableFuturesSandboxWarning'] = True
             try:
                 exchange.set_sandbox_mode(True)
             except Exception as error:
