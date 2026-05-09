@@ -520,6 +520,21 @@ BINANCE_TESTNET_ORDER_AMOUNT="0.001" \
 
 Si falla, no lo ignores: primero verifica en Binance Testnet que no quede posición abierta ni orden stop viva antes de repetir.
 
+### Walk-Forward Backtest
+
+`tools/walk_forward_backtest.py` ejecuta optimización en ventana de entrenamiento y validación cronológica fuera de muestra usando `core.backtester.VectorBacktester`. No demuestra edge por sí solo; genera evidencia para aceptar o descartar parámetros.
+
+```bash
+./.venv/bin/python tools/walk_forward_backtest.py \
+  --candles data/BTCUSDT_1h.csv \
+  --train-months 8 \
+  --val-months 4 \
+  --min-windows 2 \
+  --output reports/walk_forward_backtest.json
+```
+
+Lectura exigente: si las ventanas de validación no sostienen profit factor, retorno neto y drawdown razonables fuera de muestra, la estrategia no tiene permiso intelectual para pasar a `REAL`.
+
 ### Cobertura Destacada en `tests/`
 
 - reconciliación y wallet sync

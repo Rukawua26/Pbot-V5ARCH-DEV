@@ -34,6 +34,7 @@ models/
 data_storage/
 backups/
 docs/reports/*.csv
+reports/
 
 # OS/editor
 .DS_Store

@@ -31,8 +31,10 @@ class VectorBacktester:
             raise ValueError(f"Missing candle columns: {sorted(missing)}")
 
         work = candles.copy()
-        if np.issubdtype(work["time"].dtype, np.number):
+        if pd.api.types.is_numeric_dtype(work["time"]):
             work["time"] = pd.to_datetime(work["time"], unit="ms", utc=True)
+        elif not pd.api.types.is_datetime64_any_dtype(work["time"]):
+            work["time"] = pd.to_datetime(work["time"], utc=True, errors="coerce")
 
         work = (
             work.sort_values("time")
