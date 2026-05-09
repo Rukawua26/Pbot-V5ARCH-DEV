@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown, set_symbol_cooldown
+from core.risk.correlation_risk import compute_correlation_reduction
+from core.regime_tuning import get_sl_multiplier, get_tp_multiplier, record_trade as record_regime_trade
 from core.execution_telemetry import append_execution_event
 from core.postmortem import label_exit_reason
 from core.reconciliation import (
@@ -344,6 +346,12 @@ def execute_order(
 
     trend = (context or {}).get("trend", "RANGO")
     spread = (context or {}).get("spread", 0.0)
+    get_market_regime = getattr(bot, "_get_market_regime", None)
+    entry_market_regime = str(
+        (context or {}).get("btc_regime")
+        or (get_market_regime() if callable(get_market_regime) else None)
+        or getattr(bot, "market_regime", "RANGE")
+    )
     with bot.db_lock:
         genes = (context or {}).get("sl_genes")
         sl_modifier = float((context or {}).get("sl_modifier", 1.0) or 1.0)
@@ -357,6 +365,12 @@ def execute_order(
         except Exception as error:
             bot.log(f"⚠️ No se pudo ajustar SL por tendencia en {symbol}: {error}")
 
+    regime_sl_mult = 1.0
+    regime_tp_mult = 1.0
+    if bool(getattr(Config, "REGIME_TUNING_ENABLED", False)):
+        regime_sl_mult = get_sl_multiplier(bot, entry_market_regime)
+        regime_tp_mult = get_tp_multiplier(bot, entry_market_regime)
+
     sl_val, tp_val, exit_mode = bot.risk_engine.get_exit_levels(
         entry_price=price,
         side=side,
@@ -367,6 +381,8 @@ def execute_order(
         genes=genes,
         spread=spread,
         fees=0.001,
+        regime_sl_mult=regime_sl_mult,
+        regime_tp_mult=regime_tp_mult,
     )
     bot.log(f"🧩 Exit mode {symbol}: {exit_mode}")
 
@@ -400,6 +416,19 @@ def execute_order(
         amount = calculated_position_size / price if price > 0 else amount
         bot.log(
             f"📉 TACTICAL REDUCE {symbol}: size × {reduced_mult:.2f} (decision matrix)"
+        )
+
+    open_symbols = list(bot.active_trades.keys()) if hasattr(bot, "active_trades") else []
+    corr_mult, corr_details = compute_correlation_reduction(
+        bot, symbol, open_symbols
+    )
+    if corr_mult < 1.0 and corr_details:
+        calculated_position_size *= corr_mult
+        amount = calculated_position_size / price if price > 0 else amount
+        mean_corr = sum(d["correlation"] for d in corr_details) / len(corr_details)
+        bot.log(
+            f"📉 CORRELATION RISK {symbol}: size × {corr_mult:.2f} "
+            f"(ρ={mean_corr:.3f}, n={len(corr_details)})"
         )
 
     bot.log(
@@ -935,6 +964,7 @@ def execute_order(
                 "entry_ob": ob_status,
                 "entry_confidence": (context or {}).get("prob_final", 75.0),
                 "current_confidence": (context or {}).get("prob_final", 75.0),
+                "market_regime": entry_market_regime,
                 "entry_shock_level": (context or {}).get("shock_level"),
                 "entry_atr": (context or {}).get("atr", 0.0),
                 "breakout_origin": bool((context or {}).get("breakout_ready", False)),
@@ -1194,7 +1224,12 @@ def close_trade(
                         "entry_ob": trade.get("entry_ob", "⚪"),
                         "mae_percent": mae_percent,
                         "mfe_percent": mfe_percent,
-                        "market_regime": bot._get_market_regime(),
+                        "market_regime": trade.get("market_regime")
+                        or (
+                            bot._get_market_regime()
+                            if callable(getattr(bot, "_get_market_regime", None))
+                            else getattr(bot, "market_regime", "RANGE")
+                        ),
                         "entry_confidence": trade.get("entry_confidence", 0.0),
                         "exit_confidence": exit_confidence,
                         "entry_shock_level": trade.get("entry_shock_level"),
@@ -1444,6 +1479,11 @@ def close_trade(
             )
 
         bot.risk_engine.record_trade_result(symbol, pnl_neto_percent)
+
+        if bool(getattr(Config, "REGIME_TUNING_ENABLED", False)):
+            trade_regime = trade.get("market_regime", "")
+            if trade_regime:
+                record_regime_trade(trade_regime, pnl_neto_percent)
 
         if pnl_neto_percent < 0 and not trade.get("is_shadow", False):
             anti_revenge_until = now + timedelta(hours=1)

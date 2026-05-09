@@ -33,7 +33,7 @@ Restart=on-failure
 RestartPreventExitStatus=75
 RestartSec=10
 KillSignal=SIGINT
-TimeoutStopSec=30
+TimeoutStopSec=95
 NoNewPrivileges=true
 LimitNOFILE=65535
 
