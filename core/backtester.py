@@ -117,6 +117,7 @@ class VectorBacktester:
         stop_loss_pct: float,
         take_profit_pct: float,
         fee_rate: float = 0.0004,
+        strategy_mode: str = "mt_sr_regime",
     ) -> VectorBacktestResult:
         # MT vectorizado
         w9 = self._alma_weights(9, alma_offset, alma_sigma)
@@ -208,8 +209,18 @@ class VectorBacktester:
         mt_weight = np.where(adx > adx_threshold, 1.0, np.where(adx < 20.0, 0.0, 0.5))
         sr_weight = np.where(adx > adx_threshold, 0.0, np.where(adx < 20.0, 1.0, 0.5))
 
-        # Señales vectorizadas
-        score = (mt_vote * mt_weight) + (sr_vote * sr_weight)
+        # Señales vectorizadas. strategy_mode permite ablation testing sin tocar
+        # el simulador de ejecución ni los supuestos de comisiones/slippage.
+        if strategy_mode == "mt_sr_regime":
+            score = (mt_vote * mt_weight) + (sr_vote * sr_weight)
+        elif strategy_mode == "mt_only":
+            score = mt_vote
+        elif strategy_mode == "sr_only":
+            score = sr_vote
+        elif strategy_mode == "equal_weight":
+            score = (mt_vote * 0.5) + (sr_vote * 0.5)
+        else:
+            raise ValueError(f"Unsupported strategy_mode: {strategy_mode}")
         raw_signal = np.where(score >= 60.0, 1.0, np.where(score <= 40.0, -1.0, 0.0))
         signal = np.roll(raw_signal, 1)
         signal[0] = 0.0

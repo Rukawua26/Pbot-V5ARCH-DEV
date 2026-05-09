@@ -535,6 +535,16 @@ Si falla, no lo ignores: primero verifica en Binance Testnet que no quede posici
 
 Lectura exigente: si las ventanas de validación no sostienen profit factor, retorno neto y drawdown razonables fuera de muestra, la estrategia no tiene permiso intelectual para pasar a `REAL`.
 
+### Ablation Backtest
+
+`tools/ablation_backtest.py` compara el baseline `mt_sr_regime` contra variantes `mt_only`, `sr_only` y `equal_weight` con los mismos supuestos de ejecución. Si el baseline no supera consistentemente sus variantes, el régimen ponderado no está justificando su complejidad.
+
+```bash
+./.venv/bin/python tools/ablation_backtest.py \
+  --candles data/BTCUSDT_1h.csv \
+  --output reports/ablation_backtest.json
+```
+
 ### Cobertura Destacada en `tests/`
 
 - reconciliación y wallet sync
