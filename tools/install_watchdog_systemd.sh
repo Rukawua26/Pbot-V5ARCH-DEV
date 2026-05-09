@@ -6,6 +6,8 @@ PYTHON_BIN="${BOT_DIR}/.venv/bin/python"
 LOCK_FILE="${BOT_DIR}/.sniperai.lock"
 UNIT_DIR="${HOME}/.config/systemd/user"
 UNIT_FILE="${UNIT_DIR}/sniper-ai.service"
+ENV_FILE="${SNIPER_ENV_FILE:-${BOT_DIR}/.env}"
+MEMORY_MAX="${SNIPER_SYSTEMD_MEMORY_MAX:-1G}"
 
 mkdir -p "${UNIT_DIR}"
 
@@ -25,9 +27,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=${BOT_DIR}
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-${ENV_FILE}
 ExecStartPre=/usr/bin/env bash -lc 'flock -n "${LOCK_FILE}" true || exit 75'
-ExecStart=/usr/bin/env bash -lc 'cd "${BOT_DIR}" && exec "${PYTHON_BIN}" main.py'
+ExecStart=${PYTHON_BIN} main.py
 ExecStop=/usr/bin/env bash -lc 'kill -INT "\${MAINPID}" 2>/dev/null || true'
 Restart=on-failure
 RestartPreventExitStatus=75
@@ -36,6 +40,11 @@ KillSignal=SIGINT
 TimeoutStopSec=95
 NoNewPrivileges=true
 LimitNOFILE=65535
+MemoryMax=${MEMORY_MAX}
+OOMPolicy=stop
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${BOT_DIR} /dev/shm
 
 [Install]
 WantedBy=default.target

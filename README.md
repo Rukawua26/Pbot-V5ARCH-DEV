@@ -125,7 +125,7 @@ pip install -r requirements.txt
 ./.venv/bin/python main.py
 ```
 
-Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales según el modo que vayas a usar.
+Antes de arrancar, crea `.env` manualmente con tus variables operativas y credenciales según el modo que vayas a usar. Para operación real, sigue `docs/runbooks/real-trading.md` y `docs/runbooks/recovery.md`; si no puedes completar esos checks, no uses `REAL`.
 
 ---
 
