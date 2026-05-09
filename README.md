@@ -161,7 +161,8 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Exit engine | ✅ Activo | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
 | Reconciliación | ✅ Activo | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
 | Ejecución segura | ✅ Activo | `HARD SL`, cierres de emergencia y protecciones de runtime |
-| Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
+ | Seguridad operativa | ✅ Activo | Modo REAL bloqueado por defecto; requiere `ALLOW_REAL_TRADING=true` explícito + guardrails |
+ | Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
 | Operación remota | ✅ Activo | Comandos Telegram para auditoría, inteligencia y control |
 | Docker/systemd | ✅ Disponible | Despliegue en VPS o contenedor |
 
@@ -300,6 +301,9 @@ main.py
 | `OI_FILTER_ENABLED` | Activa filtro externo Open Interest Delta v118.3 |
 | `OI_DELTA_THRESHOLD` | Umbral mínimo de cambio OI relevante; default `0.005` |
 | `OI_CACHE_TTL_SECONDS` | TTL del cache OI por símbolo; default `60` |
+| `PAPER_MODE` | Activa simulación sin capital real; default `true`. Para REAL: `false` + `ALLOW_REAL_TRADING=true` |
+| `ALLOW_REAL_TRADING` | Habilita trading con capital real; default `false`. Requiere `PAPER_MODE=false`. Guardrails de seguridad validan parámetros antes de permitir REAL. |
+| `USE_TESTNET` | Usa testnet de Binance Futures; default `false`. Recomendado para validación antes de REAL. |
 | `MTF_FILTER_ENABLED` | Activa confirmación multi-timeframe `15m/5m` como filtro del dueño `1h`; default `false` |
 | `CVD_FILTER_ENABLED` | Activa CVD rolling por `aggTrade`; default `false` |
 | `CVD_WINDOW_SECONDS` | Ventana rolling CVD; default `300` |

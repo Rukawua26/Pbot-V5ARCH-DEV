@@ -30,6 +30,7 @@ class OperationalConfig:
     BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
     PAPER_MODE = _env_bool("PAPER_MODE", True)
+    ALLOW_REAL_TRADING = _env_bool("ALLOW_REAL_TRADING", False)
     PAPER_INITIAL_BALANCE = float(os.getenv("PAPER_INITIAL_BALANCE", "1000.0"))
     USE_TESTNET = _env_bool("USE_TESTNET", False)
     EXECUTION_BACKEND = os.getenv("EXECUTION_BACKEND", "live")

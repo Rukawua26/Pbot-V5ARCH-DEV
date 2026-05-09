@@ -64,6 +64,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         bot.handle_command.assert_called_once_with("/status")
 
+    @patch("core.bot_connection.Config.ALLOW_REAL_TRADING", True)
     @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
     def test_connect_to_binance_aborts_when_balance_check_fails(self, mocked_binance):
@@ -84,6 +85,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         bot.sync_wallet.assert_not_called()
 
+    @patch("core.bot_connection.Config.ALLOW_REAL_TRADING", True)
     @patch("core.bot_connection.Config.USE_TESTNET", False)
     @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
@@ -143,6 +145,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
         bot.sync_wallet.assert_not_called()
         self.assertFalse(bot.is_hedge_mode)
 
+    @patch("core.bot_connection.Config.ALLOW_REAL_TRADING", True)
     @patch("core.bot_connection.Config.USE_TESTNET", True)
     @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
@@ -169,6 +172,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
 
         exchange.set_sandbox_mode.assert_called_once_with(True)
 
+    @patch("core.bot_connection.Config.ALLOW_REAL_TRADING", True)
     @patch("core.bot_connection.Config.USE_TESTNET", False)
     @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")
@@ -241,6 +245,7 @@ class BotSecurityRuntimeTest(unittest.TestCase):
         self.assertEqual(bot_execution.load_markets.call_count, 2)
         bot.sync_wallet.assert_not_called()
 
+    @patch("core.bot_connection.Config.ALLOW_REAL_TRADING", True)
     @patch("core.bot_connection.Config.USE_TESTNET", True)
     @patch("core.bot_connection.Config.PAPER_MODE", False)
     @patch("core.bot_connection.ccxt.binance")

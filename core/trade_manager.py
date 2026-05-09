@@ -989,7 +989,8 @@ def execute_order(
             }
 
             if symbol not in bot.active_trades:
-                bot.active_trades[symbol] = trade_state
+                with bot.lock:
+                    bot.active_trades[symbol] = trade_state
                 with bot.db_lock:
                     persisted = bot.brain.save_active_trade_state(symbol, trade_state)
                 if not persisted:
@@ -1015,7 +1016,8 @@ def execute_order(
                     f"💾 CARTERA: {symbol} registrado ({'SHADOW' if is_shadow else 'REAL'})."
                 )
             else:
-                bot.active_trades[symbol].update(trade_state)
+                with bot.lock:
+                    bot.active_trades[symbol].update(trade_state)
 
             cooldown_minutes = (
                 Config.SHADOW_COOLDOWN_MINUTES
@@ -1536,7 +1538,6 @@ def close_trade(
                 else:
                     current["status"] = "OPEN"
         with bot.db_lock:
-            current = bot.active_trades.get(symbol)
             if current:
                 bot.brain.save_active_trade_state(symbol, current)
         bot.log(f"Error cerrando {symbol}: {e}")
