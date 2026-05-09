@@ -545,6 +545,18 @@ Lectura exigente: si las ventanas de validación no sostienen profit factor, ret
   --output reports/ablation_backtest.json
 ```
 
+### REAL Readiness Gate
+
+`tools/real_readiness_check.py` bloquea activación REAL si faltan guardrails o si el reporte walk-forward no cumple mínimos configurables.
+
+```bash
+./.venv/bin/python tools/real_readiness_check.py \
+  --require-walk-forward \
+  --walk-forward-report reports/walk_forward_backtest.json \
+  --min-profit-factor 1.2 \
+  --max-drawdown 0.20
+```
+
 ### Cobertura Destacada en `tests/`
 
 - reconciliación y wallet sync
