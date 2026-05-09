@@ -10,6 +10,7 @@ from core.risk.correlation_risk import compute_correlation_reduction
 from core.regime_tuning import get_sl_multiplier, get_tp_multiplier, record_trade as record_regime_trade
 from core.execution_telemetry import append_execution_event
 from core.postmortem import label_exit_reason
+from core.trade_state import TradeStatus, closing_statuses, open_trade_statuses
 from core.reconciliation import (
     allocate_signal_timestamp,
     generate_order_ids,
@@ -58,14 +59,7 @@ def _validate_entry_preconditions(bot, symbol: str, is_shadow: bool) -> Optional
     existing_state = (getattr(bot, "active_trades", {}) or {}).get(symbol)
     if isinstance(existing_state, dict):
         existing_status = str(existing_state.get("status") or "").upper()
-        if existing_status in {
-            "PENDING_SEND",
-            "PENDING_EXCHANGE_OPEN",
-            "ENTRY_FILLED_AWAITING_POSITION_SYNC",
-            "PARTIAL_FILL_PENDING",
-            "PARTIAL_FILL",
-            "ORDER_LOOKUP_FAILED",
-        }:
+        if existing_status in set(open_trade_statuses()):
             bot.log(
                 f"🧷 RECOVERY_GUARD {symbol}: estado pendiente detectado ({existing_status}). Se bloquea nueva apertura para evitar duplicado tras reinicio."
             )
@@ -216,14 +210,7 @@ def _sanitize_context(bot, context):
 
 
 def _get_local_open_trade_counts(bot):
-    open_statuses = {
-        "OPEN",
-        "PENDING_SEND",
-        "PENDING_EXCHANGE_OPEN",
-        "ENTRY_FILLED_AWAITING_POSITION_SYNC",
-        "PARTIAL_FILL_PENDING",
-        "PARTIAL_FILL",
-    }
+    open_statuses = open_trade_statuses()
     states = {}
     try:
         states.update(getattr(bot, "active_trades", {}) or {})
@@ -567,7 +554,7 @@ def execute_order(
         "entry": price,
         "amount": amount,
         "is_shadow": is_shadow,
-        "status": "PENDING_SEND",
+        "status": TradeStatus.PENDING_SEND.value,
         "signal_ts": signal_ts,
         "entry_client_order_id": entry_client_order_id,
         "sl_client_order_id": sl_client_order_id,
@@ -860,7 +847,7 @@ def execute_order(
                 )
                 _safe_update_signal_alert_status(bot, entry_client_order_id, "REJECTED")
 
-                pending_state["status"] = "ENTRY_ACK_UNKNOWN"
+                pending_state["status"] = TradeStatus.ENTRY_ACK_UNKNOWN.value
                 pending_state["entry_reject_reason"] = reject_reason
                 pending_state["intent_last_check_at_utc"] = utc_now_iso()
                 pending_state["intent_check_attempts"] = int(
@@ -978,9 +965,9 @@ def execute_order(
                 if not is_shadow
                 else None,
                 "tp_exchange_order_id": None,
-                "status": "PARTIAL_FILL_PENDING"
+                "status": TradeStatus.PARTIAL_FILL_PENDING.value
                 if (not is_shadow and remaining_amount > 0.0)
-                else "OPEN",
+                else TradeStatus.OPEN.value,
                 "partial_fill_pending": (not is_shadow and remaining_amount > 0.0),
                 "partial_fill_started_at": utc_now_iso()
                 if (not is_shadow and remaining_amount > 0.0)
@@ -1061,7 +1048,7 @@ def close_trade(
             return
         if trade:
             trade["closing_in_progress"] = True
-            trade["status"] = "CLOSING_INITIATED"
+            trade["status"] = TradeStatus.CLOSING_INITIATED.value
     if not trade:
         return
 
@@ -1524,7 +1511,7 @@ def close_trade(
             if current:
                 current["closing_in_progress"] = False
                 if is_stuck_or_unconfirmed and not (trade.get("is_shadow", False) or Config.PAPER_MODE):
-                    current["status"] = "EXIT_STUCK"
+                    current["status"] = TradeStatus.EXIT_STUCK.value
                     bot.integrity_lock_active = True
                     setattr(bot, "halt_system_active", True)
                     bot.log(
@@ -1536,7 +1523,7 @@ def close_trade(
                         f"Error: {str(e)[:100]}. Requiere intervención manual."
                     )
                 else:
-                    current["status"] = "OPEN"
+                    current["status"] = TradeStatus.OPEN.value
         with bot.db_lock:
             if current:
                 bot.brain.save_active_trade_state(symbol, current)

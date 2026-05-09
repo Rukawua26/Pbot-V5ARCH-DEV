@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from config import Config
 from core.time_utils import parse_datetime_utc, utc_now
+from core.trade_state import TradeStatus
 from strategy import Strategy
 
 
@@ -97,7 +98,7 @@ def monitor_open_trades(bot):
                 continue
             if (
                 trade.get("closing_in_progress")
-                or trade.get("status") == "CLOSING_INITIATED"
+                or trade.get("status") == TradeStatus.CLOSING_INITIATED.value
             ):
                 continue
 

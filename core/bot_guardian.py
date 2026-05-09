@@ -4,6 +4,7 @@ from contextlib import nullcontext
 from config import Config
 from core.execution_telemetry import append_execution_event
 from core.time_utils import monotonic_now, parse_datetime_utc, utc_now
+from core.trade_state import TradeStatus
 from strategy import Strategy
 
 
@@ -63,10 +64,10 @@ def run_guardian_loop(bot):
                         continue
                     if (
                         t.get("closing_in_progress")
-                        or t.get("status") == "CLOSING_INITIATED"
+                        or t.get("status") == TradeStatus.CLOSING_INITIATED.value
                     ):
                         continue
-                    if t.get("status") in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}:
+                    if t.get("status") in {TradeStatus.PARTIAL_FILL.value, TradeStatus.PARTIAL_FILL_PENDING.value}:
                         current_conf = t.get("current_confidence", 50.0)
                         entry_conf = t.get("entry_confidence", 75.0)
                         is_shadow = t.get("is_shadow", False)
@@ -530,7 +531,7 @@ def run_guardian_loop(bot):
             now_mono = monotonic_now()
             has_partial_pending = any(
                 str((t or {}).get("status") or "")
-                in {"PARTIAL_FILL", "PARTIAL_FILL_PENDING"}
+                in {TradeStatus.PARTIAL_FILL.value, TradeStatus.PARTIAL_FILL_PENDING.value}
                 for t in snapshot.values()
             )
             wallet_sync_interval = 1.0 if has_partial_pending else 15.0

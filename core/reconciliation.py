@@ -4,6 +4,7 @@ from config import Config
 from core.config.operational import OperationalConfig
 from core.execution_telemetry import append_execution_event
 from core.symbol_utils import normalize_position_symbol
+from core.trade_state import TradeStatus
 from notifier import send_telegram_msg
 from core.time_utils import parse_datetime_utc, utc_now, utc_now_iso
 
@@ -483,7 +484,7 @@ def reconcile_bootstrap_state(bot):
                 continue
 
             if exchange_order is None:
-                if status in {"PENDING_SEND", "ENTRY_ACK_UNKNOWN"}:
+                if status in {TradeStatus.PENDING_SEND.value, TradeStatus.ENTRY_ACK_UNKNOWN.value}:
                     stale_limit = float(
                         getattr(
                             bot,
@@ -540,7 +541,7 @@ def reconcile_bootstrap_state(bot):
             status_raw = str(exchange_order.get("status") or "")
             normalized_status = _normalize_order_status(status_raw)
             if normalized_status == "OPEN":
-                state["status"] = "PENDING_EXCHANGE_OPEN"
+                state["status"] = TradeStatus.PENDING_EXCHANGE_OPEN.value
                 state["exchange_open_order_id"] = exchange_order.get("id")
                 state["exchange_open_order_status"] = exchange_order.get("status")
                 state["reconciled_at"] = utc_now_iso()
@@ -554,7 +555,7 @@ def reconcile_bootstrap_state(bot):
                 safe_pending_symbols.add(symbol)
                 pending_open += 1
             elif normalized_status == "FILLED":
-                state["status"] = "ENTRY_FILLED_AWAITING_POSITION_SYNC"
+                state["status"] = TradeStatus.ENTRY_FILLED_AWAITING_POSITION_SYNC.value
                 state["exchange_entry_order_id"] = exchange_order.get("id")
                 state["exchange_open_order_status"] = exchange_order.get("status")
                 state["reconciled_at"] = utc_now_iso()
