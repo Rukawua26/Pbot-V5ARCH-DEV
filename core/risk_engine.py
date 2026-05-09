@@ -84,8 +84,15 @@ class RiskEngine:
         genes: dict | None = None,
         spread: float = 0.0,
         fees: float | None = None,
+        regime_sl_mult: float = 1.0,
+        regime_tp_mult: float = 1.0,
     ) -> tuple[float, float, str]:
-        """Retorna niveles de SL/TP para runtime (CCXT) con soporte hyperopt."""
+        """Retorna niveles de SL/TP para runtime (CCXT) con soporte hyperopt.
+
+        Args:
+            regime_sl_mult: Multiplicador de SL por régimen (auto-tuning).
+            regime_tp_mult: Multiplicador de TP por régimen (auto-tuning).
+        """
         if entry_price <= 0:
             return 0.0, 0.0, "INVALID_ENTRY"
 
@@ -94,8 +101,8 @@ class RiskEngine:
             and self.stop_loss_pct > 0
             and self.take_profit_pct > 0
         ):
-            sl_dist = self.stop_loss_pct / 100.0
-            tp_dist = self.take_profit_pct / 100.0
+            sl_dist = self.stop_loss_pct / 100.0 * regime_sl_mult
+            tp_dist = self.take_profit_pct / 100.0 * regime_tp_mult
             if side == "BUY":
                 sl = entry_price * (1.0 - sl_dist)
                 tp = entry_price * (1.0 + tp_dist)
@@ -105,6 +112,7 @@ class RiskEngine:
             return sl, tp, "HYPEROPT_FIXED"
 
         g = genes or {}
+        modifier = (modifier or 1.0) * regime_sl_mult
         sl = Strategy.get_stop_loss(
             entry_price,
             side,
@@ -123,6 +131,12 @@ class RiskEngine:
             spread=spread,
             fees=fees,
         )
+        # Apply TP multiplier to the TP distance
+        if regime_tp_mult != 1.0 and entry_price > 0:
+            if side == "BUY":
+                tp = entry_price + (tp - entry_price) * regime_tp_mult
+            else:
+                tp = entry_price - (entry_price - tp) * regime_tp_mult
         return sl, tp, "DYNAMIC_ATR"
 
     def calculate_position_size(

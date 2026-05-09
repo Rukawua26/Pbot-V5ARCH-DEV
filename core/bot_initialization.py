@@ -125,7 +125,11 @@ def init_realtime_and_monitoring(
     if not bootstrap_symbols:
         bootstrap_symbols = ["BTC/USDT"]
 
-    bot.ws_manager = websocket_cls(symbols=bootstrap_symbols)
+    bot.ws_manager = websocket_cls(
+        symbols=bootstrap_symbols,
+        enable_cvd=bool(getattr(Config, "CVD_FILTER_ENABLED", False)),
+        cvd_window_seconds=int(getattr(Config, "CVD_WINDOW_SECONDS", 300)),
+    )
     bot.ws_manager.start_background()
 
     if ml_monitor_available and ml_monitor_cls is not None:

@@ -1,6 +1,8 @@
 from config import Config
 from core.cooldown_state import is_symbol_in_cooldown
 from core.execution_telemetry import append_execution_event
+from core.signals.cvd_filter import apply_cvd_filter
+from core.signals.mtf.filter import apply_mtf_filter
 from core.signals.oi_filter import fetch_oi_delta, validate_signal_with_oi
 from core.time_utils import utc_now, utc_now_iso
 from strategy import Strategy
@@ -465,6 +467,18 @@ def _apply_entry_filters_and_adjust_prob(
             except Exception as oi_err:
                 bot.log(f"⚠️ {symbol}: OI filter error (ignorado): {oi_err}")
 
+    # [CVD / ORDER FLOW] Ajuste por agresores de mercado (sin veto duro inicial).
+    if filter_passed and audit_signal in ["BUY", "SELL"]:
+        prob_final, _cvd_passed, cvd_reason = apply_cvd_filter(
+            bot,
+            symbol,
+            audit_signal,
+            prob_final,
+            ctx,
+        )
+        if isinstance(ctx, dict):
+            ctx["cvd_reason"] = cvd_reason
+
     # [SHOCK MAP] Veto por falta de espacio operativo
     # Regla: si la distancia al próximo SHOCK < 1.0%, no se dispara.
     if filter_passed and audit_signal in ["BUY", "SELL"]:
@@ -509,6 +523,21 @@ def _apply_entry_filters_and_adjust_prob(
             filter_reason = (
                 f"SHOCK DEMASIADO CERCA ({shock_dist_pct:.2f}% < {min_shock_dist:.2f}%)"
             )
+
+    # [MTF FILTER] 1h mantiene ownership; 15m/5m solo confirman o vetan entrada.
+    if filter_passed and audit_signal in ["BUY", "SELL"]:
+        prob_final, mtf_passed, mtf_reason = apply_mtf_filter(
+            bot,
+            symbol,
+            audit_signal,
+            prob_final,
+            ctx,
+            df_main,
+        )
+        if not mtf_passed:
+            filter_passed = False
+            filter_reason = mtf_reason
+            bot.log(f"⛔ {symbol}: {filter_reason}")
 
     # Breakout Hunter (pasivo): evaluar ruptura con el df ya cargado (sin API extra)
     breakout_ready = False
@@ -617,6 +646,9 @@ def _apply_entry_filters_and_adjust_prob(
             "markov_snapshot_mode": ctx.get("markov_snapshot_mode"),
             "oi_delta_pct": ctx.get("oi_delta_pct"),
             "oi_verdict": ctx.get("oi_verdict"),
+            "cvd_imbalance": ctx.get("cvd_imbalance"),
+            "cvd_direction": ctx.get("cvd_direction"),
+            "cvd_weight": ctx.get("cvd_weight"),
         },
     )
 

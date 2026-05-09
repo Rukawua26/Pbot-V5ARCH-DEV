@@ -9,7 +9,7 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.4--PRO-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.4--PRO%20%7C%20Phase_12-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
@@ -19,7 +19,7 @@
 
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.4-PRO` • `1H + 4H macro` • `BTC HMM + Markov probabilities` • `30-pair triage cap` • `OI Delta filter` • `20x shadow exploration` • `Telegram ops` • `systemd` • `Docker`
+`v118.4-PRO` • `Phase 12 risk intelligence` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -42,6 +42,10 @@
 | 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real |
 | 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos |
 | 🛡️ OI Delta filter | Veta short squeezes y long liquidations antes de ejecución |
+| 🧭 MTF filter | Confirma/veta entradas con `15m/5m` sin quitar ownership al timeframe `1h` |
+| 📉 Correlation risk | Reduce position size cuando posiciones abiertas se mueven como una sola apuesta sistémica |
+| 🔬 CVD order flow | Usa agresores `aggTrade` para detectar presión compradora/vendedora real |
+| 🧪 Regime tuning | Ajusta SL/TP por régimen con mínimos de muestra y rangos conservadores |
 | 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección |
 | 📡 Live data | BTC por websocket con fallback REST y logging explícito de reconexión |
 
@@ -54,7 +58,7 @@ flowchart LR
     C --> D[Análisis 1H + Contexto 4H]
     D --> R[BTC HMM + Markov Snapshot]
     R --> E[Agentes MT SR G]
-    E --> F[Filtros, Markov Weight, OI Delta y Guardrails]
+    E --> F[Filtros: Markov, OI, CVD, MTF, SHOCK y Guardrails]
     F --> G{Decisión}
     G -->|PAPER / REAL| H[Execution Service]
     G -->|shadow_live| I[Shadow Execution Adapter]
@@ -71,6 +75,10 @@ flowchart LR
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final |
 | 🧬 HMM Markov | Clasifica BTC y calcula transición probable a `BULL_TREND`, `BEAR_TREND` o `RANGE` |
 | 🛡️ OI Delta | Compara precio reciente vs Open Interest para vetar squeezes/liquidaciones falsas |
+| 🧭 MTF 15m/5m | `15m` puede vetar conflicto de setup; `5m` solo ajusta timing/confianza |
+| 🔬 CVD order flow | CVD rolling por `aggTrade`, boost/penalty conservador sin veto duro inicial |
+| 📉 Correlación dinámica | Size reducer por correlación media contra posiciones abiertas |
+| 🧪 Auto-tuning régimen | Multiplicadores SL/TP por régimen con mínimos de muestra y límites duros |
 | 🛡️ Seguridad runtime | Reconciliación, `HARD SL`, guardrails y cierre de emergencia |
 | 👻 Shadow execution | Simula rechazos, slippage y fills parciales con backend separado |
 | 📲 Operación remota | Control, auditoría y diagnóstico vía comandos Telegram |
@@ -92,6 +100,9 @@ flowchart LR
 | 10 | Filtro OI Delta para vetar short squeezes y long liquidations | ✅ |
 | 11 | `v118.4-PRO`: límite de triaje aplicado end-to-end a snapshot, radar y `pairs_to_scan` | ✅ |
 | 12 | Optimización `SCAN_INTERVAL=300` para timeframe 1H (reduce llamadas API de 60→12/hora) | ✅ |
+| 12.1 | Correlación dinámica como reducer de tamaño, no veto duro | ✅ |
+| 12.2 | Auto-tuning SL/TP por régimen con mínimos de muestra y rangos conservadores | ✅ |
+| 12.3 | CVD / Order Flow por WebSocket `aggTrade` como boost/penalty conservador | ✅ |
 ---
 
 ## 📊 Dashboard Preview
@@ -140,6 +151,10 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Motor de señales | ✅ Activo | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
 | Filtro régimen BTC | ✅ Activo | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
 | Filtro OI Delta | ✅ Activo | Open Interest externo con cache TTL para vetar short squeezes y long liquidations |
+| Filtro MTF | ✅ Disponible | Confirmación `15m/5m` sobre señal dueña `1h`, con eventos `MTF_FILTER` |
+| Filtro CVD | ✅ Disponible | CVD rolling por agresores `aggTrade`, sin veto duro inicial |
+| Riesgo correlación | ✅ Disponible | Reduce size cuando el candidato está altamente correlacionado con posiciones abiertas |
+| Auto-tuning régimen | ✅ Disponible | Ajusta SL/TP por régimen usando estadísticas persistidas y límites conservadores |
 | Shadow exploration | ✅ Activo | Límite default `MAX_SHADOW_TRADES=20` con override por `.env` |
 | Matriz táctica | ✅ Activo | Excluye `VETO_ERROR` y requiere muestra válida antes de bloquear/reducir símbolos |
 | Breakout watchlist | ✅ Activo | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
@@ -285,6 +300,33 @@ main.py
 | `OI_FILTER_ENABLED` | Activa filtro externo Open Interest Delta v118.3 |
 | `OI_DELTA_THRESHOLD` | Umbral mínimo de cambio OI relevante; default `0.005` |
 | `OI_CACHE_TTL_SECONDS` | TTL del cache OI por símbolo; default `60` |
+| `MTF_FILTER_ENABLED` | Activa confirmación multi-timeframe `15m/5m` como filtro del dueño `1h`; default `false` |
+| `CVD_FILTER_ENABLED` | Activa CVD rolling por `aggTrade`; default `false` |
+| `CVD_WINDOW_SECONDS` | Ventana rolling CVD; default `300` |
+| `CVD_IMBALANCE_THRESHOLD` | Umbral de desbalance CVD para dirección BUY/SELL; default `0.12` |
+| `CVD_MIN_QUOTE_VOLUME` | Volumen quote mínimo para confiar en CVD; default `1000.0` |
+| `CVD_ALIGNED_WEIGHT` | Peso si CVD confirma la señal; default `1.05` |
+| `CVD_CONFLICT_WEIGHT` | Peso si CVD contradice la señal; default `0.85` |
+| `CORRELATION_RISK_ENABLED` | Activa reducción de size por correlación sistémica; default `false` |
+| `CORRELATION_RISK_THRESHOLD` | Correlación media desde la que empieza la reducción; default `0.85` |
+| `CORRELATION_RISK_REDUCTION_MAX` | Multiplicador mínimo de tamaño cuando la correlación es extrema; default `0.50` |
+| `CORRELATION_RISK_WINDOW` | Velas 1H usadas para correlación; default `48` |
+| `CORRELATION_RISK_MIN_CANDLES` | Mínimo de velas requeridas para cálculo; default `24` |
+| `REGIME_TUNING_ENABLED` | Activa ajuste SL/TP por régimen de entrada; default `false` |
+| `REGIME_TUNING_MIN_TRADES` | Mínimo de trades por régimen antes de ajustar; default `5` |
+| `REGIME_TUNING_SL_RANGE_MIN/MAX` | Rango duro para multiplicador SL; default `0.60`/`1.20` |
+| `REGIME_TUNING_TP_RANGE_MIN/MAX` | Rango duro para multiplicador TP; default `0.70`/`1.30` |
+
+### Activación Segura Phase 12
+
+`MTF_FILTER_ENABLED` no crea estrategias independientes por temporalidad. El dueño operativo sigue siendo `1h`; `15m` puede vetar setups en conflicto y `5m` solo ajusta confianza de entrada. Para validar en operación, activar primero en `PAPER` o `SHADOW` y revisar eventos `MTF_FILTER` en `logs/execution_events.jsonl` antes de considerar `REAL`.
+
+Las capas Phase 12 son aditivas y conservadoras:
+
+- `CORRELATION_RISK_ENABLED` reduce tamaño; no veta señales.
+- `CVD_FILTER_ENABLED` ajusta probabilidad por agresores; no genera órdenes por sí mismo.
+- `REGIME_TUNING_ENABLED` usa el régimen de entrada guardado en el trade y solo ajusta cuando hay muestra mínima suficiente.
+- Para despliegues `REAL`, usar valores conservadores y revisar `FILTER_APPLIED`, `CVD_FILTER`, `MTF_FILTER` y logs de sizing antes de subir agresividad.
 
 ### Variables Para `shadow_live`
 
@@ -370,6 +412,9 @@ Notas del despliegue Docker actual: imagen base `python:3.12-slim`, usuario no r
 - Runtime monitor con métricas de memoria y salud del proceso.
 - Estado de pipeline con fuente de precio BTC, edad WS, régimen HMM y confianza.
 - `FILTER_APPLIED` incluye `oi_delta_pct` y `oi_verdict` cuando el filtro OI está activo.
+- `FILTER_APPLIED` incluye `cvd_imbalance`, `cvd_direction` y `cvd_weight` cuando CVD está activo.
+- `CVD_FILTER` registra peso, razón, desbalance, volumen y probabilidad antes/después.
+- `MTF_FILTER` registra peso y razón de alineación/veto `15m/5m`.
 - Websocket BTC loguea conexión inicial, cierre y reconexión para detectar degradación de datos en vivo.
 - Alertas `PENDING` se descartan cuando una entrada es bloqueada antes de enviar orden.
 - Scorecards y reportes de rendimiento diarios.
@@ -388,6 +433,8 @@ Notas del despliegue Docker actual: imagen base `python:3.12-slim`, usuario no r
 - `RANGE_VETO`
 - `RANGE_PENALTY`
 - `OI_DELTA_VETO`
+- `CVD_FILTER`
+- `MTF_FILTER`
 - `PENDING_SEND_PERSISTED`
 - `PARTIAL_FILL_COMPLETED`
 - `PARTIAL_FILL_TIMEOUT_CANCEL`
@@ -452,7 +499,7 @@ PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_i
 ./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-Estado local verificado: `404` tests `unittest` OK (`1` skipped).
+Estado local verificado: `453` tests `unittest` OK (`1` skipped).
 
 ### Cobertura Destacada en `tests/`
 
@@ -461,6 +508,10 @@ Estado local verificado: `404` tests `unittest` OK (`1` skipped).
 - flows avanzados de runtime
 - filtro HMM de régimen BTC y fallback heurístico
 - filtro Open Interest Delta y cache de OI
+- filtro MTF 15m/5m
+- filtro CVD / order flow
+- correlación dinámica de riesgo
+- auto-tuning SL/TP por régimen
 - helpers de ejecución, risk engine y trade manager
 - telemetría de pipeline BTC por websocket y REST
 - matriz táctica, límite shadow y descarte de alertas pendientes
