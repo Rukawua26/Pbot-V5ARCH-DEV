@@ -21,6 +21,11 @@ class SRAgent(BaseAgent):
         self.z_score_threshold = min(2.0, max(1.4, z_loaded))
         self.entropy_bins = int(HyperoptConfigLoader.get_param("entropy_bins", 10))
 
+    def _get_hyperopt_params(self, symbol: str) -> tuple[float, int]:
+        params = HyperoptConfigLoader.get_params_for_symbol(symbol)
+        z_loaded = float(params.get("z_score_threshold", self.z_score_threshold))
+        return min(2.0, max(1.4, z_loaded)), int(params.get("entropy_bins", self.entropy_bins))
+
     def _calculate_entropy(self, series: Any, window: int = 20) -> float:
         """Calcula la Entropía de Shannon de los retornos."""
         if series is None or not isinstance(series, pd.Series) or len(series) < window:
@@ -42,6 +47,8 @@ class SRAgent(BaseAgent):
     def vote(self, context: Dict[str, Any]) -> float:
         df = context.get("df")
         z_score = context.get("z_score", 0.0)
+        symbol = context.get("symbol", "")
+        z_score_threshold, entropy_bins = self._get_hyperopt_params(symbol)
 
         # [AUDIT FIX V118-L4] Z-Score Dinámico vía ATR para evitar Model Drift
         z_score_dinamico = z_score
@@ -68,16 +75,19 @@ class SRAgent(BaseAgent):
                 z_score_dinamico = z_score
 
         # Condición: Solo dispara si Z-Score Dinámico supera umbral optimizado
-        if abs(z_score_dinamico) < self.z_score_threshold:
+        if abs(z_score_dinamico) < z_score_threshold:
             return 50.0
 
+        previous_entropy_bins = self.entropy_bins
+        self.entropy_bins = entropy_bins
         entropy = self._calculate_entropy(df["close"]) if df is not None else 0.0
+        self.entropy_bins = previous_entropy_bins
 
         score = 50.0
         # Reversión estadística con umbral optimizado
-        if z_score_dinamico > self.z_score_threshold:
+        if z_score_dinamico > z_score_threshold:
             score = 20.0 + (entropy * 5)  # Voto fuerte a SELL
-        elif z_score_dinamico < -self.z_score_threshold:
+        elif z_score_dinamico < -z_score_threshold:
             score = 80.0 - (entropy * 5)  # Voto fuerte a BUY
 
         return min(max(score, 0), 100)

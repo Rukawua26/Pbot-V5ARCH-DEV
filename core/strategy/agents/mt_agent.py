@@ -18,6 +18,13 @@ class MTAgent(BaseAgent):
         self.alma_offset = float(HyperoptConfigLoader.get_param("alma_offset", 0.85))
         self.alma_sigma = float(HyperoptConfigLoader.get_param("alma_sigma", 6.0))
 
+    def _get_hyperopt_params(self, symbol: str) -> tuple[float, float]:
+        params = HyperoptConfigLoader.get_params_for_symbol(symbol)
+        return (
+            float(params.get("alma_offset", self.alma_offset)),
+            float(params.get("alma_sigma", self.alma_sigma)),
+        )
+
     def _get_technical_score(self, context: Dict[str, Any]) -> float:
         rsi = context.get("rsi", 50.0)
         adx = context.get("adx", 20.0)
@@ -61,24 +68,28 @@ class MTAgent(BaseAgent):
         alma = (series.iloc[-window:].values * w).sum() / w_sum
         return float(alma)
 
-    def _get_momentum_score(self, df: pd.DataFrame, side: str) -> float:
+    def _get_momentum_score(
+        self, df: pd.DataFrame, side: str, alma_offset: float | None = None, alma_sigma: float | None = None
+    ) -> float:
         if df is None or len(df) < 21:
             return 50.0
         closes = df["close"]
+        alma_offset = float(alma_offset if alma_offset is not None else self.alma_offset)
+        alma_sigma = float(alma_sigma if alma_sigma is not None else self.alma_sigma)
 
         # [AUDIT V118] Derivada ALMA: momento en t y en t-1
         # Usando .iloc[:-1] para acceder a la barra anterior sin look-ahead.
         alma_short_now = self._calculate_alma(
-            closes, window=9, offset=self.alma_offset, sigma=self.alma_sigma
+            closes, window=9, offset=alma_offset, sigma=alma_sigma
         )
         alma_long_now = self._calculate_alma(
-            closes, window=20, offset=self.alma_offset, sigma=self.alma_sigma
+            closes, window=20, offset=alma_offset, sigma=alma_sigma
         )
         alma_short_prev = self._calculate_alma(
-            closes.iloc[:-1], window=9, offset=self.alma_offset, sigma=self.alma_sigma
+            closes.iloc[:-1], window=9, offset=alma_offset, sigma=alma_sigma
         )
         alma_long_prev = self._calculate_alma(
-            closes.iloc[:-1], window=20, offset=self.alma_offset, sigma=self.alma_sigma
+            closes.iloc[:-1], window=20, offset=alma_offset, sigma=alma_sigma
         )
 
         mom_now = (
@@ -129,9 +140,11 @@ class MTAgent(BaseAgent):
     def vote(self, context: Dict[str, Any]) -> float:
         df = context.get("df")
         side = context.get("side", "BUY")
+        symbol = context.get("symbol", "")
+        alma_offset, alma_sigma = self._get_hyperopt_params(symbol)
 
         s_tech = self._get_technical_score(context)
-        s_mom = self._get_momentum_score(df, side)
+        s_mom = self._get_momentum_score(df, side, alma_offset, alma_sigma)
         s_div = self._get_divergence_score(df, side)
 
         # Sistema ponderado (escala de grises) en vez de triple confirmación dura.

@@ -86,6 +86,7 @@ class RiskEngine:
         fees: float | None = None,
         regime_sl_mult: float = 1.0,
         regime_tp_mult: float = 1.0,
+        symbol: str | None = None,
     ) -> tuple[float, float, str]:
         """Retorna niveles de SL/TP para runtime (CCXT) con soporte hyperopt.
 
@@ -96,20 +97,24 @@ class RiskEngine:
         if entry_price <= 0:
             return 0.0, 0.0, "INVALID_ENTRY"
 
-        if (
-            self.hyperopt_enabled
-            and self.stop_loss_pct > 0
-            and self.take_profit_pct > 0
-        ):
-            sl_dist = self.stop_loss_pct / 100.0 * regime_sl_mult
-            tp_dist = self.take_profit_pct / 100.0 * regime_tp_mult
+        if self.hyperopt_enabled and symbol:
+            params = HyperoptConfigLoader.get_params_for_symbol(symbol)
+            stop_loss_pct = float(params.get("stop_loss_pct", self.stop_loss_pct))
+            take_profit_pct = float(params.get("take_profit_pct", self.take_profit_pct))
+        else:
+            stop_loss_pct = self.stop_loss_pct
+            take_profit_pct = self.take_profit_pct
+
+        if self.hyperopt_enabled and stop_loss_pct > 0 and take_profit_pct > 0:
+            sl_dist = stop_loss_pct / 100.0 * regime_sl_mult
+            tp_dist = take_profit_pct / 100.0 * regime_tp_mult
             if side == "BUY":
                 sl = entry_price * (1.0 - sl_dist)
                 tp = entry_price * (1.0 + tp_dist)
             else:
                 sl = entry_price * (1.0 + sl_dist)
                 tp = entry_price * (1.0 - tp_dist)
-            return sl, tp, "HYPEROPT_FIXED"
+            return sl, tp, "HYPEROPT_SYMBOL" if symbol else "HYPEROPT_FIXED"
 
         g = genes or {}
         modifier = (modifier or 1.0) * regime_sl_mult

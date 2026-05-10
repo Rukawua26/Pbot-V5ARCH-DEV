@@ -163,6 +163,7 @@ def execute_order(
         fees=0.001,
         regime_sl_mult=regime_sl_mult,
         regime_tp_mult=regime_tp_mult,
+        symbol=symbol,
     )
     bot.log(f"🧩 Exit mode {symbol}: {exit_mode}")
 

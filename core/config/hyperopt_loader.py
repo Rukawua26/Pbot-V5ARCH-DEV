@@ -33,7 +33,12 @@ class HyperoptConfigLoader:
                 "stop_loss_pct": 2.45,
                 "take_profit_pct": 6.47,
             },
+            "symbols": {},
         }
+
+    @staticmethod
+    def _normalize_symbol(symbol: str | None) -> str:
+        return str(symbol or "").upper().split(":")[0]
 
     @classmethod
     def reload(cls) -> Dict[str, Any]:
@@ -54,6 +59,9 @@ class HyperoptConfigLoader:
                     loaded_params = loaded.get("params", {})
                     if isinstance(loaded_params, dict):
                         cfg["params"].update(loaded_params)
+                    loaded_symbols = loaded.get("symbols", {})
+                    if isinstance(loaded_symbols, dict):
+                        cfg["symbols"] = loaded_symbols
                 logger.info(f"✅ Hyperopt config cargado desde {cls._path}")
             except Exception as e:
                 logger.warning(f"⚠️ Error leyendo {cls._path}: {e}. Usando defaults.")
@@ -67,6 +75,23 @@ class HyperoptConfigLoader:
     def get_param(cls, key: str, default: Any = None) -> Any:
         cfg = cls.get_config()
         return cfg.get("params", {}).get(key, default)
+
+    @classmethod
+    def get_params_for_symbol(cls, symbol: str | None) -> Dict[str, Any]:
+        cfg = cls.get_config()
+        params = dict(cfg.get("params", {}) or {})
+        normalized = cls._normalize_symbol(symbol)
+        symbols = cfg.get("symbols", {}) or {}
+        symbol_params = symbols.get(normalized) or symbols.get(normalized.replace("/", "_"))
+        if isinstance(symbol_params, dict):
+            params.update(symbol_params)
+        return params
+
+    @classmethod
+    def get_param_for_symbol(
+        cls, symbol: str | None, key: str, default: Any = None
+    ) -> Any:
+        return cls.get_params_for_symbol(symbol).get(key, default)
 
     @classmethod
     def is_enabled(cls) -> bool:

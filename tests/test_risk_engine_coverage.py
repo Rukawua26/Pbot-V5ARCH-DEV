@@ -127,6 +127,10 @@ class TestRiskEngineGetExitLevels(unittest.TestCase):
             "stop_loss_pct": 2.0,
             "take_profit_pct": 5.0,
         }.get(name, default)
+        mock_hyperopt.get_params_for_symbol.return_value = {
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 5.0,
+        }
 
         with patch("core.risk_engine.CrashPredictor"):
             from core.risk_engine import RiskEngine
@@ -144,6 +148,10 @@ class TestRiskEngineGetExitLevels(unittest.TestCase):
             "stop_loss_pct": 2.0,
             "take_profit_pct": 5.0,
         }.get(name, default)
+        mock_hyperopt.get_params_for_symbol.return_value = {
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 5.0,
+        }
 
         with patch("core.risk_engine.CrashPredictor"):
             from core.risk_engine import RiskEngine
@@ -153,6 +161,27 @@ class TestRiskEngineGetExitLevels(unittest.TestCase):
         self.assertEqual(label, "HYPEROPT_FIXED")
         self.assertEqual(sl, 102.0)
         self.assertEqual(tp, 95.0)
+
+    @patch("core.risk_engine.HyperoptConfigLoader")
+    def test_uses_symbol_hyperopt_params_when_symbol_is_provided(self, mock_hyperopt):
+        mock_hyperopt.is_enabled.return_value = True
+        mock_hyperopt.get_param.side_effect = lambda name, default: {
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 5.0,
+        }.get(name, default)
+        mock_hyperopt.get_params_for_symbol.return_value = {
+            "stop_loss_pct": 1.0,
+            "take_profit_pct": 3.0,
+        }
+
+        with patch("core.risk_engine.CrashPredictor"):
+            from core.risk_engine import RiskEngine
+            engine = RiskEngine(brain=MagicMock())
+
+        sl, tp, label = engine.get_exit_levels(100.0, "BUY", 1.0, "UP", symbol="BTC/USDT")
+        self.assertEqual(label, "HYPEROPT_SYMBOL")
+        self.assertEqual(sl, 99.0)
+        self.assertEqual(tp, 103.0)
 
 
 class TestCalculatePositionSize(unittest.TestCase):
