@@ -25,6 +25,9 @@ class BinanceWebSocket:
             for s in self.symbols
         }
         self.is_running = False
+        self._loop = None
+        self._ws = None
+        self._thread = None
 
     def _build_url(self):
         streams = []
@@ -69,15 +72,19 @@ class BinanceWebSocket:
             try:
                 # Use \n to avoid mixing with the carriage return updates
                 async with websockets.connect(self.url) as ws:
+                    self._ws = ws
                     self._reconnect_flag = False
                     reconnect_delay = 2.0
-                    while self.is_running and not self._reconnect_flag:
-                        try:
-                            message = await asyncio.wait_for(ws.recv(), timeout=10)
-                            data = json.loads(message)
-                            self._process_data(data)
-                        except (websockets.ConnectionClosed, asyncio.TimeoutError):
-                            break
+                    try:
+                        while self.is_running and not self._reconnect_flag:
+                            try:
+                                message = await asyncio.wait_for(ws.recv(), timeout=10)
+                                data = json.loads(message)
+                                self._process_data(data)
+                            except (websockets.ConnectionClosed, asyncio.TimeoutError):
+                                break
+                    finally:
+                        self._ws = None
             except Exception as e:
                 print(f"⚠️ WS reconnect loop error: {e}")
 
@@ -175,14 +182,26 @@ class BinanceWebSocket:
     def start_background(self):
         """Starts the WebSocket loop in a background daemon thread."""
         self.is_running = True
-        t = threading.Thread(target=self._run_async_loop, daemon=True)
-        t.start()
+        self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
+        self._thread.start()
 
     def stop(self):
         self.is_running = False
+        self._reconnect_flag = True
+        ws = self._ws
+        loop = self._loop
+        if ws is not None and loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(ws.close(), loop)
 
     def _run_async_loop(self):
-        asyncio.run(self.start())
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.start())
+        finally:
+            self._loop = None
+            loop.close()
 
     def get_l2_spread(self, symbol):
         """Returns the spread in percentage for a specific symbol."""

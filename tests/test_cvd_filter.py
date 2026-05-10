@@ -58,6 +58,21 @@ class CVDWebSocketTests(unittest.TestCase):
         self.assertEqual(state["bid"], 99.0)
         self.assertEqual(state["ask"], 101.0)
 
+    def test_stop_closes_active_websocket(self):
+        ws = BinanceWebSocket(symbols=["BTC/USDT"], enable_cvd=True)
+        loop = SimpleNamespace(is_running=lambda: True)
+        active_ws = SimpleNamespace(close=lambda: "close-coro")
+        ws.is_running = True
+        ws._loop = loop
+        ws._ws = active_ws
+
+        with patch("ws_manager.asyncio.run_coroutine_threadsafe") as run_threadsafe:
+            ws.stop()
+
+        self.assertFalse(ws.is_running)
+        self.assertTrue(ws._reconnect_flag)
+        run_threadsafe.assert_called_once_with("close-coro", loop)
+
 
 class CVDFilterTests(unittest.TestCase):
     def _bot_with_cvd(self, state):

@@ -62,7 +62,7 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
         "missing_or_expired": 0,
     }
     bot._mfe_alert_last_ts = 0.0
-    bot.lock = threading.Lock()
+    bot.lock = threading.RLock()
     bot.price_lock = threading.Lock()
     bot.db_lock = threading.RLock()
 

@@ -143,7 +143,7 @@ class DataService:
             try:
                 with open(self.maturity_file, "r") as f:
                     self.maturity_cache = json.load(f)
-            except:
+            except Exception:
                 self.maturity_cache = {}
 
     def _candle_file_path(self, symbol: str, timeframe: str) -> str:

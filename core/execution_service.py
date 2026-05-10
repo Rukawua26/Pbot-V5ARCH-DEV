@@ -7,117 +7,15 @@ from datetime import datetime, timezone
 from typing import Optional
 from config import Config
 from core.types import CCXTOrder, CCXTBalanceResponse
+from core.execution_order_helpers import (
+    _execute_chase_limit_steps,
+    _parse_order_float,
+    _with_exit_state,
+)
 
 
 class OrderLookupError(RuntimeError):
     """Order lookup failed for operational reasons, not because order is absent."""
-
-
-def _with_exit_state(order: Optional[dict], exit_state: str) -> Optional[dict]:
-    if not isinstance(order, dict):
-        return order
-    enriched = dict(order)
-    enriched["exit_state"] = exit_state
-    return enriched
-
-
-def _parse_order_float(order: Optional[dict], *keys: str) -> Optional[float]:
-    if not isinstance(order, dict):
-        return None
-    for key in keys:
-        value = order.get(key)
-        if value is None:
-            info = order.get("info") if isinstance(order.get("info"), dict) else {}
-            value = info.get(key)
-        try:
-            if value is not None:
-                return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _execute_chase_limit_steps(
-    self,
-    symbol: str,
-    exit_side: str,
-    amount: float,
-    current_price: float,
-    params: dict,
-) -> Optional[CCXTOrder]:
-    CHASE_STEPS = [0.98, 0.97, 0.96, 0.95]
-    TIMEOUT_PER_STEP = 2
-
-    last_order = None
-    for step_idx, step_mult in enumerate(CHASE_STEPS):
-        limit_price = (
-            current_price * step_mult
-            if exit_side == "sell"
-            else current_price * (2 - step_mult)
-        )
-        try:
-            limit_price = self.exchange.price_to_precision(symbol, limit_price)
-            order = self._call_exchange(
-                "close_position_create_order",
-                lambda: self.exchange.create_order(
-                    symbol, "limit", exit_side, amount, limit_price, params
-                ),
-                retries=3,
-                timeout_s=20.0,
-            )
-            self._track_api_weight("create_order", 1, "trading")
-            last_order = order
-
-            if self._wait_order_filled(
-                symbol, order["id"], timeout_s=TIMEOUT_PER_STEP
-            ):
-                self.logger.info(
-                    f"✅ CHASE_LIMIT OK {symbol} @ {limit_price} "
-                    f"(step {step_idx + 1}/{len(CHASE_STEPS)})"
-                )
-                self._no_price_exit_state.pop(symbol, None)
-                return _with_exit_state(order, "FILLED")
-
-            self.logger.warning(
-                f"⏳ Chase step {step_idx + 1} timeout {symbol} @ {limit_price}, "
-                f"persiguiendo..."
-            )
-            if step_idx < len(CHASE_STEPS) - 1:
-                try:
-                    self._call_exchange(
-                        "close_position_cancel_order",
-                        lambda: self.exchange.cancel_order(order["id"], symbol),
-                        retries=2,
-                        timeout_s=15.0,
-                    )
-                except Exception as cancel_err:
-                    self.logger.warning(
-                        f"⚠️ Cancel falló en chase step {step_idx + 1} {symbol}: {cancel_err}. "
-                        f"Verificando estado antes de continuar..."
-                    )
-                    try:
-                        open_orders = self.exchange.fetch_open_orders(symbol) or []
-                        still_open = any(
-                            o.get("id") == order.get("id") for o in open_orders if isinstance(o, dict)
-                        )
-                        if still_open:
-                            self.logger.critical(
-                                f"🚨 CHASE_CANCEL_AMBIGUOUS {symbol}: orden {order.get('id')} "
-                                f"sigue abierta tras cancel fallido. Marcando STUCK."
-                            )
-                            return _with_exit_state(order, "STUCK")
-                    except Exception as verify_err:
-                        self.logger.warning(
-                            f"⚠️ No se pudo verificar estado de orden tras cancel ambiguo {symbol}: {verify_err}"
-                        )
-
-        except Exception as step_err:
-            self.logger.warning(
-                f"⚠️ Chase step {step_idx + 1} falló {symbol}: {step_err}"
-            )
-            continue
-
-    return last_order
 
 
 class ExecutionService:
