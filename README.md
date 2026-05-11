@@ -1,5 +1,3 @@
-<div align="center">
-
 # Pbot V5ARCH DEV
 
 > Bot cuantitativo runtime-first para Binance Futures con HMM Markov, escaneo dinámico 1H, ejecución segura, shadow lab y reconciliación defensiva.
@@ -9,24 +7,22 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.5--PRO%20%7C%20Phase_13-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.5--PRO%20%7C%20Phase_14-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 ![Risk](https://img.shields.io/badge/Risk_Engine-v118.5-red)
-![Tests](https://img.shields.io/badge/Tests-569%20ok%20%7C%201%20skipped-22c55e)
+![Tests](https://img.shields.io/badge/Tests-593%20ok%20%7C%202%20skipped-22c55e)
 
-**Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
+**Bot de trading con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.5-PRO` • `Phase 13 hardening & REAL pilot` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
-
-</div>
+`v118.5-PRO` • `Phase 14 hardening` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
 
 ---
 
-## 🚀 Para Inversores y Colaboradores | For Investors and Collaborators
+## 🚀 Para Inversores y Colaboradores
 
 ### 📈 Propuesta de Valor
 
@@ -50,7 +46,7 @@
 | 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección |
 | 📡 Live data | BTC por websocket con fallback REST y logging explícito de reconexión |
 
-### 🏗️ Arquitectura en Resumen | Architecture at a Glance
+### 🏗️ Arquitectura en Resumen
 
 ```mermaid
 flowchart LR
@@ -104,7 +100,9 @@ flowchart LR
 | 12.1 | Correlación dinámica como reducer de tamaño, no veto duro | ✅ |
 | 12.2 | Auto-tuning SL/TP por régimen con mínimos de muestra y rangos conservadores | ✅ |
 | 12.3 | CVD / Order Flow por WebSocket `aggTrade` como boost/penalty conservador | ✅ |
-| 13 | `v118.5-PRO`: MARKET order fallback, CycleContext, IntentDeduper, CandleCloseCache, unified risk policy, threshold governance, promotion gate, REAL pilot con $24.90 USDT | ✅ |
+| 13 | `v118.5-PRO`: MARKET order fallback, CycleContext, IntentDeduper, CandleCloseCache, unified risk policy, threshold governance, promotion gate, REAL pilot | ✅ |
+| 14 | Refactorización: emergencia close unificado, endurecimiento config, eliminación código muerto, fix mock leak en tests | ✅ |
+
 ---
 
 ## 📊 Dashboard Preview
@@ -228,7 +226,7 @@ Observabilidad:
 
 ### Runtime
 
-```text
+```
 main.py
   -> core.bot_app.run_entrypoint()
      -> Bot(BotFacade)
@@ -238,7 +236,7 @@ main.py
 ### Módulos Clave
 
 | Ruta | Rol |
-|---|---|---|
+|---|---|
 | `main.py` | Entrypoint real del proceso |
 | `core/bot_app.py` | Bootstrap pesado, clase `Bot`, event loop y wiring principal |
 | `core/bot_facade.py` | Contrato público del runtime |
@@ -250,7 +248,7 @@ main.py
 | `core/execution_telemetry.py` | Eventos JSONL de ejecución |
 | `core/trade_entry.py` | `execute_order` (refactorizado desde trade_manager) |
 | `core/trade_exit.py` | `close_trade` (refactorizado desde trade_manager) |
-| `core/trade_helpers.py` | Fallos seguros, MARKET fallback, precondiciones |
+| `core/trade_helpers.py` | Cierre de emergencia unificado, fallos seguros, MARKET fallback, precondiciones |
 | `core/risk_engine.py` | RiskEngine, daily drawdown, sizing |
 | `core/risk_policy.py` | `EntryRiskDecision`, `evaluate_runtime_entry_decision` |
 | `core/cycle_context.py` | Snapshot de ciclo congelado por scan |
@@ -264,7 +262,7 @@ main.py
 | `core/command_router.py` | Router de comandos Telegram |
 | `core/signals/` | Contexto, análisis, filtros y ejecución de señales |
 | `core/strategy/` | Agentes, consenso y filtros de estrategia |
-| `tests/` | 569 tests: regresiones runtime, guardrails, contratos, chaos |
+| `tests/` | 593 tests: regresiones runtime, guardrails, contratos, chaos |
 
 ---
 
@@ -325,9 +323,7 @@ main.py
 | `OI_FILTER_ENABLED` | Activa filtro externo Open Interest Delta v118.3 |
 | `OI_DELTA_THRESHOLD` | Umbral mínimo de cambio OI relevante; default `0.005` |
 | `OI_CACHE_TTL_SECONDS` | TTL del cache OI por símbolo; default `60` |
-| `PAPER_MODE` | Activa simulación sin capital real; default `true`. Para REAL: `false` + `ALLOW_REAL_TRADING=true` |
 | `ALLOW_REAL_TRADING` | Habilita trading con capital real; default `false`. Requiere `PAPER_MODE=false`. Guardrails de seguridad validan parámetros antes de permitir REAL. |
-| `USE_TESTNET` | Usa testnet de Binance Futures; default `false`. Recomendado para validación antes de REAL. |
 | `MTF_FILTER_ENABLED` | Activa confirmación multi-timeframe `15m/5m` como filtro del dueño `1h`; default `false` |
 | `CVD_FILTER_ENABLED` | Activa CVD rolling por `aggTrade`; default `false` |
 | `CVD_WINDOW_SECONDS` | Ventana rolling CVD; default `300` |
@@ -529,7 +525,7 @@ SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python -m unittest tests/test_tempor
 
 > `SNIPER_DISABLE_FILE_TELEMETRY=1` evita que las pruebas contaminen `logs/execution_events.jsonl` con datos mock. El archivo `tests/__init__.py` lo establece automáticamente al importar el paquete de tests.
 
-Estado local verificado: `569` tests `unittest` OK (`1` skipped: integración con testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
+Estado local verificado: `593` tests `unittest` OK (`2` skipped: hmmlearn en entorno con dependencia, e integración testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
 
 ### Testnet E2E Opt-In
 
@@ -633,26 +629,26 @@ bash tools/stop_real_pilot.sh
 
 ## 📁 Estructura del Proyecto
 
-```text
+```
 .
 |-- main.py                          # Entrypoint (delega en core.bot_app)
 |-- core/
 |   |-- bot_app.py                   # Bootstrap, Bot class, wiring
 |   |-- bot_facade.py                # Contrato público del runtime
 |   |-- bot_shutdown.py              # Graceful shutdown sequence
-|   |-- reconciliation.py            # Recovery DB/exchange, intents
+|   |-- reconciliation.py             # Recovery DB/exchange, intents
 |   |-- execution_adapters.py        # Backends live y shadow_live
 |   |-- execution_service.py         # Puerto real contra Binance
 |   |-- execution_telemetry.py       # append_execution_event
 |   |-- trade_entry.py               # execute_order (refactorizado)
 |   |-- trade_exit.py                # close_trade (refactorizado)
-|   |-- trade_helpers.py             # _fail_safe_close_when_sl_missing, etc.
+|   |-- trade_helpers.py             # _emergency_market_close, _fail_safe_close_when_sl_missing, etc.
 |   |-- risk_engine.py               # RiskEngine, daily drawdown
 |   |-- risk_policy.py               # EntryRiskDecision, runtime protection
 |   |-- cycle_context.py             # Per-cycle immutable snapshot
 |   |-- intent_deduper.py            # Signal-level dedup by time-window
 |   |-- candle_close_cache.py        # Per-candle feature cache
-|   |-- metrics_export.py            # Periodic metrics summary
+|   |-- metrics_export.py             # Periodic metrics summary
 |   |-- config/
 |   |   |-- manager.py               # Config class (env reads)
 |   |   |-- operational.py           # load_dotenv, base defaults
@@ -666,7 +662,7 @@ bash tools/stop_real_pilot.sh
 |   |   |-- filters.py               # Signal filtering, execution mode routing
 |   |   `-- execution.py             # _execute_and_update_symbol
 |   `-- ...
-|-- tests/                           # 569 tests (unittest)
+|-- tests/                           # 593 tests (unittest)
 |   |-- __init__.py                  # SNIPER_DISABLE_FILE_TELEMETRY=1
 |   |-- test_trade_manager_helpers.py
 |   |-- test_execute_order_coverage.py
@@ -681,13 +677,13 @@ bash tools/stop_real_pilot.sh
 |   |-- promotion_gate.py            # Composite SHADOW→REAL gate
 |   |-- shadow_readiness_gate.py     # Shadow validation window
 |   |-- risk_decision_report.py      # Risk decision audit
-|   |-- walk_forward_backtest.py     # Walk-forward optimization
+|   |-- walk_forward_backtest.py      # Walk-forward optimization
 |   |-- ablation_backtest.py         # Ablation analysis
-|   |-- regime_scorecard.py          # Regime performance stats
+|   |-- regime_scorecard.py           # Regime performance stats
 |   |-- strategy_validation_report.py# Combined validator
 |   |-- chaos_matrix.py              # Chaos scenarios
 |   |-- gate_history.py              # JSONL gate history
-|   |-- regression_contracts.py      # Architecture contract checks
+|   |-- regression_contracts.py       # Architecture contract checks
 |   |-- check_no_silent_pass.py      # Silent pass guardrail
 |   `-- ...
 |-- deploy/systemd/
@@ -699,7 +695,7 @@ bash tools/stop_real_pilot.sh
 
 ---
 
-## 📚 Documentación Adicional | Additional Documentation
+## 📚 Documentación Adicional
 
 - `CONTRIBUTING.md`
 - `SECURITY.md`
@@ -710,16 +706,16 @@ bash tools/stop_real_pilot.sh
 
 ---
 
-## 📸 Notas De Render Para GitHub | GitHub Render Notes
+## 📸 Notas De Render Para GitHub
 
-- **ES:** El diagrama Mermaid se renderiza de forma nativa en GitHub. <br> **EN:** Mermaid diagrams render natively on GitHub.
-- **ES:** Si más adelante agregas capturas reales del dashboard o reportes, la ruta natural sería `docs/images/`. <br> **EN:** If you later add real dashboard screenshots or reports, the natural path would be `docs/images/`.
-- **ES:** Conviene evitar imágenes inventadas o enlaces rotos en portada; por eso este README usa badges y Mermaid como base visual. <br> **EN:** Avoid fake images or broken links on the landing page; that's why this README uses badges and Mermaid as visual base.
+- El diagrama Mermaid se renderiza de forma nativa en GitHub.
+- Si más adelante agregas capturas reales del dashboard o reportes, la ruta natural sería `docs/images/`.
+- Conviene evitar imágenes inventadas o enlaces rotos en portada; por eso este README usa badges y Mermaid como base visual.
 
 ---
 
-## 🔒 Seguridad Del Repo | Repo Security
+## 🔒 Seguridad Del Repo
 
-- **ES:** No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales. <br> **EN:** Do not push `.env`, `.db` bases, logs, binary models or reports generated with local data.
-- **ES:** Usa secretos de entorno o gestor de secretos del servidor para credenciales. <br> **EN:** Use environment secrets or server secret manager for credentials.
-- **ES:** Antes de operar en `REAL`, valida permisos de Futures, tamaño de cuenta y rutas de recovery. <br> **EN:** Before operating in `REAL`, validate Futures permissions, account size and recovery paths.
+- No subas `.env`, bases `.db`, logs, modelos binarios ni reportes generados con datos locales.
+- Usa secretos de entorno o gestor de secretos del servidor para credenciales.
+- Antes de operar en `REAL`, valida permisos de Futures, tamaño de cuenta y rutas de recovery.
