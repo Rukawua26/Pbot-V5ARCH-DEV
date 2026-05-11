@@ -24,6 +24,7 @@ class BacktestParams:
     stop_loss_pct: float
     take_profit_pct: float
     fee_rate: float = 0.0004
+    min_probability_threshold: float = 0.0
 
 
 def default_param_grid() -> list[BacktestParams]:

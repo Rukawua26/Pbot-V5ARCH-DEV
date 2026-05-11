@@ -47,6 +47,14 @@ class VectorBacktester:
         self.low = work["low"].astype(float).to_numpy()
 
     @staticmethod
+    def _score_to_probability(score: float, side: int) -> float:
+        if side == 0:
+            return 0.50
+        deviation = abs(float(score) - 50.0)
+        prob = 0.50 + min(deviation / 50.0, 1.0) * 0.45
+        return float(np.clip(prob, 0.50, 0.95))
+
+    @staticmethod
     def _alma_weights(window: int, offset: float, sigma: float) -> np.ndarray:
         m = int(offset * (window - 1))
         s = window / max(sigma, 1e-9)
@@ -280,15 +288,18 @@ class VectorBacktester:
         take_profit_pct: float,
         fee_rate: float = 0.0004,
         strategy_mode: str = "mt_sr_regime",
+        min_probability_threshold: float = 0.0,
     ) -> VectorBacktestResult:
-        signal = self._signal_components(
+        components = self._signal_components(
             alma_offset=alma_offset,
             alma_sigma=alma_sigma,
             z_score_threshold=z_score_threshold,
             entropy_bins=entropy_bins,
             adx_threshold=adx_threshold,
             strategy_mode=strategy_mode,
-        )["signal"]
+        )
+        signal = components["signal"]
+        score = components["score"]
 
         # Simulador event-driven de trades con TP/SL (no overlap de posiciones)
         n = self.close.shape[0]
@@ -302,6 +313,12 @@ class VectorBacktester:
         while i < n:
             side = int(signal[i])
             if side == 0:
+                i += 1
+                continue
+
+            candle_score = float(score[max(0, i - 1)])
+            prob = self._score_to_probability(candle_score, side)
+            if prob < min_probability_threshold:
                 i += 1
                 continue
 

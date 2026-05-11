@@ -23,6 +23,63 @@ def _candles(rows=80):
 
 
 class VectorBacktesterTest(unittest.TestCase):
+    def test_score_to_probability_returns_050_at_center(self):
+        prob = VectorBacktester._score_to_probability(50.0, 1)
+        self.assertAlmostEqual(prob, 0.50, places=6)
+        prob = VectorBacktester._score_to_probability(50.0, -1)
+        self.assertAlmostEqual(prob, 0.50, places=6)
+
+    def test_score_to_probability_increases_with_deviation(self):
+        prob60 = VectorBacktester._score_to_probability(60.0, 1)
+        prob80 = VectorBacktester._score_to_probability(80.0, 1)
+        self.assertGreater(prob80, prob60)
+
+    def test_score_to_probability_clamps_at_0_95(self):
+        prob = VectorBacktester._score_to_probability(100.0, 1)
+        self.assertAlmostEqual(prob, 0.95, places=6)
+        prob = VectorBacktester._score_to_probability(0.0, -1)
+        self.assertAlmostEqual(prob, 0.95, places=6)
+
+    def test_score_to_probability_returns_050_for_neutral_side(self):
+        prob = VectorBacktester._score_to_probability(80.0, 0)
+        self.assertAlmostEqual(prob, 0.50, places=6)
+
+    def test_evaluate_filters_all_trades_with_probability_threshold_1(self):
+        result = VectorBacktester(_candles(200)).evaluate(
+            alma_offset=0.85,
+            alma_sigma=6.0,
+            z_score_threshold=1.6,
+            entropy_bins=8,
+            adx_threshold=25.0,
+            stop_loss_pct=1.2,
+            take_profit_pct=2.0,
+            min_probability_threshold=1.0,
+        )
+        self.assertEqual(result.trades, 0)
+
+    def test_evaluate_probability_threshold_reduces_trade_count(self):
+        base = VectorBacktester(_candles(200)).evaluate(
+            alma_offset=0.85,
+            alma_sigma=6.0,
+            z_score_threshold=1.6,
+            entropy_bins=8,
+            adx_threshold=25.0,
+            stop_loss_pct=1.2,
+            take_profit_pct=2.0,
+            min_probability_threshold=0.0,
+        )
+        filtered = VectorBacktester(_candles(200)).evaluate(
+            alma_offset=0.85,
+            alma_sigma=6.0,
+            z_score_threshold=1.6,
+            entropy_bins=8,
+            adx_threshold=25.0,
+            stop_loss_pct=1.2,
+            take_profit_pct=2.0,
+            min_probability_threshold=0.60,
+        )
+        self.assertGreaterEqual(base.trades, filtered.trades)
+
     def test_requires_ohlcv_columns(self):
         candles = _candles().drop(columns=["volume"])
 
