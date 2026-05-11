@@ -127,8 +127,16 @@ def main() -> int:
     parser.add_argument("--db", default="sniper_brain.db")
     parser.add_argument("--output", default="reports/strategy_validation_report.json")
     parser.add_argument("--fidelity-report", default="")
-    parser.add_argument("--min-fidelity-score", type=float, default=0.80)
-    parser.add_argument("--min-fidelity-samples", type=int, default=20)
+    parser.add_argument(
+        "--min-fidelity-score",
+        type=float,
+        default=float(threshold_value("STRATEGY_GATE_MIN_FIDELITY_SCORE")),
+    )
+    parser.add_argument(
+        "--min-fidelity-samples",
+        type=int,
+        default=int(threshold_value("STRATEGY_GATE_MIN_FIDELITY_SAMPLES")),
+    )
     parser.add_argument("--baseline-mode", default="equal_weight")
     parser.add_argument("--candidate-mode", default="mt_sr_regime")
     parser.add_argument("--z-score-threshold", type=float, default=1.6)

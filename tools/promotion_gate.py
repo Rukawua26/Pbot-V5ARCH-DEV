@@ -55,10 +55,35 @@ def evaluate_risk_decision_summary(
     return failures
 
 
+def evaluate_fidelity(
+    report: dict[str, Any],
+    *,
+    min_fidelity_score: float,
+    min_fidelity_samples: int,
+) -> list[str]:
+    failures: list[str] = []
+    fidelity = (report or {}).get("fidelity") or {}
+    fidelity_summary = fidelity.get("summary") or {}
+    fidelity_score = float(fidelity_summary.get("weighted_fidelity_score", 0.0) or 0.0)
+    fidelity_samples = int(fidelity_summary.get("total_samples", 0) or 0)
+    if fidelity_samples < min_fidelity_samples:
+        failures.append(
+            f"fidelity.total_samples {fidelity_samples} < {min_fidelity_samples}"
+        )
+    if fidelity_score < min_fidelity_score:
+        failures.append(
+            f"fidelity.weighted_fidelity_score {fidelity_score:.4f} < {min_fidelity_score:.4f}"
+        )
+    return failures
+
+
 def evaluate_strategy_report_doc(
     report: dict[str, Any],
     *,
     require_strategy_report: bool,
+    require_fidelity_report: bool = False,
+    min_fidelity_score: float = 0.0,
+    min_fidelity_samples: int = 0,
 ) -> list[str]:
     failures: list[str] = []
     if not report:
@@ -71,6 +96,19 @@ def evaluate_strategy_report_doc(
         failures.append("strategy validation verdict failed")
         for item in verdict.get("failures") or []:
             failures.append(f"strategy: {item}")
+
+    if require_fidelity_report:
+        fidelity = (report or {}).get("fidelity") or {}
+        if not fidelity.get("summary"):
+            failures.append("fidelity report missing or invalid in strategy report")
+        else:
+            failures.extend(
+                evaluate_fidelity(
+                    report,
+                    min_fidelity_score=min_fidelity_score,
+                    min_fidelity_samples=min_fidelity_samples,
+                )
+            )
     return failures
 
 
@@ -97,6 +135,17 @@ def main() -> int:
     parser.add_argument("--since-hours", type=float, default=24.0)
     parser.add_argument("--strategy-report", default="reports/strategy_validation_report.json")
     parser.add_argument("--require-strategy-report", action="store_true")
+    parser.add_argument("--require-fidelity-report", action="store_true")
+    parser.add_argument(
+        "--min-fidelity-score",
+        type=float,
+        default=float(threshold_value("STRATEGY_GATE_MIN_FIDELITY_SCORE")),
+    )
+    parser.add_argument(
+        "--min-fidelity-samples",
+        type=int,
+        default=int(threshold_value("STRATEGY_GATE_MIN_FIDELITY_SAMPLES")),
+    )
     parser.add_argument("--walk-forward-report", default="reports/walk_forward_backtest.json")
     parser.add_argument("--require-walk-forward", action="store_true")
     parser.add_argument("--min-profit-factor", type=float, default=float(threshold_value("STRATEGY_GATE_MIN_PROFIT_FACTOR")))
@@ -151,6 +200,9 @@ def main() -> int:
     strategy_failures = evaluate_strategy_report_doc(
         strategy_report,
         require_strategy_report=args.require_strategy_report,
+        require_fidelity_report=args.require_fidelity_report,
+        min_fidelity_score=args.min_fidelity_score,
+        min_fidelity_samples=args.min_fidelity_samples,
     )
 
     from config import Config
@@ -194,6 +246,8 @@ def main() -> int:
     print(f"- risk_failures: {len(risk_failures)}")
     print(f"- strategy_failures: {len(strategy_failures)}")
     print(f"- real_failures: {len(real_failures)}")
+    fidelity_report_token = bool((strategy_report or {}).get("fidelity"))
+    print(f"- fidelity_present: {fidelity_report_token} (required: {args.require_fidelity_report})")
     print(f"- total_failures: {len(verdict['failures'])}")
 
     if verdict["passed"]:
@@ -207,6 +261,9 @@ def main() -> int:
                 "since_marker": args.since_marker,
                 "strategy_report": args.strategy_report,
                 "walk_forward_report": args.walk_forward_report,
+                "require_fidelity_report": args.require_fidelity_report,
+                "min_fidelity_score": args.min_fidelity_score,
+                "min_fidelity_samples": args.min_fidelity_samples,
             },
         )
         return 0
@@ -223,6 +280,9 @@ def main() -> int:
             "since_marker": args.since_marker,
             "strategy_report": args.strategy_report,
             "walk_forward_report": args.walk_forward_report,
+            "require_fidelity_report": args.require_fidelity_report,
+            "min_fidelity_score": args.min_fidelity_score,
+            "min_fidelity_samples": args.min_fidelity_samples,
         },
     )
     return 1
