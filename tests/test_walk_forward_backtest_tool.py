@@ -48,6 +48,17 @@ class WalkForwardBacktestToolTest(unittest.TestCase):
 
         self.assertIn("Missing candle columns", str(ctx.exception))
 
+    def test_load_candles_accepts_parquet(self):
+        candles = _synthetic_candles(months=3, rows_per_month=80)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "candles.parquet"
+            candles.to_parquet(path, index=False)
+
+            loaded = load_candles_csv(path)
+
+        self.assertEqual(len(loaded), len(candles))
+        self.assertIn("time", loaded.columns)
+
     def test_run_walk_forward_backtest_returns_window_metrics(self):
         candles = _synthetic_candles()
         grid = [

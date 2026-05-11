@@ -88,7 +88,12 @@ def _execute_chase_limit_steps(
                         f"Verificando estado antes de continuar..."
                     )
                     try:
-                        open_orders = execution_service.exchange.fetch_open_orders(symbol) or []
+                        open_orders = execution_service._call_exchange_account(
+                            "chase_verify_open_orders",
+                            lambda: execution_service.exchange.fetch_open_orders(symbol),
+                            retries=1,
+                            timeout_s=10.0,
+                        ) or []
                         still_open = any(
                             o.get("id") == order.get("id")
                             for o in open_orders

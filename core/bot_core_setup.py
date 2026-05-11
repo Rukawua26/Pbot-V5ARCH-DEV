@@ -1,6 +1,9 @@
 from config import Config
+from core.candle_close_cache import CandleCloseCache
+from core.intent_deduper import IntentDeduper
 from core.risk.exit_engine_v1 import ExitEngineV1
 from core.strategy.agents.breakout_agent import BreakoutAgent
+from core.strategy.utils import StrategyUtils
 from core.execution_adapters import build_execution_gateway
 from core.execution_port import ExecutionPort
 from core.execution_service import ExecutionService
@@ -13,6 +16,9 @@ def init_core_services_and_engines(bot):
     bot.data_service = DataService(bot.execution.exchange)
     bot.risk_engine = RiskEngine(bot.brain)
     bot.crash_predictor = bot.risk_engine.crash_predictor
+    bot.intent_deduper = IntentDeduper()
+    bot.candle_cache = CandleCloseCache()
+    StrategyUtils._candle_cache = bot.candle_cache
     bot.breakout_agent = BreakoutAgent(
         min_ia_prob=float(getattr(Config, "BREAKOUT_MIN_IA_PROB", 60.0)),
         volume_multiplier=float(getattr(Config, "BREAKOUT_VOLUME_MULT", 1.5)),

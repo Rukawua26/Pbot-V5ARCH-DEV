@@ -1,31 +1,39 @@
 import json
 import os
+import sys
 from datetime import UTC, datetime
 
 
-def _rotate_jsonl(path: str, max_bytes: int, backups: int) -> None:
-    if max_bytes <= 0 or backups <= 0:
-        return
-    if not os.path.exists(path):
-        return
-    if os.path.getsize(path) < max_bytes:
-        return
+def _rotate_existing(path, backups=3):
+    for i in range(backups, 0, -1):
+        old = f"{path}.{i}"
+        if os.path.exists(old):
+            if i == backups:
+                os.remove(old)
+            else:
+                os.replace(f"{path}.{i}", f"{path}.{i + 1}")
+    if os.path.exists(path):
+        os.replace(path, f"{path}.1")
 
-    oldest = f"{path}.{backups}"
-    if os.path.exists(oldest):
-        os.remove(oldest)
 
-    for idx in range(backups - 1, 0, -1):
-        src = f"{path}.{idx}"
-        dst = f"{path}.{idx + 1}"
-        if os.path.exists(src):
-            os.replace(src, dst)
+def _rotate_jsonl(path, max_bytes=5242880, backups=3):
+    try:
+        if os.path.exists(path) and os.path.getsize(path) >= max_bytes:
+            _rotate_existing(path, backups)
+    except Exception:
+        ...
 
-    os.replace(path, f"{path}.1")
+
+def _should_skip_file_telemetry() -> bool:
+    if str(os.getenv("SNIPER_DISABLE_FILE_TELEMETRY", "0")).strip() == "1":
+        return True
+    return False
 
 
 def append_execution_event(bot, event: str, payload: dict) -> None:
     try:
+        if _should_skip_file_telemetry():
+            return
         os.makedirs("logs", exist_ok=True)
         record = {
             "ts": datetime.now(UTC).isoformat(),

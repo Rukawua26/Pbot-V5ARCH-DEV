@@ -12,6 +12,7 @@ from core.strategy.consensus_nn import AgentConsensusNN
 from learning import shadow_logger
 
 logger = logging.getLogger("SniperAI")
+CORRELATION_VETO_WINDOW = 30
 
 
 class StrategyOrchestrator:
@@ -33,8 +34,10 @@ class StrategyOrchestrator:
         }
         self.consensus_nn = AgentConsensusNN()
         self._base_weights = self._initialize_base_weights()
-        # Historial para cálculo de correlación de Pearson (Ventana dinámica: 7 votos v118.1)
-        self.vote_history = {name: deque(maxlen=7) for name in self.agents}
+        # Historial para cálculo de correlación de Pearson.
+        self.vote_history = {
+            name: deque(maxlen=CORRELATION_VETO_WINDOW) for name in self.agents
+        }
 
     def _initialize_base_weights(self) -> Dict[str, Dict[str, float]]:
         """Pesos base para la Trinidad (MT/SR/G)."""
@@ -70,14 +73,15 @@ class StrategyOrchestrator:
     ) -> Dict[str, float]:
         """
         Hard-Veto de Correlación v118.1: Si la correlación entre dos agentes
-        supera 0.90 en una ventana de 7 votos, el de menor WR histórico queda en peso 0.
+        supera 0.90 en una ventana de 30 votos, el de menor WR histórico queda en peso 0.
         """
         # Actualizar historial
         for name, vote in votes.items():
             self.vote_history[name].append(vote)
 
-        # Si no hay suficiente historial, no aplicar veto (v118.1: ventana 7)
-        if len(list(self.vote_history.values())[0]) < 7:
+        # Si no hay suficiente historial, no aplicar veto.
+        if len(list(self.vote_history.values())[0]) < CORRELATION_VETO_WINDOW:
+
             return weights
 
         adjusted_weights = weights.copy()
@@ -90,7 +94,10 @@ class StrategyOrchestrator:
                     a1, a2 = agent_names[i], agent_names[j]
                     h1, h2 = list(self.vote_history[a1]), list(self.vote_history[a2])
 
-                    if len(h1) >= 7 and len(h2) >= 7:
+                    if (
+                        len(h1) >= CORRELATION_VETO_WINDOW
+                        and len(h2) >= CORRELATION_VETO_WINDOW
+                    ):
                         corr = np.corrcoef(h1, h2)[0, 1]
                         if not np.isnan(corr) and abs(corr) > 0.90:
                             # Excluir el agente correlacionado con menor rendimiento.

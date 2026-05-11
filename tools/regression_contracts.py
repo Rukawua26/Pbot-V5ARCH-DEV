@@ -66,9 +66,11 @@ def assert_bot_facade_contract() -> None:
 
 
 def assert_execution_safety_invariants() -> None:
-    trade_manager_source = (ROOT / "core" / "trade_manager.py").read_text(
-        encoding="utf-8"
-    )
+    sources: dict[str, str] = {}
+    for mod in ("trade_manager.py", "trade_entry.py", "trade_exit.py", "trade_helpers.py"):
+        path = ROOT / "core" / mod
+        if path.exists():
+            sources[mod] = path.read_text(encoding="utf-8")
     execution_service_source = (ROOT / "core" / "execution_service.py").read_text(
         encoding="utf-8"
     )
@@ -77,16 +79,22 @@ def assert_execution_safety_invariants() -> None:
     )
     risk_engine_source = (ROOT / "core" / "risk_engine.py").read_text(encoding="utf-8")
 
-    required_trade_manager_tokens = [
-        "ENTRY_ABORTED_NO_HARD_SL",
-        "FAIL_SAFE_CLOSE_FAILED_HALT",
-        "_fail_safe_close_when_sl_missing",
-    ]
-    for token in required_trade_manager_tokens:
-        if token not in trade_manager_source:
-            raise AssertionError(
-                f"trade_manager.py no contiene invariante de seguridad requerido: {token}"
-            )
+    required_tokens: dict[str, list[str]] = {
+        "trade_entry.py": [
+            "ENTRY_ABORTED_NO_HARD_SL",
+            "FAIL_SAFE_CLOSE_FAILED_HALT",
+        ],
+        "trade_helpers.py": [
+            "_fail_safe_close_when_sl_missing",
+        ],
+    }
+    for source_name, tokens in required_tokens.items():
+        source = sources.get(source_name, "")
+        for token in tokens:
+            if token not in source:
+                raise AssertionError(
+                    f"{source_name} no contiene invariante de seguridad requerido: {token}"
+                )
 
     if "def fetch_book_ticker(self, symbol: str)" not in execution_port_source:
         raise AssertionError(

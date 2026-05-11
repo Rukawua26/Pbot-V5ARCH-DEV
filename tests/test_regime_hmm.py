@@ -880,6 +880,46 @@ class HMMOrchestratorWeightsTests(unittest.TestCase):
         self.assertGreaterEqual(range_weights["SR"], 0.45)
         self.assertAlmostEqual(sum(range_weights.values()), 1.0)
 
+    def test_correlation_veto_does_not_apply_before_30_samples(self):
+        orchestrator = StrategyOrchestrator()
+        weights = {"MT": 0.4, "SR": 0.3, "G": 0.3}
+        performances = {"MT": 70.0, "SR": 90.0, "G": 100.0}
+
+        for idx in range(29):
+            adjusted = orchestrator._apply_correlation_veto(
+                weights,
+                {"MT": float(idx), "SR": float(idx), "G": float((idx * idx) % 17)},
+                performances,
+            )
+
+        self.assertEqual(adjusted, weights)
+        self.assertEqual(len(orchestrator.vote_history["MT"]), 29)
+
+    def test_correlation_veto_applies_at_30_samples_and_keeps_full_window(self):
+        orchestrator = StrategyOrchestrator()
+        weights = {"MT": 0.4, "SR": 0.3, "G": 0.3}
+        performances = {"MT": 70.0, "SR": 90.0, "G": 100.0}
+
+        for idx in range(30):
+            adjusted = orchestrator._apply_correlation_veto(
+                weights,
+                {"MT": float(idx), "SR": float(idx), "G": float((idx * idx) % 17)},
+                performances,
+            )
+
+        self.assertEqual(adjusted["MT"], 0.0)
+        self.assertEqual(adjusted["SR"], weights["SR"])
+        self.assertEqual(len(orchestrator.vote_history["MT"]), 30)
+
+        for idx in range(30, 35):
+            orchestrator._apply_correlation_veto(
+                weights,
+                {"MT": float(idx), "SR": float(idx), "G": float((idx * idx) % 17)},
+                performances,
+            )
+
+        self.assertEqual(len(orchestrator.vote_history["MT"]), 30)
+
 
 if __name__ == "__main__":
     unittest.main()

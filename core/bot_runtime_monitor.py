@@ -3,6 +3,7 @@ import os
 import time
 
 from core.time_utils import monotonic_now, utc_now_iso
+from core.metrics_export import export_metrics_summary
 
 
 def _rotate_jsonl(path: str, max_bytes: int, backups: int) -> None:
@@ -110,3 +111,8 @@ def run_runtime_monitor_loop(bot):
                 f"🧪 MEMORY H24: inicio={bot._perf_start_rss_mb:.1f}MB -> h24={rss_mb:.1f}MB (delta {delta:+.1f}MB) | {status}"
             )
             bot._perf_h24_logged = True
+
+        try:
+            export_metrics_summary(bot)
+        except Exception as exc:
+            bot.log(f"⚠️ Metrics export error: {exc}")

@@ -63,17 +63,17 @@ jobs:
 
       - name: Regression contracts (arquitectura)
         run: |
-          python tools/regression_contracts.py
+          SNIPER_DISABLE_FILE_TELEMETRY=1 python tools/regression_contracts.py
 
       - name: Regression unit tests (runtime flows)
         run: |
-          python -m unittest discover -s tests -p "test_*.py"
+          SNIPER_DISABLE_FILE_TELEMETRY=1 python -m unittest discover -s tests -p "test_*.py"
 
       - name: Coverage gate (core)
         run: |
-          coverage run -m unittest discover -s tests -p "test_*.py"
-          coverage report --fail-under=35
+          SNIPER_DISABLE_FILE_TELEMETRY=1 coverage run -m unittest discover -s tests -p "test_*.py"
+          SNIPER_DISABLE_FILE_TELEMETRY=1 coverage report --fail-under=35
 
       - name: Temporal invariance stress tests
         run: |
-          python -m unittest tests/test_temporal_invariance.py
+          SNIPER_DISABLE_FILE_TELEMETRY=1 python -m unittest tests/test_temporal_invariance.py

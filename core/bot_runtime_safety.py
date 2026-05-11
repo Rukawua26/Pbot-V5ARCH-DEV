@@ -1,5 +1,5 @@
 from config import Config
-from notifier import send_telegram_msg
+from core.risk_policy import activate_runtime_protection
 
 
 def check_safety_and_goals(bot, current_pnl=None):
@@ -16,22 +16,36 @@ def check_safety_and_goals(bot, current_pnl=None):
 
     # 1. Trailing Stop de Cuenta: Si perdemos 3% desde el punto más alto del día
     if bot.peak_pnl > 0 and (bot.peak_pnl - current_pnl) >= Config.DAILY_TRAILING_STOP:
-        bot.circuit_breaker_active = True
-        bot.log(
-            f"⚠️ Trailing Stop: Protegiendo {current_pnl:.2f}% (Caída del 3% desde el pico)"
+        activate_runtime_protection(
+            bot,
+            circuit_breaker=True,
+            log_message=(
+                f"⚠️ Trailing Stop: Protegiendo {current_pnl:.2f}% (Caída del 3% desde el pico)"
+            ),
+            reason="DAILY_TRAILING_STOP_HIT",
+            source="runtime_safety",
+            extra={"current_pnl": float(current_pnl), "peak_pnl": float(bot.peak_pnl)},
         )
         return False
 
     # 2. Límite de Pérdida Diaria: -3% desde el inicio
     if current_pnl <= -Config.DAILY_LOSS_LIMIT:
-        bot.circuit_breaker_active = True
-        bot.mandatory_train_pending = True
-        bot.is_paused = True
-        bot.log(
-            f"💀 Límite diario alcanzado: {current_pnl:.2f}%. MODO DEFENSIVO ACTIVADO."
-        )
-        send_telegram_msg(
-            "🛡️ *MODO DEFENSIVO ACTIVADO*\nPérdida diaria límite alcanzada. El bot requiere re-entrenamiento para continuar."
+        activate_runtime_protection(
+            bot,
+            circuit_breaker=True,
+            pause=True,
+            mandatory_train_pending=True,
+            log_message=(
+                f"💀 Límite diario alcanzado: {current_pnl:.2f}%. MODO DEFENSIVO ACTIVADO."
+            ),
+            telegram_message=(
+                "🛡️ *MODO DEFENSIVO ACTIVADO*\nPérdida diaria límite alcanzada. "
+                "El bot requiere re-entrenamiento para continuar."
+            ),
+            alert_once_attr="daily_loss_limit_alert_sent",
+            reason="DAILY_LOSS_LIMIT_REACHED",
+            source="runtime_safety",
+            extra={"current_pnl": float(current_pnl)},
         )
         return False
 

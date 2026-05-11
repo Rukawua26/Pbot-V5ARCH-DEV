@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from typing import Any, Dict, Optional
 
 from config import Config
+from core.risk_policy import evaluate_entry_risk_decision, record_risk_decision
 from core.symbol_utils import normalize_position_symbol
 from core.trade_state import open_trade_statuses
 from learning import shadow_logger
@@ -32,7 +33,18 @@ def _fail_safe_close_when_sl_missing(
             return True
         except Exception as error:
             bot.log(
-                f"⚠️ FAIL_SAFE_CLOSE intento {attempt}/3 fallido en {symbol}: {error}"
+                f"⚠️ FAIL_SAFE_CLOSE intento {attempt}/3 (chase limit) fallido en {symbol}: {error}"
+            )
+            if attempt < 3:
+                time.sleep(2 ** (attempt - 1))
+    for attempt in range(1, 3):
+        try:
+            bot.log(f"🧯 FAIL_SAFE_CLOSE intento MARKET {attempt}/2 en {symbol}")
+            bot.execution.create_reduce_only_market_order(symbol, side, amount)
+            return True
+        except Exception as error:
+            bot.log(
+                f"⚠️ FAIL_SAFE_CLOSE intento MARKET {attempt}/2 fallido en {symbol}: {error}"
             )
             if attempt < 3:
                 time.sleep(2 ** (attempt - 1))
@@ -40,42 +52,18 @@ def _fail_safe_close_when_sl_missing(
 
 
 def _validate_entry_preconditions(bot, symbol: str, is_shadow: bool) -> Optional[str]:
-    if bool(getattr(bot, "stop_requested", False)) or bool(
-        getattr(bot, "shutdown_in_progress", False)
-    ):
-        bot.log("🛑 SHUTDOWN_SEQUENCE: nueva entrada rechazada.")
-        return "SHUTDOWN_IN_PROGRESS"
-
     existing_state = (getattr(bot, "active_trades", {}) or {}).get(symbol)
-    if isinstance(existing_state, dict):
-        existing_status = str(existing_state.get("status") or "").upper()
-        if existing_status in set(open_trade_statuses()):
-            bot.log(
-                f"🧷 RECOVERY_GUARD {symbol}: estado pendiente detectado ({existing_status}). Se bloquea nueva apertura para evitar duplicado tras reinicio."
-            )
-            return "RECOVERY_PENDING_STATE"
-
-    if not is_shadow and shadow_logger.is_trading_halted():
-        bot.log(
-            "🛑 BLOQUEO DE SEGURIDAD: Trading real detenido por fallo persistente de persistencia (DB)."
-        )
-        return "TRADING_HALTED_DB_ERROR"
-
-    if not is_shadow and bool(getattr(bot, "integrity_lock_active", False)):
-        bot.log(
-            "🛑 INTEGRITY_LOCK activo: se bloquea apertura de nuevas posiciones reales."
-        )
-        return "INTEGRITY_LOCK_ACTIVE"
-
-    if not is_shadow and bool(getattr(bot, "halt_system_active", False)):
-        bot.log("🛑 HALT_SYSTEM activo: bloqueando nuevas posiciones reales.")
-        return "HALT_SYSTEM_ACTIVE"
-
-    if bool(getattr(bot, "confidence_stagnation_lock_active", False)):
-        bot.log(
-            f"🛑 CONFIDENCE_STAGNATION_LOCK activo: bloqueando nueva entrada {symbol}."
-        )
-        return "CONFIDENCE_STAGNATION_LOCK"
+    decision = evaluate_entry_risk_decision(
+        bot,
+        symbol,
+        is_shadow,
+        existing_state=existing_state,
+        is_trading_halted_fn=shadow_logger.is_trading_halted,
+    )
+    if decision:
+        record_risk_decision(bot, decision, symbol=symbol, is_shadow=is_shadow)
+        bot.log(decision.log_message)
+        return decision.reason
 
     return None
 

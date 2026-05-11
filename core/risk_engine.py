@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from config import Config
 from crash_predictor import CrashPredictor
 from core.types import SignalContext
@@ -8,7 +9,9 @@ from core.config.hyperopt_loader import HyperoptConfigLoader
 from strategy import Strategy
 
 
-def get_daily_pnl_pct(db_path, wallet_balance: float) -> tuple[float, float]:
+def get_daily_pnl_pct(
+    db_path, wallet_balance: float
+) -> tuple[Optional[float], Optional[float]]:
     """Devuelve PnL real cerrado del día UTC como fracción y USD.
 
     Solo considera trades reales (`is_shadow=0`) y usa `timestamp` con prefijo
@@ -42,7 +45,7 @@ def get_daily_pnl_pct(db_path, wallet_balance: float) -> tuple[float, float]:
         logging.getLogger("RiskEngine").warning(
             f"⚠️ DAILY_DRAWDOWN_PNL_UNAVAILABLE: {error}"
         )
-        return 0.0, 0.0
+        return None, None
 
 
 class RiskEngine:
@@ -167,6 +170,12 @@ class RiskEngine:
             (amount: float, final_notional: float)
             En caso de error retorna (0, código_error_negativo).
         """
+        # [ABLATION] Si el sizing de Kelly está desactivado, redirigir al baseline de riesgo fijo
+        if not getattr(Config, "USE_KELLY_SIZING", True):
+            return self.calculate_position_size_by_stop(
+                balance, symbol, price, price * 0.98, leverage, is_shadow, exchange
+            )
+
         try:
             # --- 1. Límites absolutos ---
             base_notional = Config.MIN_NOTIONAL_VALUE  # e.g. $12
@@ -404,11 +413,13 @@ class RiskEngine:
         """Verifica si hemos alcanzado el límite de pérdida diaria."""
         try:
             percent_real, usd_hoy = self.brain.get_daily_real_pnl(current_balance)
+            if percent_real is None:
+                return False, "DAILY_DRAWDOWN_UNVERIFIED"
             if percent_real <= -Config.DAILY_LOSS_LIMIT:
                 return False, f"DAILY_LIMIT_REACHED ({percent_real:.2f}%)"
             return True, "OK"
         except Exception:
-            return True, "OK"
+            return False, "DAILY_DRAWDOWN_UNVERIFIED"
 
     def check_anti_revenge_blacklist(self, symbol: str) -> tuple[bool, str]:
         """

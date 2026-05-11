@@ -9,17 +9,18 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.4--PRO%20%7C%20Phase_12-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.5--PRO%20%7C%20Phase_13-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
-![Risk](https://img.shields.io/badge/Risk_Engine-v118.3-red)
+![Risk](https://img.shields.io/badge/Risk_Engine-v118.5-red)
+![Tests](https://img.shields.io/badge/Tests-569%20ok%20%7C%201%20skipped-22c55e)
 
 **Trading bot con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.4-PRO` • `Phase 12 risk intelligence` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `Telegram ops` • `systemd` • `Docker`
+`v118.5-PRO` • `Phase 13 hardening & REAL pilot` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
 
 </div>
 
@@ -103,6 +104,7 @@ flowchart LR
 | 12.1 | Correlación dinámica como reducer de tamaño, no veto duro | ✅ |
 | 12.2 | Auto-tuning SL/TP por régimen con mínimos de muestra y rangos conservadores | ✅ |
 | 12.3 | CVD / Order Flow por WebSocket `aggTrade` como boost/penalty conservador | ✅ |
+| 13 | `v118.5-PRO`: MARKET order fallback, CycleContext, IntentDeduper, CandleCloseCache, unified risk policy, threshold governance, promotion gate, REAL pilot con $24.90 USDT | ✅ |
 ---
 
 ## 📊 Dashboard Preview
@@ -160,10 +162,20 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Breakout watchlist | ✅ Activo | Seguimiento pasivo/semi-activo de oportunidades vetadas o en espera |
 | Exit engine | ✅ Activo | Salidas dinámicas, trailing ATR, breakeven y degradación de confianza |
 | Reconciliación | ✅ Activo | Recovery DB/exchange, intents, huérfanas, `LOST_IN_TRANSMISSION` |
-| Ejecución segura | ✅ Activo | `HARD SL`, cierres de emergencia y protecciones de runtime |
- | Seguridad operativa | ✅ Activo | Modo REAL bloqueado por defecto; requiere `ALLOW_REAL_TRADING=true` explícito + guardrails |
- | Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics y scorecards |
+| Ejecución segura | ✅ Activo | `HARD SL`, cierres de emergencia, MARKET order fallback y protecciones de runtime |
+| Seguridad operativa | ✅ Activo | Modo REAL bloqueado por defecto; requiere `ALLOW_REAL_TRADING=true` explícito + guardrails |
+| Telemetría | ✅ Activo | `logs/execution_events.jsonl`, runtime metrics, scorecards y metrics export |
 | Operación remota | ✅ Activo | Comandos Telegram para auditoría, inteligencia y control |
+| CycleContext | ✅ Activo | Snapshot inmutable por ciclo de scan usando frozen dataclass |
+| IntentDeduper | ✅ Activo | Dedup a nivel de señal por ventana de tiempo |
+| CandleCloseCache | ✅ Activo | Cache de velas por namespace/símbolo para features |
+| Threshold governance | ✅ Activo | `ThresholdSpec` con 30+ umbrales tipados y metadata |
+| Risk policy | ✅ Activo | `EntryRiskDecision`, `record_risk_decision`, `evaluate_runtime_entry_decision` |
+| Metrics export | ✅ Activo | `logs/metrics_summary.json` con datos de runtime periódicos |
+| Promotion gate | ✅ Activo | `tools/promotion_gate.py` — gate compuesto SHADOW→REAL |
+| Strategy validation | ✅ Activo | Walk-forward + ablation + regime scorecard + validation report |
+| Chaos matrix | ✅ Activo | 6 escenarios de caos validados con `tests/test_chaos_matrix.py` |
+| REAL pilot | ✅ Activo | Bot operando en Binance Futures con $24.90 USDT, riesgo 0.3%/trade |
 | Docker/systemd | ✅ Disponible | Despliegue en VPS o contenedor |
 
 ---
@@ -226,21 +238,33 @@ main.py
 ### Módulos Clave
 
 | Ruta | Rol |
-|---|---|
+|---|---|---|
 | `main.py` | Entrypoint real del proceso |
 | `core/bot_app.py` | Bootstrap pesado, clase `Bot`, event loop y wiring principal |
 | `core/bot_facade.py` | Contrato público del runtime |
 | `core/bot_connection.py` | Conexión a Binance y reglas por modo operativo |
+| `core/bot_shutdown.py` | Graceful shutdown sequence con HARD SL survival |
 | `core/reconciliation.py` | Recovery de estado DB/exchange al arranque |
 | `core/execution_adapters.py` | Backends `live` y `shadow_live` |
 | `core/execution_service.py` | Puerto de ejecución contra exchange |
+| `core/execution_telemetry.py` | Eventos JSONL de ejecución |
+| `core/trade_entry.py` | `execute_order` (refactorizado desde trade_manager) |
+| `core/trade_exit.py` | `close_trade` (refactorizado desde trade_manager) |
+| `core/trade_helpers.py` | Fallos seguros, MARKET fallback, precondiciones |
+| `core/risk_engine.py` | RiskEngine, daily drawdown, sizing |
+| `core/risk_policy.py` | `EntryRiskDecision`, `evaluate_runtime_entry_decision` |
+| `core/cycle_context.py` | Snapshot de ciclo congelado por scan |
+| `core/intent_deduper.py` | Dedup de señales por ventana temporal |
+| `core/candle_close_cache.py` | Cache de velas por namespace |
+| `core/metrics_export.py` | Export periódico a `metrics_summary.json` |
+| `core/config/thresholds.py` | `ThresholdSpec` con 30+ umbrales |
 | `core/bot_guardian.py` | Vigilancia y protecciones sobre posiciones activas |
 | `core/bot_wallet_sync.py` | Sincronización de wallet y capital |
 | `core/bot_market_state.py` | Detección de régimen BTC HMM/heurística |
 | `core/command_router.py` | Router de comandos Telegram |
 | `core/signals/` | Contexto, análisis, filtros y ejecución de señales |
 | `core/strategy/` | Agentes, consenso y filtros de estrategia |
-| `tests/` | Regresiones runtime, guardrails y contratos |
+| `tests/` | 569 tests: regresiones runtime, guardrails, contratos, chaos |
 
 ---
 
@@ -498,12 +522,14 @@ Orden base alineado con CI:
 ./.venv/bin/python -m compileall -q main.py core
 PATH="/home/miguel/Pbot-V5ARCH-DEV/.venv/bin:$PATH" bash scripts/smoke_modular_imports.sh
 ./.venv/bin/python tools/check_no_silent_pass.py
-./.venv/bin/python tools/regression_contracts.py
-./.venv/bin/python -m unittest discover -s tests -p "test_*.py"
-./.venv/bin/python -m unittest tests/test_temporal_invariance.py
+SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python tools/regression_contracts.py
+SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python -m unittest discover -s tests -p "test_*.py"
+SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python -m unittest tests/test_temporal_invariance.py
 ```
 
-Estado local verificado: `453` tests `unittest` OK (`1` skipped).
+> `SNIPER_DISABLE_FILE_TELEMETRY=1` evita que las pruebas contaminen `logs/execution_events.jsonl` con datos mock. El archivo `tests/__init__.py` lo establece automáticamente al importar el paquete de tests.
+
+Estado local verificado: `569` tests `unittest` OK (`1` skipped: integración con testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
 
 ### Testnet E2E Opt-In
 
@@ -557,6 +583,31 @@ Lectura exigente: si las ventanas de validación no sostienen profit factor, ret
   --max-drawdown 0.20
 ```
 
+### REAL Pilot
+
+El bot opera en modo REAL en Binance Futures con $24.90 USDT.
+
+| Parámetro | Valor |
+|---|---|
+| Riesgo por trade | 0.3% ($0.075) |
+| Máximo trades simultáneos | 2 |
+| Apalancamiento | 1x |
+| Límite pérdida diaria | 5% |
+| HARD SL | -3.0% |
+| Pares REAL máx. | 5 |
+
+Para arrancar:
+
+```bash
+bash tools/start_real_pilot.sh
+```
+
+Para detener:
+
+```bash
+bash tools/stop_real_pilot.sh
+```
+
 ### Cobertura Destacada en `tests/`
 
 - reconciliación y wallet sync
@@ -574,6 +625,9 @@ Lectura exigente: si las ventanas de validación no sostienen profit factor, ret
 - watchdog y graceful shutdown
 - guardrails de riesgo, leverage y smart exit
 - invariancia temporal y seguridad runtime
+- chaos matrix (6 escenarios, `failed=0`)
+- risk policy, promotion gate, shadow readiness gate
+- threshold registry, regime scorecard, strategy validation report
 
 ---
 
@@ -581,21 +635,65 @@ Lectura exigente: si las ventanas de validación no sostienen profit factor, ret
 
 ```text
 .
-|-- main.py
+|-- main.py                          # Entrypoint (delega en core.bot_app)
 |-- core/
-|   |-- bot_app.py
-|   |-- bot_facade.py
-|   |-- reconciliation.py
-|   |-- execution_adapters.py
-|   |-- commands/
+|   |-- bot_app.py                   # Bootstrap, Bot class, wiring
+|   |-- bot_facade.py                # Contrato público del runtime
+|   |-- bot_shutdown.py              # Graceful shutdown sequence
+|   |-- reconciliation.py            # Recovery DB/exchange, intents
+|   |-- execution_adapters.py        # Backends live y shadow_live
+|   |-- execution_service.py         # Puerto real contra Binance
+|   |-- execution_telemetry.py       # append_execution_event
+|   |-- trade_entry.py               # execute_order (refactorizado)
+|   |-- trade_exit.py                # close_trade (refactorizado)
+|   |-- trade_helpers.py             # _fail_safe_close_when_sl_missing, etc.
+|   |-- risk_engine.py               # RiskEngine, daily drawdown
+|   |-- risk_policy.py               # EntryRiskDecision, runtime protection
+|   |-- cycle_context.py             # Per-cycle immutable snapshot
+|   |-- intent_deduper.py            # Signal-level dedup by time-window
+|   |-- candle_close_cache.py        # Per-candle feature cache
+|   |-- metrics_export.py            # Periodic metrics summary
 |   |-- config/
-|   `-- strategy/
-|-- tests/
+|   |   |-- manager.py               # Config class (env reads)
+|   |   |-- operational.py           # load_dotenv, base defaults
+|   |   |-- thresholds.py            # ThresholdSpec registry
+|   |   `-- ...
+|   |-- strategy/
+|   |   |-- orchestrator.py          # StrategyOrchestrator
+|   |   |-- utils.py                 # compute_runtime_snapshot
+|   |   `-- ...
+|   |-- signals/
+|   |   |-- filters.py               # Signal filtering, execution mode routing
+|   |   `-- execution.py             # _execute_and_update_symbol
+|   `-- ...
+|-- tests/                           # 569 tests (unittest)
+|   |-- __init__.py                  # SNIPER_DISABLE_FILE_TELEMETRY=1
+|   |-- test_trade_manager_helpers.py
+|   |-- test_execute_order_coverage.py
+|   |-- test_execution_lock_separation.py
+|   |-- test_chaos_matrix.py
+|   |-- test_risk_policy.py
+|   |-- test_thresholds_registry.py
+|   `-- ...
 |-- tools/
+|   |-- start_real_pilot.sh          # REAL pilot startup
+|   |-- stop_real_pilot.sh           # Emergency stop + post-mortem
+|   |-- promotion_gate.py            # Composite SHADOW→REAL gate
+|   |-- shadow_readiness_gate.py     # Shadow validation window
+|   |-- risk_decision_report.py      # Risk decision audit
+|   |-- walk_forward_backtest.py     # Walk-forward optimization
+|   |-- ablation_backtest.py         # Ablation analysis
+|   |-- regime_scorecard.py          # Regime performance stats
+|   |-- strategy_validation_report.py# Combined validator
+|   |-- chaos_matrix.py              # Chaos scenarios
+|   |-- gate_history.py              # JSONL gate history
+|   |-- regression_contracts.py      # Architecture contract checks
+|   |-- check_no_silent_pass.py      # Silent pass guardrail
+|   `-- ...
 |-- deploy/systemd/
 |-- docs/runbooks/
-|-- docs/images/
-|-- Dockerfile
+|-- .env.real                        # REAL pilot config template
+|-- .env.paper.backup                # Paper config backup
 `-- docker-compose.yml
 ```
 

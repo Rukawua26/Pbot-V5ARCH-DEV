@@ -103,11 +103,10 @@ def _emergency_market_close_unprotected(
 
     close_ok = False
     last_close_error = ""
+    side = str(trade.get("side") or "BUY")
     for attempt in range(1, 4):
         try:
-            bot.execution.close_position(
-                symbol, str(trade.get("side") or "BUY"), amount
-            )
+            bot.execution.close_position(symbol, side, amount)
             if _exchange_position_is_flat(bot, symbol):
                 close_ok = True
                 break
@@ -118,10 +117,25 @@ def _emergency_market_close_unprotected(
         except Exception as close_error:
             last_close_error = str(close_error)
             bot.log(
-                f"⚠️ EMERGENCY_CLOSE intento {attempt}/3 fallido en {symbol}: {close_error}"
+                f"⚠️ EMERGENCY_CLOSE intento {attempt}/3 (chase limit) fallido en {symbol}: {close_error}"
             )
             if attempt < 3:
                 time.sleep(2 ** (attempt - 1))
+    if not close_ok:
+        for attempt in range(1, 3):
+            try:
+                bot.log(f"🧯 EMERGENCY_CLOSE intento MARKET {attempt}/2 en {symbol}")
+                bot.execution.create_reduce_only_market_order(symbol, side, amount)
+                if _exchange_position_is_flat(bot, symbol):
+                    close_ok = True
+                    break
+            except Exception as close_error:
+                last_close_error = str(close_error)
+                bot.log(
+                    f"⚠️ EMERGENCY_CLOSE intento MARKET {attempt}/2 fallido en {symbol}: {close_error}"
+                )
+                if attempt < 3:
+                    time.sleep(2 ** (attempt - 1))
 
     if close_ok:
         ttr = time.perf_counter() - started

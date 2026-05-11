@@ -7,7 +7,7 @@ LOCK_FILE="${BOT_DIR}/.sniperai.lock"
 UNIT_DIR="${HOME}/.config/systemd/user"
 UNIT_FILE="${UNIT_DIR}/sniper-ai.service"
 ENV_FILE="${SNIPER_ENV_FILE:-${BOT_DIR}/.env}"
-MEMORY_MAX="${SNIPER_SYSTEMD_MEMORY_MAX:-1G}"
+MEMORY_MAX="${SNIPER_SYSTEMD_MEMORY_MAX:-2G}"
 
 mkdir -p "${UNIT_DIR}"
 

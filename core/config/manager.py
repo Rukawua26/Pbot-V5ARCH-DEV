@@ -78,6 +78,25 @@ class Config(OperationalConfig, StrategyConfig):
     SHADOW_MODE_MIN = _env_float("SHADOW_MODE_MIN", 55.0)
     SHADOW_MODE_MAX = _env_float("SHADOW_MODE_MAX", 69.9)
 
+    # --- ABLATION STUDY PROFILES (Fase 1) ---
+    # El Baseline es: Sizing fijo, SL/TP estático (ATR), sin IA, sin filtros.
+    ABLATION_PROFILES = {
+        "BASELINE": {
+            "EXIT_ENGINE_V1_ENABLED": False,
+            "HMM_REGIME_ENABLED": False,
+            "OI_FILTER_ENABLED": False,
+            "CVD_FILTER_ENABLED": False,
+            "MTF_FILTER_ENABLED": False,
+            "CORRELATION_RISK_ENABLED": False,
+            "REGIME_TUNING_ENABLED": False,
+            "RAG_ENABLED": False,
+            "USE_KELLY_SIZING": False,  # Usará calculate_position_size_by_stop
+        },
+        "FULL_INSTITUTIONAL": {
+            # Todos los flags en True (estado actual)
+        }
+    }
+
     # --- HMM/Markov regime probability controls ---
     MARKOV_BREAKOUT_MIN = _env_float("MARKOV_BREAKOUT_MIN", 75.0)
     MARKOV_DEAD_ZONE_MAX = _env_float("MARKOV_DEAD_ZONE_MAX", 30.0)

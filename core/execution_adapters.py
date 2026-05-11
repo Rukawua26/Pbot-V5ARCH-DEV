@@ -286,6 +286,22 @@ class ShadowExecutionAdapter:
             "info": {"shadow": True, "reduceOnly": True},
         }
 
+    def create_reduce_only_market_order(self, symbol: str, side: str, amount: float, params=None):
+        if self._reject():
+            raise RuntimeError("shadow market close rejected")
+        price = float((self._live.fetch_ticker(symbol) or {}).get("last") or 0.0)
+        return {
+            "id": f"shadow-market-close-{uuid.uuid4().hex[:14]}",
+            "symbol": symbol,
+            "type": "market",
+            "side": "sell" if str(side).lower() == "buy" else "buy",
+            "status": "closed",
+            "amount": amount,
+            "filled": amount,
+            "average": price,
+            "info": {"shadow": True, "reduceOnly": True},
+        }
+
     def close_due_to_degradation(self, symbol: str, side: str, amount: float):
         return self.close_position(symbol, side, amount)
 

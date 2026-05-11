@@ -1,0 +1,308 @@
+import unittest
+from threading import RLock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from core.trade_manager import execute_order
+
+
+class ExecuteOrderCoverageTest(unittest.TestCase):
+    """Covers execute_order code paths not yet tested by test_advanced_runtime_flows."""
+
+    def _min_bot(self, **overrides):
+        attrs = dict(
+            log=MagicMock(),
+            lock=RLock(),
+            db_lock=RLock(),
+            balance=5000.0,
+            available_balance=5000.0,
+            is_paused=False,
+            circuit_breaker_active=False,
+            integrity_lock_active=False,
+            halt_system_active=False,
+            instance_uuid="test-inst-uuid",
+            ghost_model=object(),
+            last_entry_open_ts=0.0,
+            last_shadow_signal_ts=0.0,
+            _symbol_reduced_size_mult=1.0,
+            market_btc_change_tf=0.0,
+            cooldown_pairs={},
+            active_trades={},
+            _load_runtime_symbol_controls=lambda: {"blocked": set(), "reduced": set()},
+            _get_base_coin=lambda s: s.split("/")[0],
+            get_current_balance=lambda: 5000.0,
+            ws_manager=SimpleNamespace(get_l2_state=lambda _s: {}),
+            brain=SimpleNamespace(
+                get_genetic_params=lambda _s: {},
+                get_stats_by_trend=lambda: {},
+                save_active_trade_state=MagicMock(return_value=True),
+                save_error_snapshot=MagicMock(),
+                delete_active_trade_state=MagicMock(),
+                log_signal_alert=MagicMock(),
+                update_signal_alert_status=MagicMock(),
+            ),
+            data_service=SimpleNamespace(sanitize_context=lambda ctx: ctx or {}),
+            risk_engine=SimpleNamespace(
+                calculate_position_size=lambda **kw: (1.0, 100.0),
+                get_exit_levels=lambda **kw: (99.0, 120.0, "STD"),
+                check_market_safety=lambda *a, **kw: (True, "OK", 80),
+            ),
+            execution=SimpleNamespace(
+                exchange=object(),
+                fetch_ticker=lambda _s: {"last": 100.0},
+                set_leverage=MagicMock(),
+                place_hard_sl=MagicMock(return_value={"id": "sl-1"}),
+            ),
+        )
+        attrs.update(overrides)
+        return SimpleNamespace(**attrs)
+
+    def _ctx(self, **overrides):
+        ctx = {
+            "atr_pct": 0.01,
+            "trend": "RANGO",
+            "spread": 0.0,
+            "prob_final": 75.0,
+        }
+        ctx.update(overrides)
+        return ctx
+
+    # --- Early-exit guard paths ---
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_shadow_cooldown_rejects_recent_signal(self, _):
+        bot = self._min_bot()
+        bot.last_shadow_signal_ts = 9999999999.0
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=True, context=self._ctx())
+        self.assertTrue(result.startswith("SHADOW_COOLDOWN"))
+
+    @patch("core.trade_entry.Config.REQUIRE_GHOST_MODEL_FOR_TRADING", True)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_ghost_model_missing_rejects(self, _):
+        bot = self._min_bot(ghost_model=None)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "GHOST_MODEL_MISSING")
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_bot_paused_rejects(self, _):
+        bot = self._min_bot(is_paused=True)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "BOT_PAUSED")
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_circuit_breaker_active_rejects(self, _):
+        bot = self._min_bot(circuit_breaker_active=True)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "CIRCUIT_BREAKER_PANIC")
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_global_cooldown_rejects(self, _):
+        bot = self._min_bot(last_entry_open_ts=9999999999.0)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "GLOBAL_COOLDOWN")
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_already_active_rejects_for_closed_status(self, _):
+        bot = self._min_bot()
+        bot.active_trades["ETH/USDT"] = {"symbol": "ETH/USDT", "is_shadow": True, "side": "BUY", "status": "CLOSED", "sector": "OTHE"}
+        result = execute_order(bot, "ETH/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "ALREADY_ACTIVE")
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_duplicate_real_coin_rejected(self, _):
+        bot = self._min_bot()
+        bot._get_base_coin = lambda s: "BTC" if "BTC" in s else s.split("/")[0]
+        bot.active_trades["BTCBULL/USDT"] = {"is_shadow": False, "side": "BUY", "status": "OPEN", "sector": "OTHE"}
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "DUPLICATE_REAL_COIN")
+
+    # --- Degradation paths ---
+
+    @patch("core.trade_entry.Config.NATR_THRESHOLD", 1.0)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_high_volatility_degrades_to_shadow(self, _, _tg):
+        bot = self._min_bot()
+        ctx = self._ctx(atr_pct=0.02)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=ctx)
+        self.assertEqual(result, "OK_DEGRADED: HIGH_VOLATILITY")
+
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_market_safety_degrades_to_shadow(self, _, _tg):
+        bot = self._min_bot()
+        bot.risk_engine.check_market_safety = lambda *a, **kw: (False, "HIGH_RISK", 30)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "OK_DEGRADED: HIGH_RISK")
+
+    @patch("core.trade_entry.Config.MAX_DIRECTIONAL_TRADES", 1)
+    @patch("core.trade_entry.Config.MAX_SHADOW_TRADES", 1)
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_max_directional_degrades_when_shadow_available(self, _, _tg):
+        bot = self._min_bot()
+        bot.active_trades.update({
+            "ETH/USDT": {"symbol": "ETH/USDT", "side": "BUY", "is_shadow": False, "status": "OPEN", "sector": "OTHE"},
+        })
+        ctx = self._ctx()
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=ctx)
+        self.assertEqual(result, "OK_DEGRADED: MAX_DIRECTIONAL_DEGRADED")
+
+    @patch("core.trade_entry.Config.MAX_DIRECTIONAL_TRADES", 1)
+    @patch("core.trade_entry.Config.MAX_SHADOW_TRADES", 1)
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_max_directional_blocks_when_shadow_also_full(self, _, _tg):
+        bot = self._min_bot()
+        bot.active_trades.update({
+            "ETH/USDT": {"symbol": "ETH/USDT", "side": "BUY", "is_shadow": False, "status": "OPEN", "sector": "OTHE"},
+            "SOL/USDT": {"symbol": "SOL/USDT", "side": "BUY", "is_shadow": True, "status": "OPEN", "sector": "OTHE"},
+        })
+        ctx = self._ctx()
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=ctx)
+        self.assertEqual(result, "MAX_DIRECTIONAL")
+
+    # --- Execution failure paths ---
+
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_size_error_aborts(self, _, _tg):
+        bot = self._min_bot()
+        bot.risk_engine.calculate_position_size = lambda **kw: (0.0, 0.0)
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "SIZE_ERROR")
+
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_execution_no_fill_aborts(self, _, _tg):
+        bot = self._min_bot()
+        bot.execution.create_precision_order = MagicMock(
+            return_value={"id": "o1", "status": "closed", "filled": 0.0, "average": None}
+        )
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "EXECUTION_NO_FILL")
+
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_hard_sl_fail_triggers_failsafe(self, _, _tg):
+        bot = self._min_bot()
+        bot.execution.create_precision_order = MagicMock(
+            return_value={"id": "o1", "status": "closed", "filled": 1.0, "average": 100.0}
+        )
+        bot.execution.place_hard_sl = MagicMock(return_value=None)
+        bot.execution.last_hard_sl_error = "insufficient balance"
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "ENTRY_ABORTED_NO_HARD_SL")
+
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_hard_sl_fail_with_failsafe_failure_halts_system(self, _, _tg):
+        bot = self._min_bot()
+        bot.execution.create_precision_order = MagicMock(
+            return_value={"id": "o1", "status": "closed", "filled": 1.0, "average": 100.0}
+        )
+        bot.execution.place_hard_sl = MagicMock(return_value=None)
+        bot.execution.last_hard_sl_error = "API error"
+
+        import core.trade_helpers as th
+        orig = th._fail_safe_close_when_sl_missing
+        th._fail_safe_close_when_sl_missing = lambda *a, **kw: False
+        try:
+            result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+            self.assertEqual(result, "ENTRY_ABORTED_NO_HARD_SL")
+            self.assertTrue(bot.is_paused)
+            self.assertTrue(bot.integrity_lock_active)
+            self.assertTrue(bot.halt_system_active)
+        finally:
+            th._fail_safe_close_when_sl_missing = orig
+
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_tp_insufficient_for_real_aborts(self, _, _tg):
+        bot = self._min_bot()
+        bot.risk_engine.get_exit_levels = lambda **kw: (99.9, 100.05, "STD")
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "TP_INSUFFICIENT")
+
+    # --- High spread veto ---
+
+    @patch("core.trade_entry.Config.ENTRY_SPREAD_VETO_THRESHOLD", 0.0001)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_high_spread_veto_aborts(self, _, _tg):
+        bot = self._min_bot()
+        bot.execution.fetch_book_ticker = MagicMock(
+            return_value={"bidPrice": "99.0", "askPrice": "101.0"}
+        )
+        bot.execution.create_precision_order = MagicMock(
+            return_value={"id": "o1", "status": "closed", "filled": 1.0, "average": 100.0}
+        )
+        result = execute_order(bot, "BTC/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertTrue(result.startswith("HIGH_SPREAD_VETO"))
+
+    # --- Success paths ---
+
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_real_entry_success(self, _, _tg):
+        bot = self._min_bot()
+        bot.execution.create_precision_order = MagicMock(
+            return_value={"id": "real-o1", "status": "closed", "filled": 1.0, "average": 100.0}
+        )
+        result = execute_order(bot, "SOL/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "OK")
+        self.assertIn("SOL/USDT", bot.active_trades)
+        self.assertFalse(bot.active_trades["SOL/USDT"].get("is_shadow"))
+
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_shadow_entry_success(self, _, _tg):
+        bot = self._min_bot()
+        result = execute_order(bot, "SOL/USDT", "BUY", 100.0, 1.0, is_shadow=True, context=self._ctx())
+        self.assertEqual(result, "OK")
+        self.assertIn("SOL/USDT", bot.active_trades)
+        self.assertTrue(bot.active_trades["SOL/USDT"].get("is_shadow"))
+
+    @patch("core.trade_entry.Config.PAPER_MODE", True)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_paper_entry_success(self, _, _tg):
+        bot = self._min_bot()
+        result = execute_order(bot, "SOL/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "OK")
+        self.assertIn("SOL/USDT", bot.active_trades)
+        self.assertTrue(bot.active_trades["SOL/USDT"].get("simulated_real"))
+
+    # --- Persistence guard ---
+
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_persistence_guard_triggers_on_final_db_failure(self, _tg, _mock_tg):
+        bot = self._min_bot()
+        call_count = [0]
+        def _save_side_effect(symbol, state):
+            call_count[0] += 1
+            return call_count[0] < 2
+        bot.brain.save_active_trade_state = MagicMock(side_effect=_save_side_effect)
+        result = execute_order(bot, "SOL/USDT", "BUY", 100.0, 1.0, is_shadow=True, context=self._ctx())
+        self.assertEqual(result, "PERSISTENCE_GUARD_ACTIVE")
+
+    # --- Trade limit checks ---
+
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
+    def test_max_real_trades_rejected(self, _):
+        bot = self._min_bot()
+        for i in range(10):
+            bot.active_trades[f"COIN{i:03d}/USDT"] = {"symbol": f"COIN{i:03d}/USDT", "is_shadow": False, "side": "BUY", "status": "OPEN", "sector": "OTHE"}
+        result = execute_order(bot, "SOL/USDT", "BUY", 100.0, 1.0, is_shadow=False, context=self._ctx())
+        self.assertEqual(result, "MAX_REAL_TRADES")
+
+
+if __name__ == "__main__":
+    unittest.main()

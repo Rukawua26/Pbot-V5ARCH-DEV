@@ -51,7 +51,7 @@ class DailyCircuitBreakerTest(unittest.TestCase):
             tmpdir.cleanup()
 
     @patch("core.bot_main_loop.Config.PAPER_MODE", True)
-    @patch("core.bot_main_loop.send_telegram_msg")
+    @patch("core.risk_policy.send_telegram_msg")
     def test_breaker_does_not_apply_in_paper(self, mocked_send):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         tmpdir, db_path = _create_trade_db([(f"{today}T01:00:00+00:00", -100.0, 0)])
@@ -71,9 +71,29 @@ class DailyCircuitBreakerTest(unittest.TestCase):
         finally:
             tmpdir.cleanup()
 
+    @patch("core.bot_main_loop.Config.PAPER_MODE", False)
+    @patch("core.risk_policy.send_telegram_msg")
+    @patch("core.bot_main_loop.get_daily_pnl_pct", return_value=(None, None))
+    def test_breaker_fails_closed_when_drawdown_is_unverifiable(
+        self, _mock_drawdown, mocked_send
+    ):
+        bot = SimpleNamespace(
+            brain=SimpleNamespace(db_name="missing.db"),
+            get_current_balance=MagicMock(return_value=1000.0),
+            log=MagicMock(),
+            circuit_breaker_active=False,
+            is_paused=False,
+            daily_drawdown_alert_sent=False,
+        )
+
+        self.assertTrue(check_daily_drawdown_breaker(bot))
+        self.assertTrue(bot.circuit_breaker_active)
+        self.assertTrue(bot.is_paused)
+        mocked_send.assert_called_once()
+
     @patch("core.bot_main_loop.Config.MAX_DAILY_DRAWDOWN_PCT", 0.03)
     @patch("core.bot_main_loop.Config.PAPER_MODE", False)
-    @patch("core.bot_main_loop.send_telegram_msg")
+    @patch("core.risk_policy.send_telegram_msg")
     def test_breaker_activates_once_in_real_when_limit_is_breached(self, mocked_send):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         tmpdir, db_path = _create_trade_db([(f"{today}T01:00:00+00:00", -31.0, 0)])
@@ -98,7 +118,7 @@ class DailyCircuitBreakerTest(unittest.TestCase):
 
     @patch("core.bot_main_loop.Config.MAX_DAILY_DRAWDOWN_PCT", 0.03)
     @patch("core.bot_main_loop.Config.PAPER_MODE", False)
-    @patch("core.bot_main_loop.send_telegram_msg")
+    @patch("core.risk_policy.send_telegram_msg")
     def test_breaker_stays_open_when_drawdown_is_above_limit(self, mocked_send):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         tmpdir, db_path = _create_trade_db([(f"{today}T01:00:00+00:00", -29.0, 0)])

@@ -3,6 +3,7 @@ import time
 import logging
 import random
 import threading
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Optional
 from config import Config
@@ -12,6 +13,7 @@ from core.execution_order_helpers import (
     _parse_order_float,
     _with_exit_state,
 )
+from notifier import send_telegram_msg
 
 
 class OrderLookupError(RuntimeError):
@@ -42,6 +44,7 @@ class ExecutionService:
         self.last_entry_reject_error = ""
         self._last_valid_balance: Optional[float] = None
         self._exchange_call_lock = threading.RLock()
+        self._account_lock = threading.RLock()
         self._cancel_all_failures = {}
         self._cancel_all_failure_events = {}
         self._symbol_quarantine_until = {}
@@ -56,11 +59,13 @@ class ExecutionService:
             self.weight_tracker.track(endpoint, weight, category)
 
     def _call_exchange(
-        self, op_name: str, fn, *, retries: int = 2, timeout_s: float = 0.0
+        self, op_name: str, fn, *, retries: int = 2, timeout_s: float = 0.0,
+        _no_lock: bool = False,
     ):
         last_error = None
+        lock_ctx = nullcontext() if _no_lock else self._exchange_call_lock
         for attempt in range(1, retries + 1):
-            with self._exchange_call_lock:
+            with lock_ctx:
                 previous_timeout = getattr(self.exchange, "timeout", None)
                 timeout_overridden = False
                 try:
@@ -96,6 +101,15 @@ class ExecutionService:
             raise last_error
         raise RuntimeError(f"{op_name} failed without captured error")
 
+    def _call_exchange_account(
+        self, op_name: str, fn, *, retries: int = 2, timeout_s: float = 0.0
+    ):
+        with self._account_lock:
+            return self._call_exchange(
+                op_name, fn, retries=retries, timeout_s=timeout_s,
+                _no_lock=True,
+            )
+
     def _track_emergency_stuck(
         self, symbol: str, side: str, amount: float, order: dict
     ):
@@ -104,10 +118,7 @@ class ExecutionService:
             f"🚨 EMERGENCY_EXIT_STUCK | {symbol} | {side} | "
             f"amount={amount} | order_id={order.get('id', 'N/A')}"
         )
-        # Notificación Telegram de emergencia
         try:
-            from notifier import send_telegram_msg
-
             send_telegram_msg(
                 f"🚨 *EMERGENCY_EXIT_STUCK*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -116,7 +127,7 @@ class ExecutionService:
                 f"📋 Order ID: {order.get('id', 'N/A')}\n"
                 f"⚠️ *INTERVENCIÓN MANUAL REQUERIDA*"
             )
-        except (ccxt.NetworkError, ccxt.ExchangeError, ImportError) as error:
+        except (ccxt.NetworkError, ccxt.ExchangeError) as error:
             self.logger.warning(
                 f"⚠️ No se pudo enviar alerta EMERGENCY_EXIT_STUCK: {error}"
             )
@@ -125,7 +136,7 @@ class ExecutionService:
         start_wait = time.time()
         while time.time() - start_wait < timeout_s:
             try:
-                status = self._call_exchange(
+                status = self._call_exchange_account(
                     "fetch_order",
                     lambda: self.exchange.fetch_order(order_id, symbol),
                     retries=2,
@@ -163,7 +174,7 @@ class ExecutionService:
             try:
                 fetched = None
                 if order_id:
-                    fetched = self._call_exchange(
+                    fetched = self._call_exchange_account(
                         "confirm_ioc_fetch_order",
                         lambda: self.exchange.fetch_order(order_id, symbol),
                         retries=1,
@@ -352,8 +363,6 @@ class ExecutionService:
                 f"🚨 CANCEL_ALL_ORDERS_DEGRADED {symbol}: {count} fallos consecutivos"
             )
             try:
-                from notifier import send_telegram_msg
-
                 send_telegram_msg(
                     f"🚨 *CANCEL_ALL_ORDERS_DEGRADED*\n"
                     f"Símbolo: {symbol}\n"
@@ -419,51 +428,108 @@ class ExecutionService:
             return False
 
     def load_markets(self):
-        markets = self.exchange.load_markets()
+        markets = self._call_exchange(
+            "load_markets",
+            lambda: self.exchange.load_markets(),
+            retries=2,
+            timeout_s=30.0,
+        )
         self._track_api_weight("load_markets", 10, "essential")
         return markets
 
     def fetch_balance(self):
-        balance = self.exchange.fetch_balance()
+        balance = self._call_exchange_account(
+            "fetch_balance",
+            lambda: self.exchange.fetch_balance(),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fetch_balance", 5, "account")
         return balance
 
     def fetch_position_mode(self, symbol: Optional[str] = None):
         if symbol:
-            mode = self.exchange.fetch_position_mode(symbol=symbol)
+            mode = self._call_exchange_account(
+                "fetch_position_mode",
+                lambda: self.exchange.fetch_position_mode(symbol=symbol),
+                retries=2,
+                timeout_s=10.0,
+            )
         else:
-            mode = self.exchange.fetch_position_mode()
+            mode = self._call_exchange_account(
+                "fetch_position_mode",
+                lambda: self.exchange.fetch_position_mode(),
+                retries=2,
+                timeout_s=10.0,
+            )
         self._track_api_weight("fetch_position_mode", 1, "account")
         return mode
 
     def get_position_side_dual(self):
-        mode = self.exchange.fapiPrivateGetPositionSideDual()
+        mode = self._call_exchange_account(
+            "get_position_side_dual",
+            lambda: self.exchange.fapiPrivateGetPositionSideDual(),
+            retries=2,
+            timeout_s=10.0,
+        )
         self._track_api_weight("fapiPrivateGetPositionSideDual", 1, "account")
         return mode
 
     def fetch_tickers(self, symbols=None, params=None):
         if symbols is None:
-            tickers = self.exchange.fetch_tickers(params=params or {"type": "future"})
+            tickers = self._call_exchange(
+                "fetch_tickers",
+                lambda: self.exchange.fetch_tickers(
+                    params=params or {"type": "future"}
+                ),
+                retries=2,
+                timeout_s=20.0,
+            )
         else:
-            tickers = self.exchange.fetch_tickers(symbols, params=params or {})
+            tickers = self._call_exchange(
+                "fetch_tickers",
+                lambda: self.exchange.fetch_tickers(symbols, params=params or {}),
+                retries=2,
+                timeout_s=20.0,
+            )
         self._track_api_weight("fetch_tickers", 40, "market")
         return tickers
 
     def fetch_ticker(self, symbol: str):
-        ticker = self.exchange.fetch_ticker(symbol)
+        ticker = self._call_exchange(
+            "fetch_ticker",
+            lambda: self.exchange.fetch_ticker(symbol),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fetch_ticker", 1, "market")
         return ticker
 
     def fetch_positions(self):
-        positions = self.exchange.fetch_positions()
+        positions = self._call_exchange_account(
+            "fetch_positions",
+            lambda: self.exchange.fetch_positions(),
+            retries=2,
+            timeout_s=20.0,
+        )
         self._track_api_weight("fetch_positions", 5, "account")
         return positions
 
     def fetch_open_orders(self, symbol: Optional[str] = None):
         if symbol:
-            orders = self.exchange.fetch_open_orders(symbol)
+            orders = self._call_exchange_account(
+                "fetch_open_orders",
+                lambda: self.exchange.fetch_open_orders(symbol),
+                retries=2,
+                timeout_s=20.0,
+            )
         else:
-            orders = self.exchange.fetch_open_orders()
+            orders = self._call_exchange_account(
+                "fetch_open_orders",
+                lambda: self.exchange.fetch_open_orders(),
+                retries=2,
+                timeout_s=20.0,
+            )
         self._track_api_weight("fetch_open_orders", 5, "account")
         return orders
 
@@ -475,7 +541,12 @@ class ExecutionService:
                 "symbol": self.exchange.market_id(symbol),
                 "origClientOrderId": client_order_id,
             }
-            order = self.exchange.fapiPrivateGetOrder(params)
+            order = self._call_exchange_account(
+                "fetch_order_by_client_id",
+                lambda: self.exchange.fapiPrivateGetOrder(params),
+                retries=2,
+                timeout_s=15.0,
+            )
             self._track_api_weight("fapiPrivateGetOrder", 1, "account")
             if isinstance(order, dict) and order:
                 parsed = {
@@ -502,7 +573,12 @@ class ExecutionService:
         return None
 
     def fetch_my_trades(self, symbol: str, limit: int = 2):
-        trades = self.exchange.fetch_my_trades(symbol, limit=limit)
+        trades = self._call_exchange_account(
+            "fetch_my_trades",
+            lambda: self.exchange.fetch_my_trades(symbol, limit=limit),
+            retries=2,
+            timeout_s=20.0,
+        )
         self._track_api_weight("fetch_my_trades", 5, "account")
         return trades
 
@@ -519,32 +595,52 @@ class ExecutionService:
         return canceled
 
     def fetch_all_prices(self):
-        prices = self.exchange.fapiPublicGetTickerPrice()
+        prices = self._call_exchange(
+            "fetch_all_prices",
+            lambda: self.exchange.fapiPublicGetTickerPrice(),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fapiPublicGetTickerPrice", 1, "market")
         return prices
 
     def fetch_book_tickers(self):
-        books = self.exchange.fapiPublicGetTickerBookTicker()
+        books = self._call_exchange(
+            "fetch_book_tickers",
+            lambda: self.exchange.fapiPublicGetTickerBookTicker(),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fapiPublicGetTickerBookTicker", 1, "market")
         return books
 
     def fetch_book_ticker(self, symbol: str):
         market_id = self.exchange.market_id(symbol)
-        book = self.exchange.fapiPublicGetTickerBookTicker({"symbol": market_id})
+        book = self._call_exchange(
+            "fetch_book_ticker",
+            lambda: self.exchange.fapiPublicGetTickerBookTicker({"symbol": market_id}),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fapiPublicGetTickerBookTicker", 1, "market")
         if isinstance(book, list):
             return (book[0] if book else {}) or {}
         return book or {}
 
     def fetch_funding_rate(self, symbol: str):
-        fr = self.exchange.fetch_funding_rate(symbol)
+        fr = self._call_exchange(
+            "fetch_funding_rate",
+            lambda: self.exchange.fetch_funding_rate(symbol),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fetch_funding_rate", 1, "market")
         return fr
 
     def fetch_open_interest(self, symbol: str) -> Optional[dict]:
         """Fetch Open Interest para un símbolo de futuros. Peso API: 1."""
         try:
-            oi = self._call_exchange(
+            oi = self._call_exchange_account(
                 "fetch_open_interest",
                 lambda: self.exchange.fetch_open_interest(symbol),
                 retries=1,
@@ -557,20 +653,30 @@ class ExecutionService:
             return None
 
     def fetch_order_book(self, symbol: str, limit: int = 20):
-        ob = self.exchange.fetch_order_book(symbol, limit=limit)
+        ob = self._call_exchange(
+            "fetch_order_book",
+            lambda: self.exchange.fetch_order_book(symbol, limit=limit),
+            retries=2,
+            timeout_s=15.0,
+        )
         self._track_api_weight("fetch_order_book", 1, "market")
         return ob
 
     def create_reduce_only_market_order(
         self, symbol: str, side: str, amount: float, params=None
     ):
-        order = self.exchange.create_order(
-            symbol,
-            "MARKET",
-            side.lower(),
-            amount,
-            None,
-            params=(params or {"reduceOnly": True}),
+        order = self._call_exchange(
+            "create_reduce_only_market_order",
+            lambda: self.exchange.create_order(
+                symbol,
+                "MARKET",
+                side.lower(),
+                amount,
+                None,
+                params=(params or {"reduceOnly": True}),
+            ),
+            retries=3,
+            timeout_s=25.0,
         )
         self._track_api_weight("create_order", 1, "trading")
         return order
@@ -588,7 +694,12 @@ class ExecutionService:
                     f"⚠️ Leverage ajustado por guardrail: {requested_leverage}x -> {bounded_leverage}x ({symbol})"
                 )
 
-            result = self.exchange.set_leverage(bounded_leverage, symbol)
+            result = self._call_exchange(
+                "set_leverage",
+                lambda: self.exchange.set_leverage(bounded_leverage, symbol),
+                retries=2,
+                timeout_s=15.0,
+            )
             self._track_api_weight("set_leverage", 1, "trading")
             return result
         except Exception as e:
@@ -681,7 +792,12 @@ class ExecutionService:
 
         for attempt in range(2):
             try:
-                balance: CCXTBalanceResponse = self.exchange.fetch_balance()
+                balance: CCXTBalanceResponse = self._call_exchange_account(
+                    "get_balance",
+                    lambda: self.exchange.fetch_balance(),
+                    retries=1,
+                    timeout_s=15.0,
+                )
                 self._track_api_weight("fetch_balance", 5, "account")
 
                 info = balance.get("info", {})
@@ -710,9 +826,21 @@ class ExecutionService:
                     )
                     try:
                         if hasattr(self.exchange, "load_time_difference"):
-                            self.exchange.load_time_difference()
+                            self._call_exchange(
+                                "load_time_difference",
+                                lambda: self.exchange.load_time_difference(),
+                                retries=1,
+                                timeout_s=10.0,
+                                _no_lock=False,
+                            )
                         elif hasattr(self.exchange, "fetch_time"):
-                            self.exchange.fetch_time()
+                            self._call_exchange(
+                                "fetch_time",
+                                lambda: self.exchange.fetch_time(),
+                                retries=1,
+                                timeout_s=10.0,
+                                _no_lock=False,
+                            )
                     except Exception as sync_error:
                         self.logger.warning(
                             f"⚠️ No se pudo sincronizar diferencia horaria: {sync_error}"
@@ -763,6 +891,90 @@ class ExecutionService:
             self.logger.error(f"⚠️ Error colocando Hard SL {symbol}: {e}")
             return None
 
+    def _close_position_chase(
+        self, symbol: str, side: str, amount: float,
+        context_label: str = "",
+        emergency_op_name: str = "close_position_emergency_create_order",
+        hard_floor_label: str = "",
+        emergency_fail_label: str = "",
+    ) -> Optional[CCXTOrder]:
+        exit_side = "sell" if side.lower() == "buy" else "buy"
+        params = {"reduceOnly": True}
+
+        try:
+            self._call_exchange(
+                "cancel_all_orders",
+                lambda: self.exchange.cancel_all_orders(symbol),
+                retries=3,
+                timeout_s=20.0,
+            )
+            self._track_api_weight("cancel_all_orders", 1, "trading")
+            self._record_cancel_all_orders_success(symbol)
+        except Exception as error:
+            self._record_cancel_all_orders_failure(symbol, error)
+
+        current_price = float(
+            (
+                self._call_exchange_account(
+                    "fetch_ticker",
+                    lambda: self.exchange.fetch_ticker(symbol),
+                    retries=2,
+                    timeout_s=15.0,
+                )
+                or {}
+            ).get("last", 0)
+            or 0
+        )
+
+        if current_price > 0:
+            last_order = _execute_chase_limit_steps(
+                self, symbol, exit_side, amount, current_price, params
+            )
+
+            if last_order and last_order.get("exit_state") == "FILLED":
+                return last_order
+
+            prefix = f" ({hard_floor_label})" if hard_floor_label else ""
+            if last_order:
+                self.logger.critical(
+                    f"🚨 HARD_FLOOR_REACHED{prefix} {symbol}: posición atrapada en libro @ "
+                    f"{last_order.get('price', 'N/A')}. Alerta manual requerida."
+                )
+                self._track_emergency_stuck(symbol, exit_side, amount, last_order)
+                return _with_exit_state(last_order, "STUCK")
+            else:
+                self.logger.warning(
+                    f"⚠️ Sin fill tras persecución {symbol}, ordenando al precio actual"
+                )
+                try:
+                    emergency_price = self.exchange.price_to_precision(
+                        symbol, current_price
+                    )
+                    order = self._call_exchange(
+                        emergency_op_name,
+                        lambda: self.exchange.create_order(
+                            symbol,
+                            "limit",
+                            exit_side,
+                            amount,
+                            emergency_price,
+                            params,
+                        ),
+                        retries=3,
+                        timeout_s=20.0,
+                    )
+                    self._track_api_weight("create_order", 1, "trading")
+                    self._no_price_exit_state.pop(symbol, None)
+                    return _with_exit_state(order, "OPEN_UNCONFIRMED")
+                except Exception as emergency_err:
+                    fatal_label = f" ({emergency_fail_label})" if emergency_fail_label else ""
+                    self.logger.critical(
+                        f"❌ EMERGENCY_EXIT_FAILED{fatal_label} {symbol}: {emergency_err}"
+                    )
+                    return None
+        else:
+            return self._handle_no_price_exit(symbol, exit_side, amount)
+
     def close_position(
         self, symbol: str, side: str, amount: float
     ) -> Optional[CCXTOrder]:
@@ -773,90 +985,10 @@ class ExecutionService:
         - NUNCA fallback a MARKET
         """
         try:
-            exit_side = "sell" if side.lower() == "buy" else "buy"
-            params = {"reduceOnly": True}
-
-            # Cancelar órdenes pendientes antes de cerrar
-            try:
-                self._call_exchange(
-                    "cancel_all_orders",
-                    lambda: self.exchange.cancel_all_orders(symbol),
-                    retries=3,
-                    timeout_s=20.0,
-                )
-                self._track_api_weight("cancel_all_orders", 1, "trading")
-                self._record_cancel_all_orders_success(symbol)
-            except Exception as error:
-                self._record_cancel_all_orders_failure(symbol, error)
-
-            # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
-            current_price = float(
-                (
-                    self._call_exchange(
-                        "fetch_ticker",
-                        lambda: self.exchange.fetch_ticker(symbol),
-                        retries=2,
-                        timeout_s=15.0,
-                    )
-                    or {}
-                ).get("last", 0)
-                or 0
+            return self._close_position_chase(
+                symbol, side, amount,
+                emergency_op_name="close_position_emergency_create_order",
             )
-
-            if current_price > 0:
-                last_order = _execute_chase_limit_steps(
-                    self, symbol, exit_side, amount, current_price, params
-                )
-
-                if last_order and last_order.get("exit_state") == "FILLED":
-                    return last_order
-
-                # [HARD FLOOR] Si llegó aquí, ningún step llenó
-                # Dejar la última orden en el libro y marcar EMERGENCY_EXIT_STUCK
-                if last_order:
-                    self.logger.critical(
-                        f"🚨 HARD_FLOOR_REACHED {symbol}: posición atrapada en libro @ "
-                        f"{last_order.get('price', 'N/A')}. Alerta manual requerida."
-                    )
-                    # Emitir evento de telemetría de emergencia
-                    self._track_emergency_stuck(symbol, exit_side, amount, last_order)
-                    return _with_exit_state(last_order, "STUCK")
-                else:
-                    # Si ninguna orden se creó, intentar una última orden al precio actual
-                    # como último recurso (sin slippage protection, pero sin MARKET)
-                    self.logger.warning(
-                        f"⚠️ Sin fill tras persecución {symbol}, ordenando al precio actual"
-                    )
-                    try:
-                        market = self.exchange.market(symbol)
-                        emergency_price = self.exchange.price_to_precision(
-                            symbol, current_price
-                        )
-                        order = self._call_exchange(
-                            "close_position_emergency_create_order",
-                            lambda: self.exchange.create_order(
-                                symbol,
-                                "limit",
-                                exit_side,
-                                amount,
-                                emergency_price,
-                                params,
-                            ),
-                            retries=3,
-                            timeout_s=20.0,
-                        )
-                        self._track_api_weight("create_order", 1, "trading")
-                        self._no_price_exit_state.pop(symbol, None)
-                        return _with_exit_state(order, "OPEN_UNCONFIRMED")
-                    except Exception as emergency_err:
-                        self.logger.critical(
-                            f"❌ EMERGENCY_EXIT_FAILED {symbol}: {emergency_err}"
-                        )
-                        return None
-            else:
-                # Sin precio disponible → NO ejecutar (evitar slippage ciego)
-                return self._handle_no_price_exit(symbol, exit_side, amount)
-
         except Exception as e:
             self.logger.error(f"❌ Error cerrando posición {symbol}: {e}")
             raise e
@@ -874,81 +1006,13 @@ class ExecutionService:
             f"⚠️ [SMART EXIT] Chase Limit (-2%→-5%) por degradación neuronal en {symbol} ({side})"
         )
         try:
-            exit_side = "sell" if side.lower() == "buy" else "buy"
-            params = {"reduceOnly": True}
-
-            # Limpieza exhaustiva de la orden (Hard Reset)
-            try:
-                self._call_exchange(
-                    "cancel_all_orders",
-                    lambda: self.exchange.cancel_all_orders(symbol),
-                    retries=3,
-                    timeout_s=20.0,
-                )
-                self._track_api_weight("cancel_all_orders", 1, "trading")
-                self._record_cancel_all_orders_success(symbol)
-            except Exception as e:
-                self._record_cancel_all_orders_failure(symbol, e)
-
-            # [v119] Chase Limit: -2%, -3%, -4%, -5% (Hard Floor)
-            current_price = float(
-                (
-                    self._call_exchange(
-                        "fetch_ticker",
-                        lambda: self.exchange.fetch_ticker(symbol),
-                        retries=2,
-                        timeout_s=15.0,
-                    )
-                    or {}
-                ).get("last", 0)
-                or 0
+            return self._close_position_chase(
+                symbol, side, amount,
+                context_label="degradation",
+                emergency_op_name="close_degradation_emergency_create_order",
+                hard_floor_label="degradation",
+                emergency_fail_label="degradation",
             )
-
-            if current_price > 0:
-                last_order = _execute_chase_limit_steps(
-                    self, symbol, exit_side, amount, current_price, params
-                )
-
-                if last_order and last_order.get("exit_state") == "FILLED":
-                    return last_order
-
-                if last_order:
-                    self.logger.critical(
-                        f"🚨 HARD_FLOOR_REACHED (degradation) {symbol}: posición atrapada @ "
-                        f"{last_order.get('price', 'N/A')}. Intervención manual."
-                    )
-                    self._track_emergency_stuck(symbol, exit_side, amount, last_order)
-                    return _with_exit_state(last_order, "STUCK")
-                else:
-                    # Último recurso: precio actual
-                    try:
-                        emergency_price = self.exchange.price_to_precision(
-                            symbol, current_price
-                        )
-                        order = self._call_exchange(
-                            "close_degradation_emergency_create_order",
-                            lambda: self.exchange.create_order(
-                                symbol,
-                                "limit",
-                                exit_side,
-                                amount,
-                                emergency_price,
-                                params,
-                            ),
-                            retries=3,
-                            timeout_s=20.0,
-                        )
-                        self._track_api_weight("create_order", 1, "trading")
-                        self._no_price_exit_state.pop(symbol, None)
-                        return _with_exit_state(order, "OPEN_UNCONFIRMED")
-                    except Exception as emergency_err:
-                        self.logger.critical(
-                            f"❌ EMERGENCY_EXIT_FAILED (degradation) {symbol}: {emergency_err}"
-                        )
-                        return None
-            else:
-                return self._handle_no_price_exit(symbol, exit_side, amount)
-
         except Exception as e:
             self.logger.critical(
                 f"❌ FATAL ERROR ejecutando Salida por Degradación en {symbol}: {e}"

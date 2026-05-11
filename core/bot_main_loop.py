@@ -4,8 +4,9 @@ from datetime import datetime
 import logging
 
 from config import Config
+from core.cycle_context import CycleContext
+from core.risk_policy import activate_runtime_protection
 from core.risk_engine import get_daily_pnl_pct
-from notifier import send_telegram_msg
 
 
 def check_daily_drawdown_breaker(bot) -> bool:
@@ -21,29 +22,56 @@ def check_daily_drawdown_breaker(bot) -> bool:
         wallet_balance = float(getattr(bot, "balance", 0.0) or 0.0)
 
     daily_pnl_pct, daily_pnl_usd = get_daily_pnl_pct(db_path, wallet_balance)
+    if daily_pnl_pct is None or daily_pnl_usd is None:
+        msg = "CRITICAL: Daily drawdown unverifiable; REAL entries blocked pending manual intervention"
+        logging.getLogger("SniperAI").critical(msg)
+        activate_runtime_protection(
+            bot,
+            circuit_breaker=True,
+            pause=True,
+            log_message=f"🚨 {msg}",
+            telegram_message=(
+                "🚨 *PÁNICO: DRAWDOWN NO VERIFICABLE*\n"
+                "No se pudo verificar la pérdida diaria REAL UTC.\n"
+                "Nuevas entradas REAL bloqueadas hasta intervención manual."
+            ),
+            alert_once_attr="daily_drawdown_alert_sent",
+            reason="DAILY_DRAWDOWN_UNVERIFIED",
+            source="daily_drawdown_breaker",
+            extra={"wallet_balance": float(wallet_balance)},
+        )
+        return True
     max_drawdown = float(getattr(Config, "MAX_DAILY_DRAWDOWN_PCT", 0.03) or 0.03)
     if daily_pnl_pct > -max_drawdown:
         return False
 
-    bot.circuit_breaker_active = True
-    bot.is_paused = True
     msg = (
         "CRITICAL: Circuit Breaker Active "
         f"daily_pnl={daily_pnl_pct * 100:.2f}% "
         f"usd=${daily_pnl_usd:.2f} limit=-{max_drawdown * 100:.2f}%"
     )
     logging.getLogger("SniperAI").critical(msg)
-    bot.log(f"🚨 {msg}")
-
-    if not bool(getattr(bot, "daily_drawdown_alert_sent", False)):
-        send_telegram_msg(
+    activate_runtime_protection(
+        bot,
+        circuit_breaker=True,
+        pause=True,
+        log_message=f"🚨 {msg}",
+        telegram_message=(
             "🚨 *PÁNICO: CIRCUIT BREAKER ACTIVO*\n"
             f"Pérdida diaria REAL UTC: {daily_pnl_pct * 100:.2f}% "
             f"(${daily_pnl_usd:.2f})\n"
             f"Límite: -{max_drawdown * 100:.2f}%\n"
             "Nuevas entradas REAL bloqueadas hasta intervención manual."
-        )
-        bot.daily_drawdown_alert_sent = True
+        ),
+        alert_once_attr="daily_drawdown_alert_sent",
+        reason="DAILY_DRAWDOWN_LIMIT_REACHED",
+        source="daily_drawdown_breaker",
+        extra={
+            "daily_pnl_pct": float(daily_pnl_pct),
+            "daily_pnl_usd": float(daily_pnl_usd),
+            "max_drawdown": float(max_drawdown),
+        },
+    )
     return True
 
 
@@ -136,6 +164,11 @@ def run_main_logic(bot):
                 bot._finalize_scan_cycle(signal_stats)
                 bot._run_cycle_wait_and_api_log()
                 continue
+
+            bot.cycle_context = CycleContext.capture(
+                bot, tickers=tickers, pnl_real_hoy=pnl_real_hoy
+            )
+
             bot._run_signal_scan_cycle(top_triage, results, signal_stats, pnl_real_hoy)
 
             bot._finalize_scan_cycle(signal_stats)

@@ -11,7 +11,7 @@ from core.trade_manager import execute_order
 
 
 class AdvancedRuntimeFlowsTest(unittest.TestCase):
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=True)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=True)
     def test_execute_order_blocks_real_when_shadow_logger_halted(self, _mock_halted):
         bot = SimpleNamespace(log=MagicMock())
 
@@ -28,7 +28,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertEqual(result, "TRADING_HALTED_DB_ERROR")
         bot.log.assert_called_once()
 
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_blocks_symbol_from_tactical_matrix(self, _mock_halted):
         bot = SimpleNamespace(
             log=MagicMock(),
@@ -47,7 +47,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(result, "SYMBOL_BLOCKED_MATRIX")
 
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_rejects_when_balance_below_min_notional(self, _mock_halted):
         bot = SimpleNamespace(
             log=MagicMock(),
@@ -71,7 +71,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(result, "INSUFFICIENT_BALANCE_MIN_NOTIONAL")
 
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_blocks_real_when_halt_system_active(self, _mock_halted):
         bot = SimpleNamespace(
             log=MagicMock(),
@@ -106,7 +106,7 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(decision, "OK")
 
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_blocks_duplicate_when_recovery_pending(self, _mock_halted):
         bot = SimpleNamespace(
             log=MagicMock(),
@@ -130,9 +130,9 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
 
         self.assertEqual(result, "RECOVERY_PENDING_STATE")
 
-    @patch("core.trade_manager.Config.PAPER_MODE", False)
-    @patch("core.trade_manager.send_telegram_msg")
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_timeout_after_pending_send_recovers_via_reconciliation(
         self, _mock_halted, _mock_tg
     ):
@@ -227,9 +227,9 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
             "INTENT_EXPIRED",
         )
 
-    @patch("core.trade_manager.Config.PAPER_MODE", False)
-    @patch("core.trade_manager.send_telegram_msg")
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_tracks_partial_fill_state(self, _mock_halted, _mock_tg):
         bot = SimpleNamespace()
         bot.lock = RLock()
@@ -304,11 +304,11 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertEqual(trade.get("requested_amount"), 10.0)
         self.assertEqual(trade.get("remaining_amount"), 6.0)
 
-    @patch("core.trade_manager.Config.PAPER_MODE", True)
-    @patch("core.trade_manager.Config.MAX_DIRECTIONAL_TRADES", 1)
-    @patch("core.trade_manager.Config.MAX_SHADOW_TRADES", 2)
-    @patch("core.trade_manager.send_telegram_msg")
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.Config.PAPER_MODE", True)
+    @patch("core.trade_entry.Config.MAX_DIRECTIONAL_TRADES", 1)
+    @patch("core.trade_entry.Config.MAX_SHADOW_TRADES", 2)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_paper_directional_limit_degrades_to_shadow(
         self, _mock_halted, _mock_tg
     ):
@@ -379,10 +379,10 @@ class AdvancedRuntimeFlowsTest(unittest.TestCase):
         self.assertEqual(result, "OK_DEGRADED: MAX_DIRECTIONAL_DEGRADED")
         self.assertTrue(bot.active_trades["BTC/USDT"].get("is_shadow"))
 
-    @patch("core.trade_manager.Config.PAPER_MODE", False)
-    @patch("core.trade_manager.Config.MAX_SHADOW_TRADES", 1)
-    @patch("core.trade_manager.send_telegram_msg")
-    @patch("core.trade_manager.shadow_logger.is_trading_halted", return_value=False)
+    @patch("core.trade_entry.Config.PAPER_MODE", False)
+    @patch("core.trade_entry.Config.MAX_SHADOW_TRADES", 1)
+    @patch("core.trade_entry.send_telegram_msg")
+    @patch("core.trade_entry.shadow_logger.is_trading_halted", return_value=False)
     def test_execute_order_discards_signal_alert_when_shadow_limit_blocks_entry(
         self, _mock_halted, _mock_tg
     ):

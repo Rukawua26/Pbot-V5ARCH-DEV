@@ -7,8 +7,8 @@ from core.trade_manager import close_trade
 
 
 class RuntimeSafetyRegressionTest(unittest.TestCase):
-    @patch("core.trade_manager.Config.PAPER_MODE", False)
-    @patch("core.trade_manager.send_telegram_msg")
+    @patch("core.trade_exit.Config.PAPER_MODE", False)
+    @patch("core.trade_exit.send_telegram_msg")
     def test_real_close_keeps_trade_when_exchange_position_not_flat(self, _mocked_tg):
         trade = {
             "symbol": "BTC/USDT",

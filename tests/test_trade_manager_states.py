@@ -36,7 +36,7 @@ class TestGetLocalOpenTradeCounts(unittest.TestCase):
 
 
 class TestExchangePositionIsFlat(unittest.TestCase):
-    @patch("core.trade_manager.normalize_position_symbol")
+    @patch("core.trade_entry.normalize_position_symbol")
     def test_returns_true_when_no_positions(self, mock_norm):
         from core.trade_manager import _exchange_position_is_flat
         bot = MagicMock()
@@ -45,7 +45,7 @@ class TestExchangePositionIsFlat(unittest.TestCase):
         result = _exchange_position_is_flat(bot, "BTC/USDT")
         self.assertTrue(result)
 
-    @patch("core.trade_manager.normalize_position_symbol")
+    @patch("core.trade_entry.normalize_position_symbol")
     def test_returns_false_when_position_open(self, mock_norm):
         from core.trade_manager import _exchange_position_is_flat
         bot = MagicMock()
@@ -96,7 +96,7 @@ class TestValidateEntryPreconditionsExtended(unittest.TestCase):
         bot.log = MagicMock()
         return bot
 
-    @patch("core.trade_manager.shadow_logger")
+    @patch("core.trade_entry.shadow_logger")
     def test_returns_halted_when_shadow_logger_halted(self, mock_shadow):
         from core.trade_manager import _validate_entry_preconditions
         mock_shadow.is_trading_halted.return_value = True

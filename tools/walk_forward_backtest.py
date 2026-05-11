@@ -46,7 +46,11 @@ def default_param_grid() -> list[BacktestParams]:
 
 
 def load_candles_csv(path: Path) -> pd.DataFrame:
-    candles = pd.read_csv(path)
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        candles = pd.read_parquet(path)
+    else:
+        candles = pd.read_csv(path)
     required = {"time", "open", "high", "low", "close", "volume"}
     missing = required - set(candles.columns)
     if missing:

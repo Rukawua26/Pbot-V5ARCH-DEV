@@ -99,8 +99,33 @@ class TestGetDailyPnlPct(unittest.TestCase):
     def test_handles_db_error_gracefully(self, mock_logging):
         from core.risk_engine import get_daily_pnl_pct
         pct, usd = get_daily_pnl_pct("/nonexistent/path.db", 1000.0)
-        self.assertEqual(pct, 0.0)
-        self.assertEqual(usd, 0.0)
+        self.assertIsNone(pct)
+        self.assertIsNone(usd)
+
+
+class TestRiskEngineDailyDrawdown(unittest.TestCase):
+    def setUp(self):
+        with patch("core.risk_engine.CrashPredictor"):
+            with patch("core.risk_engine.HyperoptConfigLoader") as mock_hyperopt:
+                mock_hyperopt.is_enabled.return_value = False
+                from core.risk_engine import RiskEngine
+                self.engine = RiskEngine(brain=MagicMock())
+
+    def test_check_daily_drawdown_fails_closed_when_unverified(self):
+        self.engine.brain.get_daily_real_pnl = MagicMock(side_effect=RuntimeError("db down"))
+
+        allowed, reason = self.engine.check_daily_drawdown(1000.0)
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "DAILY_DRAWDOWN_UNVERIFIED")
+
+    def test_check_daily_drawdown_blocks_when_pnl_is_none(self):
+        self.engine.brain.get_daily_real_pnl = MagicMock(return_value=(None, None))
+
+        allowed, reason = self.engine.check_daily_drawdown(1000.0)
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "DAILY_DRAWDOWN_UNVERIFIED")
 
 
 class TestRiskEngineGetExitLevels(unittest.TestCase):

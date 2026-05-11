@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import logging
 from config import Config
+
+if TYPE_CHECKING:
+    from core.candle_close_cache import CandleCloseCache
 
 logger = logging.getLogger("SniperAI")
 
@@ -16,12 +21,22 @@ class StrategyUtils:
     """
 
     _ob_cache: Dict[str, str] = {}
+    _candle_cache: Optional["CandleCloseCache"] = None
 
     @staticmethod
     def compute_runtime_snapshot(df: pd.DataFrame) -> Optional[Dict[str, float]]:
-        """Calcula indicadores raw sin defaults mágicos. Si falla, retorna None."""
         if df is None or df.empty:
             return None
+
+        cc = StrategyUtils._candle_cache
+        if cc is not None and "time" in df.columns:
+            try:
+                candle_ms = int(df["time"].iloc[-1])
+                cached = cc.get("snapshot", "runtime", "1h", candle_ms)
+                if cached is not None:
+                    return cached
+            except Exception:
+                logger.debug("CandleCloseCache read failed", exc_info=True)
 
         required_cols = ["open", "high", "low", "close", "volume"]
         if any(col not in df.columns for col in required_cols):
@@ -70,7 +85,7 @@ class StrategyUtils:
             if bb_upper <= bb_lower:
                 return None
 
-            return {
+            result = {
                 "rows": float(len(work)),
                 "ema": ema,
                 "rsi": rsi,
@@ -83,6 +98,14 @@ class StrategyUtils:
                 "bb_pos": (close - bb_lower) / (bb_upper - bb_lower),
                 "bb_width": (bb_upper - bb_lower) / close,
             }
+
+            if cc is not None and "time" in df.columns:
+                try:
+                    cc.set("snapshot", "runtime", "1h", int(df["time"].iloc[-1]), result)
+                except Exception:
+                    logger.debug("CandleCloseCache write failed", exc_info=True)
+
+            return result
         except Exception:
             return None
 

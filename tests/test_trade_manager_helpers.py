@@ -49,53 +49,73 @@ class TestClampLeverage(unittest.TestCase):
 class TestFailSafeCloseWhenSlMissing(unittest.TestCase):
     """Tests for _fail_safe_close_when_sl_missing with mocked bot."""
 
-    def _make_bot(self, side_effect=None):
+    def _make_bot(self, close_effect=None, market_effect=None):
         bot = MagicMock()
-        if side_effect:
-            bot.execution.close_position.side_effect = side_effect
+        if close_effect:
+            bot.execution.close_position.side_effect = close_effect
         else:
             bot.execution.close_position.return_value = True
+        if market_effect:
+            bot.execution.create_reduce_only_market_order.side_effect = market_effect
+        else:
+            bot.execution.create_reduce_only_market_order.return_value = True
         bot.log = MagicMock()
         return bot
 
-    def test_returns_true_on_success(self):
+    def test_returns_true_on_success_first_attempt(self):
         from core.trade_manager import _fail_safe_close_when_sl_missing
         bot = self._make_bot()
         result = _fail_safe_close_when_sl_missing(bot, "BTC/USDT", "BUY", 0.1)
         self.assertTrue(result)
         bot.execution.close_position.assert_called_once_with("BTC/USDT", "BUY", 0.1)
 
+    def test_returns_true_on_market_fallback(self):
+        from core.trade_manager import _fail_safe_close_when_sl_missing
+        bot = MagicMock()
+        bot.execution.close_position.side_effect = Exception("chase limit fail")
+        bot.execution.create_reduce_only_market_order.return_value = True
+        bot.log = MagicMock()
+        result = _fail_safe_close_when_sl_missing(bot, "BTC/USDT", "BUY", 0.1)
+        self.assertTrue(result)
+        self.assertEqual(bot.execution.close_position.call_count, 3)
+        bot.execution.create_reduce_only_market_order.assert_called_once()
+
     @patch("time.sleep", return_value=None)
-    def test_retries_on_failure(self, mock_sleep):
+    def test_retries_chase_then_market(self, mock_sleep):
         from core.trade_manager import _fail_safe_close_when_sl_missing
         bot = MagicMock()
         bot.execution.close_position.side_effect = [Exception("fail1"), Exception("fail2"), True]
+        bot.execution.create_reduce_only_market_order.return_value = True
         bot.log = MagicMock()
 
         result = _fail_safe_close_when_sl_missing(bot, "ETH/USDT", "SELL", 0.05)
         self.assertTrue(result)
         self.assertEqual(bot.execution.close_position.call_count, 3)
+        bot.execution.create_reduce_only_market_order.assert_not_called()
 
     @patch("time.sleep", return_value=None)
-    def test_returns_false_after_three_failures(self, mock_sleep):
+    def test_returns_false_after_all_attempts_fail(self, mock_sleep):
         from core.trade_manager import _fail_safe_close_when_sl_missing
         bot = MagicMock()
-        bot.execution.close_position.side_effect = Exception("persistent fail")
+        bot.execution.close_position.side_effect = Exception("persistent chase fail")
+        bot.execution.create_reduce_only_market_order.side_effect = Exception("persistent market fail")
         bot.log = MagicMock()
 
         result = _fail_safe_close_when_sl_missing(bot, "BTC/USDT", "BUY", 0.1)
         self.assertFalse(result)
         self.assertEqual(bot.execution.close_position.call_count, 3)
+        self.assertEqual(bot.execution.create_reduce_only_market_order.call_count, 2)
 
     @patch("time.sleep", return_value=None)
     def test_logs_each_failure(self, mock_sleep):
         from core.trade_manager import _fail_safe_close_when_sl_missing
         bot = MagicMock()
-        bot.execution.close_position.side_effect = [Exception("e1"), Exception("e2"), Exception("e3")]
+        bot.execution.close_position.side_effect = Exception("e")
+        bot.execution.create_reduce_only_market_order.side_effect = Exception("e")
         bot.log = MagicMock()
 
         _fail_safe_close_when_sl_missing(bot, "BTC/USDT", "BUY", 0.1)
-        self.assertEqual(bot.log.call_count, 3)
+        self.assertEqual(bot.log.call_count, 7)
 
 
 class TestValidateEntryPreconditions(unittest.TestCase):
@@ -138,7 +158,7 @@ class TestValidateEntryPreconditions(unittest.TestCase):
 
     def test_returns_trading_halted_when_shadow_logger_halted(self):
         from core.trade_manager import _validate_entry_preconditions
-        with patch("core.trade_manager.shadow_logger") as mock_shadow:
+        with patch("core.trade_entry.shadow_logger") as mock_shadow:
             mock_shadow.is_trading_halted.return_value = True
             bot = MagicMock()
             bot.stop_requested = False
