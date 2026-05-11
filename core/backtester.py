@@ -107,18 +107,15 @@ class VectorBacktester:
         out[window - 1 :] = entropy
         return out
 
-    def evaluate(
+    def _signal_components(
         self,
         alma_offset: float,
         alma_sigma: float,
         z_score_threshold: float,
         entropy_bins: int,
         adx_threshold: float,
-        stop_loss_pct: float,
-        take_profit_pct: float,
-        fee_rate: float = 0.0004,
         strategy_mode: str = "mt_sr_regime",
-    ) -> VectorBacktestResult:
+    ) -> dict[str, np.ndarray]:
         # MT vectorizado
         w9 = self._alma_weights(9, alma_offset, alma_sigma)
         w20 = self._alma_weights(20, alma_offset, alma_sigma)
@@ -224,6 +221,74 @@ class VectorBacktester:
         raw_signal = np.where(score >= 60.0, 1.0, np.where(score <= 40.0, -1.0, 0.0))
         signal = np.roll(raw_signal, 1)
         signal[0] = 0.0
+        return {
+            "mt_vote": mt_vote,
+            "sr_vote": sr_vote,
+            "adx": adx,
+            "score": score,
+            "raw_signal": raw_signal,
+            "signal": signal,
+        }
+
+    def signal_frame(
+        self,
+        alma_offset: float,
+        alma_sigma: float,
+        z_score_threshold: float,
+        entropy_bins: int,
+        adx_threshold: float,
+        strategy_mode: str = "mt_sr_regime",
+    ) -> pd.DataFrame:
+        components = self._signal_components(
+            alma_offset=alma_offset,
+            alma_sigma=alma_sigma,
+            z_score_threshold=z_score_threshold,
+            entropy_bins=entropy_bins,
+            adx_threshold=adx_threshold,
+            strategy_mode=strategy_mode,
+        )
+        signal = components["signal"]
+        source_score = np.roll(components["score"], 1)
+        source_raw_signal = np.roll(components["raw_signal"], 1)
+        source_score[0] = np.nan
+        source_raw_signal[0] = 0.0
+        proxy_label = np.where(signal > 0, "BUY", np.where(signal < 0, "SELL", "NONE"))
+        return pd.DataFrame(
+            {
+                "time": self.df["time"],
+                "close": self.close,
+                "mt_vote": components["mt_vote"],
+                "sr_vote": components["sr_vote"],
+                "adx": components["adx"],
+                "score": components["score"],
+                "raw_signal": components["raw_signal"],
+                "signal_source_score": source_score,
+                "signal_source_raw_signal": source_raw_signal,
+                "signal": signal,
+                "proxy_label": proxy_label,
+            }
+        )
+
+    def evaluate(
+        self,
+        alma_offset: float,
+        alma_sigma: float,
+        z_score_threshold: float,
+        entropy_bins: int,
+        adx_threshold: float,
+        stop_loss_pct: float,
+        take_profit_pct: float,
+        fee_rate: float = 0.0004,
+        strategy_mode: str = "mt_sr_regime",
+    ) -> VectorBacktestResult:
+        signal = self._signal_components(
+            alma_offset=alma_offset,
+            alma_sigma=alma_sigma,
+            z_score_threshold=z_score_threshold,
+            entropy_bins=entropy_bins,
+            adx_threshold=adx_threshold,
+            strategy_mode=strategy_mode,
+        )["signal"]
 
         # Simulador event-driven de trades con TP/SL (no overlap de posiciones)
         n = self.close.shape[0]

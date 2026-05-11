@@ -73,6 +73,45 @@ class StrategyValidationReportTests(unittest.TestCase):
         self.assertFalse(verdict["passed"])
         self.assertGreaterEqual(len(verdict["failures"]), 5)
 
+    def test_evaluate_strategy_report_includes_fidelity_gate_when_provided(self):
+        verdict = evaluate_strategy_report(
+            walk_forward={
+                "summary": {
+                    "windows": 4,
+                    "positive_validation_windows": 3,
+                    "avg_validation_profit_factor": 1.35,
+                    "max_validation_drawdown": 0.12,
+                    "total_validation_trades": 40,
+                }
+            },
+            ablation={
+                "candidate": {
+                    "delta_vs_baseline": {
+                        "profit_factor": 0.10,
+                        "net_return_pct": 3.0,
+                    }
+                }
+            },
+            regime_rows=[{"regime": "RANGE", "trades": 12, "expectancy_pct": 0.1}],
+            fidelity={"summary": {"weighted_fidelity_score": 0.75, "total_samples": 10}},
+            min_profit_factor=1.2,
+            max_drawdown=0.20,
+            min_positive_windows_ratio=0.5,
+            min_candidate_delta_pf=0.0,
+            min_candidate_delta_return_pct=0.0,
+            min_regime_trades=10,
+            min_regime_expectancy_pct=0.0,
+            min_fidelity_score=0.80,
+            min_fidelity_samples=20,
+        )
+
+        self.assertFalse(verdict["passed"])
+        self.assertIn("fidelity.total_samples 10 < 20", verdict["failures"])
+        self.assertIn(
+            "fidelity.weighted_fidelity_score 0.7500 < 0.8000",
+            verdict["failures"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

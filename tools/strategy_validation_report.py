@@ -25,6 +25,7 @@ def evaluate_strategy_report(
     walk_forward: dict,
     ablation: dict,
     regime_rows: list[dict],
+    fidelity: dict | None = None,
     *,
     min_profit_factor: float,
     max_drawdown: float,
@@ -33,6 +34,8 @@ def evaluate_strategy_report(
     min_candidate_delta_return_pct: float,
     min_regime_trades: int,
     min_regime_expectancy_pct: float,
+    min_fidelity_score: float = 0.0,
+    min_fidelity_samples: int = 0,
 ) -> dict:
     failures: list[str] = []
 
@@ -89,6 +92,19 @@ def evaluate_strategy_report(
                 f"regime {row.get('regime')} expectancy {float(row.get('expectancy_pct', 0.0)):.4f} < {min_regime_expectancy_pct:.4f}"
             )
 
+    fidelity_summary = (fidelity or {}).get("summary") or {}
+    fidelity_score = float(fidelity_summary.get("weighted_fidelity_score", 0.0) or 0.0)
+    fidelity_samples = int(fidelity_summary.get("total_samples", 0) or 0)
+    if fidelity is not None:
+        if fidelity_samples < min_fidelity_samples:
+            failures.append(
+                f"fidelity.total_samples {fidelity_samples} < {min_fidelity_samples}"
+            )
+        if fidelity_score < min_fidelity_score:
+            failures.append(
+                f"fidelity.weighted_fidelity_score {fidelity_score:.4f} < {min_fidelity_score:.4f}"
+            )
+
     return {
         "passed": not failures,
         "failures": failures,
@@ -99,6 +115,8 @@ def evaluate_strategy_report(
             "candidate_delta_profit_factor": delta_pf,
             "candidate_delta_net_return_pct": delta_ret,
             "scored_regimes": len(scored_regimes),
+            "fidelity_weighted_score": fidelity_score,
+            "fidelity_samples": fidelity_samples,
         },
     }
 
@@ -108,6 +126,9 @@ def main() -> int:
     parser.add_argument("--candles", required=True)
     parser.add_argument("--db", default="sniper_brain.db")
     parser.add_argument("--output", default="reports/strategy_validation_report.json")
+    parser.add_argument("--fidelity-report", default="")
+    parser.add_argument("--min-fidelity-score", type=float, default=0.80)
+    parser.add_argument("--min-fidelity-samples", type=int, default=20)
     parser.add_argument("--baseline-mode", default="equal_weight")
     parser.add_argument("--candidate-mode", default="mt_sr_regime")
     parser.add_argument("--z-score-threshold", type=float, default=1.6)
@@ -181,10 +202,19 @@ def main() -> int:
         finally:
             conn.close()
 
+    fidelity = None
+    if args.fidelity_report:
+        fidelity_path = Path(args.fidelity_report)
+        if fidelity_path.exists():
+            fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
+        else:
+            fidelity = {"summary": {"weighted_fidelity_score": 0.0, "total_samples": 0}}
+
     verdict = evaluate_strategy_report(
         walk_forward,
         ablation,
         regime_rows,
+        fidelity,
         min_profit_factor=args.min_profit_factor,
         max_drawdown=args.max_drawdown,
         min_positive_windows_ratio=args.min_positive_windows_ratio,
@@ -192,6 +222,8 @@ def main() -> int:
         min_candidate_delta_return_pct=args.min_candidate_delta_return_pct,
         min_regime_trades=args.min_regime_trades,
         min_regime_expectancy_pct=args.min_regime_expectancy_pct,
+        min_fidelity_score=args.min_fidelity_score,
+        min_fidelity_samples=args.min_fidelity_samples,
     )
 
     report = {
@@ -199,6 +231,7 @@ def main() -> int:
         "walk_forward": walk_forward,
         "ablation": ablation,
         "regime_scorecard": regime_rows,
+        "fidelity": fidelity,
         "verdict": verdict,
     }
     output_path = Path(args.output)
@@ -209,6 +242,7 @@ def main() -> int:
             {
                 "walk_forward": walk_forward["summary"],
                 "candidate": ablation["candidate"],
+                "fidelity": (fidelity or {}).get("summary"),
                 "verdict": verdict,
             },
             indent=2,
@@ -225,6 +259,7 @@ def main() -> int:
             "candidate_mode": args.candidate_mode,
             "candles": str(Path(args.candles)),
             "output": str(output_path),
+            "fidelity_report": args.fidelity_report,
         },
     )
     return 0 if verdict["passed"] else 1
