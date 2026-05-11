@@ -41,7 +41,6 @@ def _validate_entry_preconditions(bot, symbol: str, is_shadow: bool) -> Optional
 
 
 def _exchange_position_is_flat(bot, symbol: str) -> bool:
-    _trade_helpers.normalize_position_symbol = normalize_position_symbol
     return _helper_exchange_position_is_flat(bot, symbol)
 
 

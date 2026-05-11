@@ -303,7 +303,7 @@ class RiskEngine:
             risk_fraction = float(
                 risk_pct
                 if risk_pct is not None
-                else getattr(Config, "RISK_PER_TRADE_PCT", 0.01)
+                else Config.RISK_PER_TRADE_PCT
             )
             if risk_fraction <= 0:
                 return 0.0, -2

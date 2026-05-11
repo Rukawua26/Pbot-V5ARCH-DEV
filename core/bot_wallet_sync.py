@@ -1,11 +1,11 @@
 from datetime import datetime
-import time
 
 from config import Config
 from core.execution_telemetry import append_execution_event
 from core.reconciliation import generate_child_client_order_id
 from core.symbol_utils import normalize_position_symbol
 from core.time_utils import parse_datetime_utc, utc_now
+from core.trade_helpers import _emergency_market_close
 from notifier import send_telegram_msg
 
 
@@ -95,106 +95,20 @@ def _halt_wallet_sync(bot, reason: str, details: dict | None = None) -> None:
 def _emergency_market_close_unprotected(
     bot, symbol: str, trade: dict, amount: float, sl_error: str
 ):
-    started = time.perf_counter()
-    trade["status"] = "CLOSING_INITIATED"
-    trade["closing_in_progress"] = True
-    with bot.db_lock:
-        bot.brain.save_active_trade_state(symbol, trade)
-
-    close_ok = False
-    last_close_error = ""
     side = str(trade.get("side") or "BUY")
-    for attempt in range(1, 4):
-        try:
-            bot.execution.close_position(symbol, side, amount)
-            if _exchange_position_is_flat(bot, symbol):
-                close_ok = True
-                break
-            last_close_error = "close order accepted but exchange position still open"
-            bot.log(
-                f"⚠️ EMERGENCY_CLOSE {symbol}: cierre no confirmado, exposición sigue abierta"
-            )
-        except Exception as close_error:
-            last_close_error = str(close_error)
-            bot.log(
-                f"⚠️ EMERGENCY_CLOSE intento {attempt}/3 (chase limit) fallido en {symbol}: {close_error}"
-            )
-            if attempt < 3:
-                time.sleep(2 ** (attempt - 1))
-    if not close_ok:
-        for attempt in range(1, 3):
-            try:
-                bot.log(f"🧯 EMERGENCY_CLOSE intento MARKET {attempt}/2 en {symbol}")
-                bot.execution.create_reduce_only_market_order(symbol, side, amount)
-                if _exchange_position_is_flat(bot, symbol):
-                    close_ok = True
-                    break
-            except Exception as close_error:
-                last_close_error = str(close_error)
-                bot.log(
-                    f"⚠️ EMERGENCY_CLOSE intento MARKET {attempt}/2 fallido en {symbol}: {close_error}"
-                )
-                if attempt < 3:
-                    time.sleep(2 ** (attempt - 1))
-
-    if close_ok:
-        ttr = time.perf_counter() - started
-        with bot.db_lock:
-            bot.brain.save_error_snapshot(
-                symbol,
-                "EMERGENCY_CLOSE_NO_VALID_SL",
-                {"sl_error": str(sl_error)[:200]},
-            )
-            bot.brain.delete_active_trade_state(symbol)
-        append_execution_event(
-            bot,
-            "EMERGENCY_CLOSE_EXECUTED",
-            {
-                "symbol": symbol,
-                "ttr_seconds": round(ttr, 6),
-                "sl_error": str(sl_error)[:180],
-            },
-        )
-        with bot.lock:
-            if symbol in bot.active_trades:
-                del bot.active_trades[symbol]
-        bot.log(
-            f"🧯 EMERGENCY CLOSE {symbol}: SL inválido por gap, cierre MARKET ejecutado"
-        )
-        return
-
-    bot.is_paused = True
-    bot.integrity_lock_active = True
-    setattr(bot, "halt_system_active", True)
-    trade["status"] = "EMERGENCY_CLOSE_PENDING"
-    trade["closing_in_progress"] = True
-    with bot.db_lock:
-        bot.brain.save_active_trade_state(symbol, trade)
-    bot.log(
-        f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado tras 3 intentos."
+    _emergency_market_close(
+        bot=bot,
+        symbol=symbol,
+        side=side,
+        amount=amount,
+        verify_flat=True,
+        persist_state=True,
+        halt_on_failure=True,
+        trade=trade,
+        sl_error=sl_error,
+        append_event_fn=append_execution_event,
+        send_telegram_fn=send_telegram_msg,
     )
-    append_execution_event(
-        bot,
-        "EMERGENCY_CLOSE_FAILED_HALT",
-        {
-            "symbol": symbol,
-            "sl_error": str(sl_error)[:180],
-            "close_error": last_close_error[:180],
-        },
-    )
-    try:
-        send_telegram_msg(
-            "🚨 *FALLO CRÍTICO DE PROTECCIÓN*\n"
-            f"Símbolo: {symbol}\n"
-            "No fue posible adjuntar HARD SL ni ejecutar Emergency Close tras 3 intentos.\n"
-            f"Error SL: {str(sl_error)[:180]}\n"
-            f"Error Close: {last_close_error[:180]}\n"
-            "🛑 Sistema en HALT manual. No se abrirán nuevas posiciones hasta intervención humana."
-        )
-    except Exception:
-        bot.log(
-            f"🚨 ALERTA LOCAL: no se pudo enviar notificación Telegram de HALT para {symbol}."
-        )
 
 
 def _ensure_hard_sl_attached(bot, symbol: str, trade: dict, info: dict):

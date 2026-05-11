@@ -22,7 +22,6 @@ from notifier import Priority, send_telegram_msg, send_telegram_photo
 
 
 def _exchange_position_is_flat(bot, symbol: str) -> bool:
-    _trade_helpers.normalize_position_symbol = normalize_position_symbol
     return _helper_exchange_position_is_flat(bot, symbol)
 
 

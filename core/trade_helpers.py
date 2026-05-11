@@ -3,13 +3,15 @@ from __future__ import annotations
 import importlib.util
 import time
 from contextlib import nullcontext
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from config import Config
+from core.execution_telemetry import append_execution_event
 from core.risk_policy import evaluate_entry_risk_decision, record_risk_decision
 from core.symbol_utils import normalize_position_symbol
 from core.trade_state import open_trade_statuses
 from learning import shadow_logger
+from notifier import send_telegram_msg
 
 
 def _module_available(module_name: str) -> bool:
@@ -24,31 +26,175 @@ def _clamp_leverage_1_to_10(raw_leverage) -> int:
     return max(1, min(lev, 10))
 
 
-def _fail_safe_close_when_sl_missing(
-    bot, symbol: str, side: str, amount: float
-) -> bool:
+def _emergency_close_verify_flat(bot, symbol: str) -> bool:
+    fetch_positions = getattr(getattr(bot, "execution", None), "fetch_positions", None)
+    if not callable(fetch_positions):
+        return False
+    positions = fetch_positions() or []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        if normalize_position_symbol(pos.get("symbol", "")) != symbol:
+            continue
+        contracts = pos.get("contracts")
+        if contracts is None:
+            contracts = (pos.get("info") or {}).get("positionAmt", 0)
+        if abs(float(contracts or 0.0)) > 0.0:
+            return False
+    return True
+
+
+def _emergency_market_close(
+    bot,
+    symbol: str,
+    side: str,
+    amount: float,
+    verify_flat: bool,
+    persist_state: bool,
+    halt_on_failure: bool,
+    trade: Optional[Dict] = None,
+    sl_error: Optional[str] = None,
+    append_event_fn=None,
+    send_telegram_fn=None,
+) -> Tuple[bool, Dict]:
+    started = time.perf_counter()
+    close_ok = False
+    last_close_error = ""
+    result = {
+        "ttr_seconds": 0.0,
+        "last_error": "",
+        "close_ok": False,
+    }
+
+    if persist_state and trade:
+        trade["status"] = "CLOSING_INITIATED"
+        trade["closing_in_progress"] = True
+        with bot.db_lock:
+            bot.brain.save_active_trade_state(symbol, trade)
+
     for attempt in range(1, 4):
         try:
             bot.execution.close_position(symbol, side, amount)
-            return True
-        except Exception as error:
+            if not verify_flat:
+                close_ok = True
+                break
+            if _emergency_close_verify_flat(bot, symbol):
+                close_ok = True
+                break
+            last_close_error = "close order accepted but exchange position still open"
             bot.log(
-                f"⚠️ FAIL_SAFE_CLOSE intento {attempt}/3 (chase limit) fallido en {symbol}: {error}"
+                f"⚠️ EMERGENCY_CLOSE {symbol}: cierre no confirmado, exposición sigue abierta"
+            )
+        except Exception as close_error:
+            last_close_error = str(close_error)
+            bot.log(
+                f"⚠️ EMERGENCY_CLOSE intento {attempt}/3 (chase limit) fallido en {symbol}: {close_error}"
             )
             if attempt < 3:
                 time.sleep(2 ** (attempt - 1))
-    for attempt in range(1, 3):
+
+    if not close_ok:
+        for attempt in range(1, 3):
+            try:
+                bot.log(f"🧯 EMERGENCY_CLOSE intento MARKET {attempt}/2 en {symbol}")
+                bot.execution.create_reduce_only_market_order(symbol, side, amount)
+                if not verify_flat:
+                    close_ok = True
+                    break
+                if _emergency_close_verify_flat(bot, symbol):
+                    close_ok = True
+                    break
+            except Exception as close_error:
+                last_close_error = str(close_error)
+                bot.log(
+                    f"⚠️ EMERGENCY_CLOSE intento MARKET {attempt}/2 fallido en {symbol}: {close_error}"
+                )
+                if attempt < 3:
+                    time.sleep(2 ** (attempt - 1))
+
+    ttr = time.perf_counter() - started
+    result["ttr_seconds"] = round(ttr, 6)
+    result["last_error"] = last_close_error
+    result["close_ok"] = close_ok
+
+    _append_event = append_event_fn if append_event_fn else append_execution_event
+    _send_tg = send_telegram_fn if send_telegram_fn else send_telegram_msg
+
+    if close_ok and persist_state and trade:
+        with bot.db_lock:
+            bot.brain.save_error_snapshot(
+                symbol,
+                "EMERGENCY_CLOSE_NO_VALID_SL",
+                {"sl_error": str(sl_error)[:200] if sl_error else ""},
+            )
+            bot.brain.delete_active_trade_state(symbol)
+        _append_event(
+            bot,
+            "EMERGENCY_CLOSE_EXECUTED",
+            {
+                "symbol": symbol,
+                "ttr_seconds": round(ttr, 6),
+                "sl_error": str(sl_error)[:180] if sl_error else "",
+            },
+        )
+        with bot.lock:
+            if symbol in bot.active_trades:
+                del bot.active_trades[symbol]
+        bot.log(
+            f"🧯 EMERGENCY CLOSE {symbol}: SL inválido por gap, cierre MARKET ejecutado"
+        )
+
+    if not close_ok and halt_on_failure:
+        bot.is_paused = True
+        bot.integrity_lock_active = True
+        setattr(bot, "halt_system_active", True)
+        if trade:
+            trade["status"] = "EMERGENCY_CLOSE_PENDING"
+            trade["closing_in_progress"] = True
+            with bot.db_lock:
+                bot.brain.save_active_trade_state(symbol, trade)
+        bot.log(
+            f"☢️ FALLO CRÍTICO {symbol}: no se pudo adjuntar SL ni cerrar por mercado tras 3 intentos."
+        )
+        _append_event(
+            bot,
+            "EMERGENCY_CLOSE_FAILED_HALT",
+            {
+                "symbol": symbol,
+                "sl_error": str(sl_error)[:180] if sl_error else "",
+                "close_error": last_close_error[:180],
+            },
+        )
         try:
-            bot.log(f"🧯 FAIL_SAFE_CLOSE intento MARKET {attempt}/2 en {symbol}")
-            bot.execution.create_reduce_only_market_order(symbol, side, amount)
-            return True
-        except Exception as error:
-            bot.log(
-                f"⚠️ FAIL_SAFE_CLOSE intento MARKET {attempt}/2 fallido en {symbol}: {error}"
+            _send_tg(
+                "🚨 *FALLO CRÍTICO DE PROTECCIÓN*\n"
+                f"Símbolo: {symbol}\n"
+                "No fue posible adjuntar HARD SL ni ejecutar Emergency Close tras 3 intentos.\n"
+                f"Error SL: {str(sl_error)[:180] if sl_error else 'N/A'}\n"
+                f"Error Close: {last_close_error[:180]}\n"
+                "🛑 Sistema en HALT manual. No se abrirán nuevas posiciones hasta intervención humana."
             )
-            if attempt < 3:
-                time.sleep(2 ** (attempt - 1))
-    return False
+        except Exception:
+            bot.log(
+                f"🚨 ALERTA LOCAL: no se pudo enviar notificación Telegram de HALT para {symbol}."
+            )
+
+    return close_ok, result
+
+
+def _fail_safe_close_when_sl_missing(
+    bot, symbol: str, side: str, amount: float
+) -> bool:
+    close_ok, _result = _emergency_market_close(
+        bot=bot,
+        symbol=symbol,
+        side=side,
+        amount=amount,
+        verify_flat=False,
+        persist_state=False,
+        halt_on_failure=False,
+    )
+    return close_ok
 
 
 def _validate_entry_preconditions(bot, symbol: str, is_shadow: bool) -> Optional[str]:
@@ -188,6 +334,15 @@ def _sanitize_context(bot, context):
 
 
 def _get_local_open_trade_counts(bot):
+    """
+    Conteo local de trades abiertos (solo para PAPER_MODE).
+    
+    FALLBACK POLICY (conservadora):
+    Si falla la lectura de active_trades o estados persistidos,
+    retornamos los MAXIMOS permitidos. Esto es fail-closed intencional:
+    si no sabemos el estado real, evitamos abrir nuevas posiciones
+    que podrian causar sobreexposicion.
+    """
     open_statuses = open_trade_statuses()
     states = {}
     try:

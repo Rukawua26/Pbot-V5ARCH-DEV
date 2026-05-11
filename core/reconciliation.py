@@ -1,4 +1,5 @@
 import hashlib
+import traceback
 
 from config import Config
 from core.config.operational import OperationalConfig
@@ -200,7 +201,7 @@ def _verify_orphan_multiple(bot, symbol: str) -> tuple:
             amount = float(pos.get("contracts") or 0)
             if abs(amount) > 0:
                 return True, ""
-            return False, f"fetch_position({symbol}) возвращает amount=0"
+            return False, f"fetch_position({symbol}) returned amount=0"
     except Exception as e:
         return False, f"fetch_position failed: {e}"
 
@@ -219,7 +220,7 @@ def reconcile_bootstrap_state(bot):
             bot.log(
                 f"⚠️ Reconciliación abortada: no se pudieron consultar posiciones del exchange: {error}"
             )
-            if not bool(getattr(Config, "PAPER_MODE", True)):
+            if not Config.PAPER_MODE:
                 bot.is_paused = True
                 bot.integrity_lock_active = True
                 setattr(bot, "halt_system_active", True)
@@ -469,7 +470,7 @@ def reconcile_bootstrap_state(bot):
                         "error": order_lookup_error,
                     },
                 )
-                if not bool(getattr(Config, "PAPER_MODE", True)):
+                if not Config.PAPER_MODE:
                     with bot.lock:
                         bot.integrity_lock_active = True
                         setattr(bot, "halt_system_active", True)
@@ -629,6 +630,9 @@ def reconcile_bootstrap_state(bot):
 
     except Exception as e:
         bot.log(f"⚠️ Error en reconciliación de arranque: {e}")
+        bot.log(traceback.format_exc())
+        if not Config.PAPER_MODE:
+            raise
 
 
 def allocate_signal_timestamp() -> float:
@@ -690,7 +694,7 @@ def recover_halt_if_exchange_consistent(bot, required_snapshots: int = 2) -> tup
     fingerprint = {"exchange_flat": True, "balance": round(exchange_balance, 8)}
     state = getattr(bot, "_halt_recovery_state", {}) or {}
     attempts = int(state.get("attempts", 0) or 0) + 1
-    max_attempts = int(getattr(Config, "HALT_RECOVERY_MAX_ATTEMPTS", 5) or 5)
+    max_attempts = int(Config.HALT_RECOVERY_MAX_ATTEMPTS or 5)
     if attempts > max_attempts:
         bot._halt_recovery_state = {
             "fingerprint": fingerprint,

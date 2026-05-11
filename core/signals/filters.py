@@ -487,7 +487,7 @@ def _apply_entry_filters_and_adjust_prob(
             ctx["shock_dist_pct"] = shock_dist_pct
             ctx["shock_level"] = shock_level
 
-        min_shock_dist = float(getattr(Config, "SHOCK_MIN_DIST_PCT", 1.0))
+        min_shock_dist = float(Config.SHOCK_MIN_DIST_PCT)
         if shock_dist_pct is not None and shock_dist_pct < min_shock_dist:
             # Breakout Hunter (pasivo): poner en acecho si IA es fuerte.
             if bool(getattr(Config, "BREAKOUT_WATCH_ENABLED", True)):
@@ -579,18 +579,7 @@ def _apply_entry_filters_and_adjust_prob(
             f"⚡ {symbol}: Día x{day_weight:.2f}, Hora x{hour_weight:.2f} - MEJOR MOMENTO!"
         )
 
-    # --- CÁLCULO ANTICIPADO DE IA (AUDITORÍA) ---
-    prob_ia = 0.0
-    adjustment_reason = "N/A"
-    # prob_ia se usa para radar visual y consenso cuantitativo; Ghost ya contribuye
-    # dentro de p_final, así que no se agrega de nuevo para evitar double-counting.
-    prob_ia = prob_final / 100.0
-
-    # Aplicar consenso cuantitativo sobre la probabilidad bruta.
-    if prob_ia > 0:
-        prob_ia, adjustment_reason = bot._calculate_quant_consensus(prob_ia, ctx)
-
-    # Aplicar pesos de día/hora a la probabilidad IA.
+    # Aplicar pesos de día/hora.
     day_weight = ctx.get("day_weight", 1.0)
     hour_weight = ctx.get("hour_weight", 1.0)
     combined_weight = (day_weight + hour_weight) / 2

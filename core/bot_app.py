@@ -66,7 +66,6 @@ from core.bot_symbol_controls import (
     load_runtime_symbol_controls,
     refresh_symbol_controls_if_due,
 )
-from core.bot_quant import calculate_quant_consensus
 from core.bot_runtime_safety import check_safety_and_goals as evaluate_safety_and_goals
 from core.bot_pair_fetch import fetch_pair_data as run_fetch_pair_data
 from core.bot_io_loops import (
@@ -384,11 +383,6 @@ class Bot(BotFacade):
     def _perform_post_mortem(self):
         return perform_post_mortem(self)
 
-    def _calculate_quant_consensus(
-        self, visual_prob: float, context: Dict
-    ) -> Tuple[float, str]:
-        return calculate_quant_consensus(visual_prob, context)
-
     def _prioritize_targets(self):
         return prioritize_targets(self)
 
@@ -466,6 +460,12 @@ def run_entrypoint():
         config_errors = Config.validate()
         if config_errors:
             raise RuntimeError("CONFIG_VALIDATION_FAILED: " + "; ".join(config_errors))
+
+        mode_str = "REAL" if not Config.PAPER_MODE else "PAPER"
+        logger.info(f"📋 CONFIG LOADED: mode={mode_str}")
+        logger.info(f"   RISK_PER_TRADE: {Config.RISK_PER_TRADE_PCT*100:.2f}% | MAX_OPEN_TRADES: {Config.MAX_OPEN_TRADES}")
+        logger.info(f"   MAX_RISK_USD: ${Config.MAX_RISK_USD:.2f} | DAILY_LOSS_LIMIT: {Config.DAILY_LOSS_LIMIT:.2f}%")
+        logger.info(f"   SHOCK_MIN_DIST: {Config.SHOCK_MIN_DIST_PCT:.2f}%")
 
         _check_real_mode_guardrails()
 

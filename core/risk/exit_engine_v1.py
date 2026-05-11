@@ -17,7 +17,7 @@ class ExitEngineV1:
         structural_atr_buffer: float = 0.25,
         structural_min_buffer_pct: float = 0.05,
         structural_min_hold_seconds: int = 120,
-        trailing_activation_pct: float = 0.3,
+        trailing_activation_pct: float = 0.9,
         trailing_atr_mult: float = 2.0,
         trailing_atr_mult_tight: float = 1.5,
         trailing_tighten_pnl_pct: float = 2.0,
