@@ -43,16 +43,38 @@ def _confirms_signal(direction: str, signal: str) -> bool:
     return direction == signal
 
 
+def _regime_confirms_signal(regime: str, signal: str) -> bool:
+    """True when the macro regime directionally supports the signal.
+
+    BULL_TREND confirms BUY; BEAR_TREND confirms SELL.
+    RANGE and unknown regimes do not confirm either direction.
+    """
+    r = str(regime or "").upper().strip()
+    s = str(signal or "").upper().strip()
+    if s not in {"BUY", "SELL"}:
+        return False
+    if r == "BULL_TREND" and s == "BUY":
+        return True
+    if r == "BEAR_TREND" and s == "SELL":
+        return True
+    return False
+
+
 def analyze_mtf_alignment(
     df_1h: pd.DataFrame,
     df_15m: Optional[pd.DataFrame],
     df_5m: Optional[pd.DataFrame],
     signal: str,
+    regime: str = "",
 ) -> tuple[float, str]:
     """Evaluate 15m/5m alignment as confirmation for the 1h signal owner.
 
     The 15m timeframe can veto because it represents setup quality. The 5m
     timeframe only adjusts confidence because it is used as timing context.
+
+    When the macro ``regime`` (BULL_TREND/BEAR_TREND) confirms the signal
+    direction, a 15m opposition is treated as a pullback (dip in bull /
+    bounce in bear) rather than a full veto — confidence is merely reduced.
     """
     signal = str(signal or "").upper()
     if signal not in {"BUY", "SELL"}:
@@ -66,7 +88,10 @@ def analyze_mtf_alignment(
     direction_15m = _infer_direction(df_15m)
     direction_5m = _infer_direction(df_5m)
 
+    macro_confirms = _regime_confirms_signal(regime, signal)
     if _opposes_signal(direction_15m, signal):
+        if macro_confirms:
+            return 0.75, f"MTF_PULLBACK_15M_{direction_15m}_VS_{signal}"
         return 0.0, f"MTF_VETO_15M_{direction_15m}_VS_{signal}"
 
     if has_15m and direction_15m == "NEUTRAL":

@@ -407,7 +407,11 @@ def execute_order(
         if current_price > 0:
             price = current_price
 
-        spread_veto_pct = getattr(Config, "ENTRY_SPREAD_VETO_THRESHOLD", 0.0015)
+        regime_spreads = getattr(Config, "REGIME_SPREAD_THRESHOLDS", {})
+        spread_veto_pct = regime_spreads.get(
+            entry_market_regime,
+            getattr(Config, "ENTRY_SPREAD_VETO_THRESHOLD", 0.0015),
+        )
         try:
             fetch_book_ticker = getattr(bot.execution, "fetch_book_ticker", None)
             if callable(fetch_book_ticker):

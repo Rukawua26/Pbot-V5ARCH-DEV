@@ -143,6 +143,16 @@ class OperationalConfig:
     # [FASE 2: GATILLO SEGURO] Filtros de Pre-Ejecución
     ENTRY_SPREAD_VETO_THRESHOLD = 0.0005  # 0.05% - veto si > (protege trailing stop 0.3%)
 
+    # Per-regime spread tolerance (regime → max spread fraction)
+    # BULL_TREND: relaxed — liquidity is high, wider spreads are tolerable
+    # BEAR_TREND: tighter — volatility can cause adverse fills
+    # RANGE: default threshold
+    REGIME_SPREAD_THRESHOLDS = {
+        "BULL_TREND": 0.0010,
+        "BEAR_TREND": 0.0008,
+        "RANGE": 0.0005,
+    }
+
     # --- CONTROLES TÁCTICOS POR SÍMBOLO (Decision Matrix) ---
     SYMBOL_CONTROLS_REFRESH_SECONDS = int(
         os.getenv("SYMBOL_CONTROLS_REFRESH_SECONDS", "1800")

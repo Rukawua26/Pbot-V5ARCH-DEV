@@ -7,18 +7,18 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.5--PRO%20%7C%20Phase_14-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.6--PRO%20%7C%20Phase_15-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 ![Risk](https://img.shields.io/badge/Risk_Engine-v118.5-red)
-![Tests](https://img.shields.io/badge/Tests-593%20ok%20%7C%202%20skipped-22c55e)
+![Tests](https://img.shields.io/badge/Tests-615%20ok%20%7C%202%20skipped-22c55e)
 
 **Bot de trading con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.5-PRO` • `Phase 14 hardening` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
+`v118.6-PRO` • `Phase 15` • `MTF regime-aware filter` • `Dynamic spread veto per regime` • `Regime tuning enabled by default` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
 
 ---
 
@@ -39,10 +39,11 @@
 | 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real |
 | 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos |
 | 🛡️ OI Delta filter | Veta short squeezes y long liquidations antes de ejecución |
-| 🧭 MTF filter | Confirma/veta entradas con `15m/5m` sin quitar ownership al timeframe `1h` |
+| 🧭 MTF filter | Confirma/veta entradas con `15m/5m` sin quitar ownership al timeframe `1h`; modo pullback (0.75) si régimen macro alinea pero 15m opone |
 | 📉 Correlation risk | Reduce position size cuando posiciones abiertas se mueven como una sola apuesta sistémica |
 | 🔬 CVD order flow | Usa agresores `aggTrade` para detectar presión compradora/vendedora real |
-| 🧪 Regime tuning | Ajusta SL/TP por régimen con mínimos de muestra y rangos conservadores |
+| 🧪 Regime tuning | Ajusta SL/TP por régimen con mínimos de muestra y rangos conservadores; activado por defecto con MIN_TRADES=20 |
+| 💰 Spread dinámico | Umbral de spread veto se adapta por régimen: BULL 0.10%, BEAR 0.08%, RANGE 0.05% |
 | 🧾 Audit trail | Eventos JSONL para señal, filtro, intención, fill y protección |
 | 📡 Live data | BTC por websocket con fallback REST y logging explícito de reconexión |
 
@@ -72,7 +73,7 @@ flowchart LR
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final |
 | 🧬 HMM Markov | Clasifica BTC y calcula transición probable a `BULL_TREND`, `BEAR_TREND` o `RANGE` |
 | 🛡️ OI Delta | Compara precio reciente vs Open Interest para vetar squeezes/liquidaciones falsas |
-| 🧭 MTF 15m/5m | `15m` puede vetar conflicto de setup; `5m` solo ajusta timing/confianza |
+| 🧭 MTF 15m/5m | `15m` puede vetar conflicto de setup; `5m` solo ajusta timing/confianza; régimen-aware: pullback 0.75 si macro alinea pero 15m opone |
 | 🔬 CVD order flow | CVD rolling por `aggTrade`, boost/penalty conservador sin veto duro inicial |
 | 📉 Correlación dinámica | Size reducer por correlación media contra posiciones abiertas |
 | 🧪 Auto-tuning régimen | Multiplicadores SL/TP por régimen con mínimos de muestra y límites duros |
@@ -102,6 +103,7 @@ flowchart LR
 | 12.3 | CVD / Order Flow por WebSocket `aggTrade` como boost/penalty conservador | ✅ |
 | 13 | `v118.5-PRO`: MARKET order fallback, CycleContext, IntentDeduper, CandleCloseCache, unified risk policy, threshold governance, promotion gate, REAL pilot | ✅ |
 | 14 | Refactorización: emergencia close unificado, endurecimiento config, eliminación código muerto, fix mock leak en tests | ✅ |
+| 15 | MTF regime-aware (pullback 0.75 en BULL/BEAR), spread dinámico por régimen, REGIME_TUNING activado por defecto con MIN_TRADES=20 | ✅ |
 
 ---
 
@@ -150,8 +152,9 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Triage dinámico | ✅ Activo | Top pares por liquidez, spread, volumen y latencia |
 | Motor de señales | ✅ Activo | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
 | Filtro régimen BTC | ✅ Activo | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
+| Spread dinámico | ✅ Activo | Umbral de spread veto se adapta por régimen HMM: BULL 0.10%, BEAR 0.08%, RANGE 0.05% |
 | Filtro OI Delta | ✅ Activo | Open Interest externo con cache TTL para vetar short squeezes y long liquidations |
-| Filtro MTF | ✅ Disponible | Confirmación `15m/5m` sobre señal dueña `1h`, con eventos `MTF_FILTER` |
+| Filtro MTF | ✅ Disponible | Confirmación `15m/5m` sobre señal dueña `1h`, con eventos `MTF_FILTER`; régimen-aware: pullback 0.75 si macro alinea pero 15m opone |
 | Filtro CVD | ✅ Disponible | CVD rolling por agresores `aggTrade`, sin veto duro inicial |
 | Riesgo correlación | ✅ Disponible | Reduce size cuando el candidato está altamente correlacionado con posiciones abiertas |
 | Auto-tuning régimen | ✅ Disponible | Ajusta SL/TP por régimen usando estadísticas persistidas y límites conservadores |
@@ -319,7 +322,7 @@ main.py
 | `WS_TICKER_MAX_AGE_SECONDS` | Edad máxima de precio BTC por websocket antes de fallback REST |
 | `TOP_TRIAGE_COUNT` | Límite configurable del universo de triage; default `30` |
 | `TRIAGE_SPREAD_MAX` | Spread máximo de triage 0.05% para proteger trailing stop 0.3% |
-| `ENTRY_SPREAD_VETO_THRESHOLD` | Veto de entrada si spread supera 0.05% |
+| `ENTRY_SPREAD_VETO_THRESHOLD` | Veto de entrada si spread supera 0.05% (se sobreescribe por régimen vía `REGIME_SPREAD_THRESHOLDS`: BULL 0.10%, BEAR 0.08%, RANGE 0.05%) |
 | `OI_FILTER_ENABLED` | Activa filtro externo Open Interest Delta v118.3 |
 | `OI_DELTA_THRESHOLD` | Umbral mínimo de cambio OI relevante; default `0.005` |
 | `OI_CACHE_TTL_SECONDS` | TTL del cache OI por símbolo; default `60` |
@@ -336,8 +339,8 @@ main.py
 | `CORRELATION_RISK_REDUCTION_MAX` | Multiplicador mínimo de tamaño cuando la correlación es extrema; default `0.50` |
 | `CORRELATION_RISK_WINDOW` | Velas 1H usadas para correlación; default `48` |
 | `CORRELATION_RISK_MIN_CANDLES` | Mínimo de velas requeridas para cálculo; default `24` |
-| `REGIME_TUNING_ENABLED` | Activa ajuste SL/TP por régimen de entrada; default `false` |
-| `REGIME_TUNING_MIN_TRADES` | Mínimo de trades por régimen antes de ajustar; default `5` |
+| `REGIME_TUNING_ENABLED` | Activa ajuste SL/TP por régimen de entrada; default `true` |
+| `REGIME_TUNING_MIN_TRADES` | Mínimo de trades por régimen antes de ajustar; default `20` |
 | `REGIME_TUNING_SL_RANGE_MIN/MAX` | Rango duro para multiplicador SL; default `0.60`/`1.20` |
 | `REGIME_TUNING_TP_RANGE_MIN/MAX` | Rango duro para multiplicador TP; default `0.70`/`1.30` |
 
@@ -525,7 +528,7 @@ SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python -m unittest tests/test_tempor
 
 > `SNIPER_DISABLE_FILE_TELEMETRY=1` evita que las pruebas contaminen `logs/execution_events.jsonl` con datos mock. El archivo `tests/__init__.py` lo establece automáticamente al importar el paquete de tests.
 
-Estado local verificado: `593` tests `unittest` OK (`2` skipped: hmmlearn en entorno con dependencia, e integración testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
+Estado local verificado: `615` tests `unittest` OK (`2` skipped: hmmlearn en entorno con dependencia, e integración testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
 
 ### Testnet E2E Opt-In
 
@@ -611,7 +614,7 @@ bash tools/stop_real_pilot.sh
 - flows avanzados de runtime
 - filtro HMM de régimen BTC y fallback heurístico
 - filtro Open Interest Delta y cache de OI
-- filtro MTF 15m/5m
+- filtro MTF 15m/5m con régimen-aware (pullback BULL/BEAR, veto RANGE)
 - filtro CVD / order flow
 - correlación dinámica de riesgo
 - auto-tuning SL/TP por régimen
@@ -662,7 +665,7 @@ bash tools/stop_real_pilot.sh
 |   |   |-- filters.py               # Signal filtering, execution mode routing
 |   |   `-- execution.py             # _execute_and_update_symbol
 |   `-- ...
-|-- tests/                           # 593 tests (unittest)
+|-- tests/                           # 615 tests (unittest)
 |   |-- __init__.py                  # SNIPER_DISABLE_FILE_TELEMETRY=1
 |   |-- test_trade_manager_helpers.py
 |   |-- test_execute_order_coverage.py

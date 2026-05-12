@@ -144,6 +144,46 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertEqual(weight, 1.0)
         self.assertEqual(reason, "MTF_PASSTHROUGH_UNSUPPORTED_SIGNAL")
 
+    # --- Regime-aware MTF: pullback handling ---
+
+    def test_bull_trend_buy_15m_opposes_returns_pullback_not_veto(self):
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_DOWNTREND)
+        df_5m = _make_df(_UPTREND)
+
+        weight, reason = analyze_mtf_alignment(
+            df_1h, df_15m, df_5m, "BUY", regime="BULL_TREND"
+        )
+
+        self.assertGreater(weight, 0.0)
+        self.assertIn("PULLBACK", reason)
+        self.assertAlmostEqual(weight, 0.75)
+
+    def test_bear_trend_sell_15m_opposes_returns_pullback_not_veto(self):
+        df_1h = _make_df(_DOWNTREND)
+        df_15m = _make_df(_UPTREND)
+        df_5m = _make_df(_DOWNTREND)
+
+        weight, reason = analyze_mtf_alignment(
+            df_1h, df_15m, df_5m, "SELL", regime="BEAR_TREND"
+        )
+
+        self.assertGreater(weight, 0.0)
+        self.assertIn("PULLBACK", reason)
+        self.assertAlmostEqual(weight, 0.75)
+
+    def test_range_regime_still_vetoes_15m_conflict(self):
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_DOWNTREND)
+        df_5m = _make_df(_UPTREND)
+
+        weight, reason = analyze_mtf_alignment(
+            df_1h, df_15m, df_5m, "BUY", regime="RANGE"
+        )
+
+        self.assertEqual(weight, 0.0)
+        self.assertIn("VETO", reason)
+
 
 class _FakeDataService:
     def __init__(self, frames):
