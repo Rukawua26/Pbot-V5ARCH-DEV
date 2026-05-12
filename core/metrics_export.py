@@ -11,7 +11,13 @@ def _compute_trade_metrics(bot) -> dict:
     shadow_count = 0
     total_real_pnl = 0.0
     total_shadow_pnl = 0.0
-    for sym, t in bot.active_trades.items():
+    active_lock = getattr(bot, "lock", None)
+    if active_lock:
+        with active_lock:
+            trades_snapshot = list(bot.active_trades.items())
+    else:
+        trades_snapshot = list(bot.active_trades.items())
+    for sym, t in trades_snapshot:
         pnl = float(t.get("pnl", 0) or 0)
         if t.get("is_shadow"):
             shadow_count += 1

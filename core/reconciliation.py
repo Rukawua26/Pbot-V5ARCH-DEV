@@ -419,6 +419,8 @@ def reconcile_bootstrap_state(bot):
                         ).total_seconds(),
                     )
                 except Exception:
+                    import traceback as _tb
+                    _tb.print_exc()
                     intent_age_seconds = None
 
             exchange_order = None

@@ -57,9 +57,16 @@ def update_radar(
     tactical_view = f"{symbol_sector} | {atr_icon} {atr_val:.1f}%"
 
     # [FIX] Evitar duplicados: Si el símbolo ya está, lo quitamos para poner el nuevo al inicio
-    bot.scanner_history = [
-        item for item in bot.scanner_history if item["symbol"] != symbol
-    ]
+    slock = getattr(bot, "scanner_lock", None)
+    if slock:
+        with slock:
+            bot.scanner_history = [
+                item for item in bot.scanner_history if item["symbol"] != symbol
+            ]
+    else:
+        bot.scanner_history = [
+            item for item in bot.scanner_history if item["symbol"] != symbol
+        ]
 
     # Limpieza de redundancia visual (Solicitud Usuario)
     # Quitamos "SHADOW" o "REAL" del texto ya que existe columna de MODO
@@ -69,7 +76,13 @@ def update_radar(
     display_verdict = display_verdict.strip()
 
     # Marcar visualmente posiciones activas en el radar.
-    if symbol in bot.active_trades:
+    active_lock = getattr(bot, "lock", None)
+    if active_lock:
+        with active_lock:
+            has_position = symbol in bot.active_trades
+    else:
+        has_position = symbol in bot.active_trades
+    if has_position:
         display_verdict = f"⚡ OPEN | {display_verdict}"
 
     # Obtener información de patrones
@@ -94,47 +107,50 @@ def update_radar(
     except Exception as error:
         bot.log(f"⚠️ Pattern metadata unavailable para {symbol}: {error}")
 
-    bot.scanner_history.insert(
-        0,
-        {
-            "symbol": symbol,
-            "sector": symbol_sector,
-            "tech_checklist": tactical_view,
-            "ob": ob_status,
-            "ia_prob": f"{prob_ia * 100:.1f}%" if prob_ia > 0 else "---",
-            "ia_shadow": tubo_status,
-            "ia_real": fuego_status,
-            "result": display_verdict,
-            "signal": decision["signal"],
-            "side": decision["signal"],
-            "rsi_val": (
-                _safe_metric_to_int(ctx.get("rsi", {}).get("val", 0))
-                if isinstance(ctx.get("rsi"), dict)
-                else _safe_metric_to_int(ctx.get("rsi", 0))
-            )
-            if ctx
-            else 0,
-            "adx_val": (
-                _safe_metric_to_int(ctx.get("adx", {}).get("val", 0))
-                if isinstance(ctx.get("adx"), dict)
-                else _safe_metric_to_int(ctx.get("adx", 0))
-            )
-            if ctx
-            else 0,
-            "z_score": ctx.get("z_score", 0.0) if ctx else 0.0,
-            "vol_24h": ctx.get("vol_24h", 0.0) if ctx else 0.0,
-            "trend_val": ctx.get("trend", "N/A") if ctx else "N/A",
-            "funding_rate": ctx.get("funding_rate", 0.0) if ctx else 0.0,
-            "tier": decision.get("tier", ctx.get("tier", "IRON")) if ctx else "IRON",
-            "votos": votos or {},
-            "pattern_type": pattern_type,
-            "wr_hist": wr_hist,
-            "ml_score": prob_ia * 100 if prob_ia > 0 else -1,
-            # [V118-PRO] Calidad de Ejecución: tiempo de respuesta en ms (-1 = no medido)
-            "response_ms": response_ms,
-        },
-    )
+    scanner_entry = {
+        "symbol": symbol,
+        "sector": symbol_sector,
+        "tech_checklist": tactical_view,
+        "ob": ob_status,
+        "ia_prob": f"{prob_ia * 100:.1f}%" if prob_ia > 0 else "---",
+        "ia_shadow": tubo_status,
+        "ia_real": fuego_status,
+        "result": display_verdict,
+        "signal": decision["signal"],
+        "side": decision["signal"],
+        "rsi_val": (
+            _safe_metric_to_int(ctx.get("rsi", {}).get("val", 0))
+            if isinstance(ctx.get("rsi"), dict)
+            else _safe_metric_to_int(ctx.get("rsi", 0))
+        )
+        if ctx
+        else 0,
+        "adx_val": (
+            _safe_metric_to_int(ctx.get("adx", {}).get("val", 0))
+            if isinstance(ctx.get("adx"), dict)
+            else _safe_metric_to_int(ctx.get("adx", 0))
+        )
+        if ctx
+        else 0,
+        "z_score": ctx.get("z_score", 0.0) if ctx else 0.0,
+        "vol_24h": ctx.get("vol_24h", 0.0) if ctx else 0.0,
+        "trend_val": ctx.get("trend", "N/A") if ctx else "N/A",
+        "funding_rate": ctx.get("funding_rate", 0.0) if ctx else 0.0,
+        "tier": decision.get("tier", ctx.get("tier", "IRON")) if ctx else "IRON",
+        "votos": votos or {},
+        "pattern_type": pattern_type,
+        "wr_hist": wr_hist,
+        "ml_score": prob_ia * 100 if prob_ia > 0 else -1,
+        "response_ms": response_ms,
+    }
 
-    # Limitar historial a 100 elementos para evitar memory leak
-    if len(bot.scanner_history) > 100:
-        bot.scanner_history = bot.scanner_history[:100]
+    slock = getattr(bot, "scanner_lock", None)
+    if slock:
+        with slock:
+            bot.scanner_history.insert(0, scanner_entry)
+            if len(bot.scanner_history) > 100:
+                bot.scanner_history = bot.scanner_history[:100]
+    else:
+        bot.scanner_history.insert(0, scanner_entry)
+        if len(bot.scanner_history) > 100:
+            bot.scanner_history = bot.scanner_history[:100]

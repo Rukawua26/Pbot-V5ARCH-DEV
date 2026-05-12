@@ -159,6 +159,18 @@ class Config(OperationalConfig, StrategyConfig):
 
     # --- Multi-timeframe signal confirmation ---
     MTF_FILTER_ENABLED = _env_bool("MTF_FILTER_ENABLED", False)
+    MTF_DIRECTION_WINDOW = _env_int("MTF_DIRECTION_WINDOW", 20)
+    MTF_DIRECTION_THRESHOLD_PCT = _env_float("MTF_DIRECTION_THRESHOLD_PCT", 0.002)
+    MTF_ALIGNED_BOOST = _env_float("MTF_ALIGNED_BOOST", 1.0)
+
+    # --- Agent Weight Decay Monitor ---
+    AGENT_DEGRADATION_THRESHOLD = _env_float("AGENT_DEGRADATION_THRESHOLD", 0.85)
+    AGENT_MONITOR_WINDOW = _env_int("AGENT_MONITOR_WINDOW", 20)
+    AGENT_MIN_TRADES_BEFORE_ALERT = _env_int("AGENT_MIN_TRADES_BEFORE_ALERT", 10)
+    AGENT_MONITOR_INTERVAL_MINUTES = _env_int("AGENT_MONITOR_INTERVAL_MINUTES", 60)
+
+    # --- MTF Metrics ---
+    MTF_METRICS_WINDOW = _env_int("MTF_METRICS_WINDOW", 100)
 
     # --- Correlation Risk (Fase 12.1) ---
     CORRELATION_RISK_ENABLED = _env_bool("CORRELATION_RISK_ENABLED", False)

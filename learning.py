@@ -1501,20 +1501,9 @@ class Brain:
             return {
                 a: 100.0
                 for a in [
-                    "T",
-                    "V",
-                    "J",
+                    "MT",
+                    "SR",
                     "G",
-                    "C",
-                    "L",
-                    "F",
-                    "S",
-                    "O",
-                    "R",
-                    "M",
-                    "D",
-                    "E",
-                    "K",  # [v118] Whale Tracker
                 ]
             }
 
@@ -1612,14 +1601,24 @@ class Brain:
         except Exception as e:
             print(f"⚠️ Meta-aprendizaje error: {e}")
 
-    def get_agent_performance(self, context_type=None):
+    def get_agent_performance(self, context_type=None, primary_ids=None):
         """
         [ROLLING REPUTATION v118.6] - Fase 3.1
         Calcula el rendimiento individual de cada agente en los últimos 50 trades.
         Implementa Meta-Learning Dinámico (Ventanilla Deslizante).
         NOTA: Incluye tanto trades REALES como SHADOW para una adaptación ultra-rápida.
+
+        Args:
+            context_type: Contexto para filtrar (opcional).
+            primary_ids: Lista de IDs de agente a devolver. Si es None, usa los
+                         IDs legacy. El caller principal (orchestrator) pasa
+                         ["MT", "SR", "G"].
         """
-        agents = ["T", "V", "J", "G", "C", "L", "F", "S", "O", "R", "M", "D", "E", "K"]
+        legacy_agents = ["T", "V", "J", "G", "C", "L", "F", "S", "O", "R", "M", "D", "E", "K"]
+        if primary_ids is None:
+            agents = legacy_agents
+        else:
+            agents = primary_ids
         performance = {a: 100.0 for a in agents}
 
         try:
@@ -1646,8 +1645,16 @@ class Brain:
                 return performance
 
             # 2. Rastrear aciertos (votos > 50 en trades ganadores o votos < 50 en perdedores)
+            #    Primero intentamos primary_ids; si no hay match, caemos a legacy_agents
+            #    para mantener compatibilidad con snapshots viejos en la DB.
+            if primary_ids:
+                all_candidates = [primary_ids, legacy_agents]
+            else:
+                all_candidates = [legacy_agents]
+
             hits = {a: 0 for a in agents}
             totals = {a: 0 for a in agents}
+            matched_any = {a: False for a in agents}
 
             for row in rows:
                 try:
@@ -1658,14 +1665,17 @@ class Brain:
                     if not votos:
                         continue
 
-                    for a in agents:
-                        if a in votos:
-                            voto = votos[a]
-                            totals[a] += 1
-                            # Si el trade fue ganador, el voto debió ser > 50
-                            # Si fue perdedor, debió ser < 50 (disidencia correcta)
-                            if (pnl > 0 and voto >= 50) or (pnl < 0 and voto < 50):
-                                hits[a] += 1
+                    for candidate_list in all_candidates:
+                        for a in candidate_list:
+                            if a in votos:
+                                if a not in totals:
+                                    continue  # skip agents not in our output set
+                                voto = votos[a]
+                                totals[a] += 1
+                                matched_any[a] = True
+                                if (pnl > 0 and voto >= 50) or (pnl < 0 and voto < 50):
+                                    hits[a] += 1
+                                break  # prefer first match in priority order
                 except:
                     continue
 

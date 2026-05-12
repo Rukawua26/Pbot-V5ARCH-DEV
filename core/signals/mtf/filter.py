@@ -7,6 +7,34 @@ from core.execution_telemetry import append_execution_event
 from core.signals.mtf.analyzer import analyze_mtf_alignment
 from core.signals.mtf.data import fetch_mtf_data
 
+# Rolling MTF metrics counters (module-level, reset on import)
+_MTF_TOTAL_ATTEMPTS = 0
+_MTF_VETOED_COUNT = 0
+_MTF_VETO_REASONS: dict[str, int] = {}
+
+
+def _log_mtf_metrics(bot) -> None:
+    """Log aggregated MTF veto stats and reset counters."""
+    global _MTF_TOTAL_ATTEMPTS, _MTF_VETOED_COUNT, _MTF_VETO_REASONS
+    total = _MTF_TOTAL_ATTEMPTS
+    vetoed = _MTF_VETOED_COUNT
+    reasons = dict(_MTF_VETO_REASONS)
+    _MTF_TOTAL_ATTEMPTS = 0
+    _MTF_VETOED_COUNT = 0
+    _MTF_VETO_REASONS = {}
+
+    if total == 0:
+        return
+
+    veto_rate = (vetoed / total) * 100
+    payload = {
+        "window_total_attempts": total,
+        "vetoed_count": vetoed,
+        "veto_rate_pct": round(veto_rate, 2),
+        "per_reason": reasons,
+    }
+    append_execution_event(bot, "MTF_VETO_STATS", payload)
+
 
 def apply_mtf_filter(
     bot,
@@ -16,6 +44,8 @@ def apply_mtf_filter(
     ctx: dict,
     df_main: pd.DataFrame,
 ) -> tuple[float, bool, str]:
+    global _MTF_TOTAL_ATTEMPTS, _MTF_VETOED_COUNT, _MTF_VETO_REASONS
+
     if not bool(getattr(Config, "MTF_FILTER_ENABLED", False)):
         return prob_final, True, "MTF_DISABLED"
 
@@ -30,6 +60,16 @@ def apply_mtf_filter(
     if isinstance(ctx, dict):
         ctx["mtf_weight"] = float(weight)
         ctx["mtf_reason"] = reason
+
+    # Track metrics
+    _MTF_TOTAL_ATTEMPTS += 1
+    if weight <= 0.0:
+        _MTF_VETOED_COUNT += 1
+        _MTF_VETO_REASONS[reason] = _MTF_VETO_REASONS.get(reason, 0) + 1
+
+    window = int(getattr(Config, "MTF_METRICS_WINDOW", 100))
+    if _MTF_TOTAL_ATTEMPTS >= window:
+        _log_mtf_metrics(bot)
 
     append_execution_event(
         bot,

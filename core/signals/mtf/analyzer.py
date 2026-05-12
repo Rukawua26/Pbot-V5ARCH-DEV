@@ -11,22 +11,24 @@ def _is_usable_df(df: Optional[pd.DataFrame], min_rows: int = 5) -> bool:
     return "close" in df.columns and len(df) >= min_rows
 
 
-def _infer_direction(df: Optional[pd.DataFrame]) -> str:
-    if not _is_usable_df(df):
+def _infer_direction(df: Optional[pd.DataFrame], min_candles: int = 20) -> str:
+    if not _is_usable_df(df, min_rows=min_candles):
         return "UNKNOWN"
     closes = pd.to_numeric(df["close"], errors="coerce").dropna()
-    if len(closes) < 5:
+    if len(closes) < min_candles:
         return "UNKNOWN"
 
-    first = float(closes.iloc[-5])
+    first = float(closes.iloc[-min_candles])
     last = float(closes.iloc[-1])
     if first <= 0:
         return "UNKNOWN"
 
+    from config import Config
+    threshold = float(getattr(Config, "MTF_DIRECTION_THRESHOLD_PCT", 0.002))
     change_pct = (last - first) / first
-    if change_pct >= 0.002:
+    if change_pct >= threshold:
         return "BUY"
-    if change_pct <= -0.002:
+    if change_pct <= -threshold:
         return "SELL"
     return "NEUTRAL"
 
@@ -79,7 +81,9 @@ def analyze_mtf_alignment(
     confirms_5m = _confirms_signal(direction_5m, signal)
 
     if confirms_15m and confirms_5m:
-        return 1.05, "MTF_ALIGNED_15M_5M"
+        from config import Config
+        boost = float(getattr(Config, "MTF_ALIGNED_BOOST", 1.0))
+        return boost, "MTF_ALIGNED_15M_5M"
 
     if confirms_15m and _opposes_signal(direction_5m, signal):
         return 0.75, f"MTF_TIMING_5M_{direction_5m}_VS_{signal}"

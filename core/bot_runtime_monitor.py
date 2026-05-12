@@ -2,6 +2,7 @@ import json
 import os
 import time
 
+from config import Config
 from core.time_utils import monotonic_now, utc_now_iso
 from core.metrics_export import export_metrics_summary
 
@@ -61,6 +62,19 @@ def run_runtime_monitor_loop(bot):
     last_mono = monotonic_now()
     last_cpu = os.times().user + os.times().system
 
+    # Agent weight decay monitor
+    weight_monitor = None
+    try:
+        from core.strategy.weight_monitor import AgentWeightMonitor
+        if getattr(bot, "brain", None) is not None:
+            weight_monitor = AgentWeightMonitor(bot.brain)
+    except Exception as exc:
+        bot.log(f"⚠️ Weight monitor init skipped: {exc}")
+    weight_check_counter = 0
+
+    # MTF metrics counter (reset window counter)
+    mtf_metrics_counter = 0
+
     while bot.is_running:
         time.sleep(60)
         now_mono = monotonic_now()
@@ -116,3 +130,12 @@ def run_runtime_monitor_loop(bot):
             export_metrics_summary(bot)
         except Exception as exc:
             bot.log(f"⚠️ Metrics export error: {exc}")
+
+        # Periodic agent weight degradation check (every ~60min)
+        weight_check_counter += 1
+        if weight_monitor is not None and weight_check_counter >= Config.AGENT_MONITOR_INTERVAL_MINUTES:
+            weight_check_counter = 0
+            try:
+                weight_monitor.run_check(bot=bot)
+            except Exception as exc:
+                bot.log(f"⚠️ Weight monitor error: {exc}")

@@ -11,6 +11,11 @@ from core.signals.mtf.analyzer import analyze_mtf_alignment
 from core.signals.mtf.filter import apply_mtf_filter
 
 
+_UPTREND = list(range(100, 120))
+_DOWNTREND = list(range(119, 99, -1))
+_FLAT = [100] * 20
+
+
 def _make_df(closes):
     rows = []
     for idx, close in enumerate(closes):
@@ -29,9 +34,9 @@ def _make_df(closes):
 
 class MTFAnalyzerTests(unittest.TestCase):
     def test_buy_aligned_timeframes_returns_confirmation_weight(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([100, 101, 102, 103, 104, 105])
-        df_5m = _make_df([100, 100.5, 101, 101.5, 102, 102.5])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_UPTREND)
+        df_5m = _make_df(_UPTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -39,9 +44,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("ALIGNED", reason)
 
     def test_buy_vetoes_when_15m_opposes_signal(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([105, 104, 103, 102, 101, 100])
-        df_5m = _make_df([100, 101, 102, 103, 104, 105])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_DOWNTREND)
+        df_5m = _make_df(_UPTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -50,9 +55,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("15M", reason)
 
     def test_sell_vetoes_when_15m_opposes_signal(self):
-        df_1h = _make_df([105, 104, 103, 102, 101, 100])
-        df_15m = _make_df([100, 101, 102, 103, 104, 105])
-        df_5m = _make_df([105, 104, 103, 102, 101, 100])
+        df_1h = _make_df(_DOWNTREND)
+        df_15m = _make_df(_UPTREND)
+        df_5m = _make_df(_DOWNTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "SELL")
 
@@ -61,7 +66,7 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("15M", reason)
 
     def test_missing_intraday_data_passes_through(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
+        df_1h = _make_df(_UPTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, None, None, "BUY")
 
@@ -69,9 +74,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertEqual(reason, "MTF_PASSTHROUGH_NO_INTRADAY_DATA")
 
     def test_5m_opposition_only_reduces_confidence(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([100, 101, 102, 103, 104, 105])
-        df_5m = _make_df([105, 104, 103, 102, 101, 100])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_UPTREND)
+        df_5m = _make_df(_DOWNTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -80,9 +85,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("5M", reason)
 
     def test_15m_neutral_5m_aligns_returns_boost(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([102, 102, 102, 102, 102, 102])
-        df_5m = _make_df([100, 100.5, 101, 101.5, 102, 102.5])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_FLAT)
+        df_5m = _make_df(_UPTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -91,9 +96,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("5M_ALIGNED", reason)
 
     def test_15m_neutral_5m_opposes_returns_penalty(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([102, 102, 102, 102, 102, 102])
-        df_5m = _make_df([105, 104, 103, 102, 101, 100])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_FLAT)
+        df_5m = _make_df(_DOWNTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -102,8 +107,8 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("5M_CONFLICT", reason)
 
     def test_15m_neutral_no_5m_returns_085(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([102, 102, 102, 102, 102, 102])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_FLAT)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, None, "BUY")
 
@@ -111,9 +116,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertEqual(reason, "MTF_PARTIAL_15M_NEUTRAL")
 
     def test_15m_neutral_5m_neutral_returns_085(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([102, 102, 102, 102, 102, 102])
-        df_5m = _make_df([101, 101, 101, 101, 101, 101])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_FLAT)
+        df_5m = _make_df([100] * 20)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "BUY")
 
@@ -121,9 +126,9 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertEqual(reason, "MTF_PARTIAL_15M_NEUTRAL")
 
     def test_15m_neutral_vetoes_sell_when_5m_opposes(self):
-        df_1h = _make_df([105, 104, 103, 102, 101, 100])
-        df_15m = _make_df([102, 102, 102, 102, 102, 102])
-        df_5m = _make_df([100, 101, 102, 103, 104, 105])
+        df_1h = _make_df(_DOWNTREND)
+        df_15m = _make_df(_FLAT)
+        df_5m = _make_df(_UPTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, df_5m, "SELL")
 
@@ -131,8 +136,8 @@ class MTFAnalyzerTests(unittest.TestCase):
         self.assertIn("5M_CONFLICT", reason)
 
     def test_neutral_signal_passes_through(self):
-        df_1h = _make_df([100, 101, 102, 103, 104, 105])
-        df_15m = _make_df([105, 104, 103, 102, 101, 100])
+        df_1h = _make_df(_UPTREND)
+        df_15m = _make_df(_DOWNTREND)
 
         weight, reason = analyze_mtf_alignment(df_1h, df_15m, None, "NEUTRAL")
 
@@ -161,12 +166,12 @@ class _FakeBot:
 
 class MTFFilterTests(unittest.TestCase):
     def test_filter_disabled_does_not_fetch_or_adjust(self):
-        bot = _FakeBot({"15m": _make_df([105, 104, 103, 102, 101, 100])})
+        bot = _FakeBot({"15m": _make_df(_DOWNTREND)})
         ctx = {}
 
         with patch.object(Config, "MTF_FILTER_ENABLED", False):
             prob, passed, reason = apply_mtf_filter(
-                bot, "BTC/USDT", "BUY", 70.0, ctx, _make_df([100, 101, 102, 103, 104, 105])
+                bot, "BTC/USDT", "BUY", 70.0, ctx, _make_df(_UPTREND)
             )
 
         self.assertEqual(prob, 70.0)
@@ -177,8 +182,8 @@ class MTFFilterTests(unittest.TestCase):
     def test_enabled_filter_vetoes_15m_conflict(self):
         bot = _FakeBot(
             {
-                "15m": _make_df([105, 104, 103, 102, 101, 100]),
-                "5m": _make_df([100, 101, 102, 103, 104, 105]),
+                "15m": _make_df(_DOWNTREND),
+                "5m": _make_df(_UPTREND),
             }
         )
         ctx = {}
@@ -187,7 +192,7 @@ class MTFFilterTests(unittest.TestCase):
             "core.signals.mtf.filter.append_execution_event"
         ):
             prob, passed, reason = apply_mtf_filter(
-                bot, "BTC/USDT", "BUY", 70.0, ctx, _make_df([100, 101, 102, 103, 104, 105])
+                bot, "BTC/USDT", "BUY", 70.0, ctx, _make_df(_UPTREND)
             )
 
         self.assertEqual(prob, 70.0)
@@ -199,8 +204,8 @@ class MTFFilterTests(unittest.TestCase):
     def test_enabled_filter_adjusts_probability_on_5m_conflict(self):
         bot = _FakeBot(
             {
-                "15m": _make_df([100, 101, 102, 103, 104, 105]),
-                "5m": _make_df([105, 104, 103, 102, 101, 100]),
+                "15m": _make_df(_UPTREND),
+                "5m": _make_df(_DOWNTREND),
             }
         )
         ctx = {}
@@ -209,7 +214,7 @@ class MTFFilterTests(unittest.TestCase):
             "core.signals.mtf.filter.append_execution_event"
         ):
             prob, passed, reason = apply_mtf_filter(
-                bot, "BTC/USDT", "BUY", 80.0, ctx, _make_df([100, 101, 102, 103, 104, 105])
+                bot, "BTC/USDT", "BUY", 80.0, ctx, _make_df(_UPTREND)
             )
 
         self.assertEqual(prob, 60.0)
@@ -256,7 +261,7 @@ class MTFFilterTests(unittest.TestCase):
                 bot,
                 "BTC/USDT",
                 "BTC/USDT",
-                _make_df([100, 101, 102, 103, 104, 105]),
+                _make_df(_UPTREND),
                 "BUY",
                 80.0,
                 ctx,

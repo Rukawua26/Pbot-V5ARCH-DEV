@@ -450,6 +450,11 @@ def execute_order(
 
     except Exception as error:
         bot.log(f"⚠️ No se pudo refrescar precio para {symbol}: {error}")
+        if not getattr(Config, "PAPER_MODE", True):
+            bot.log(f"🚫 ABORTO {symbol}: fallo refresh precio en modo REAL")
+            _safe_update_signal_alert_status(bot, entry_client_order_id, "VETOED")
+            _drop_pending_intent()
+            return f"STALE_PRICE_ABORT ({error})"
 
     try:
         final_usd = calculated_position_size
@@ -628,7 +633,9 @@ def execute_order(
                     f"   SL: {sl_val:.4f} | TP: {tp_val:.4f}"
                 )
                 margin_used = final_usd / current_leverage
-                bot.available_balance -= margin_used
+                balance_lock = getattr(bot, "balance_lock", bot.lock)
+                with balance_lock:
+                    bot.available_balance -= margin_used
             else:
                 bot.log(f"❌ FALLO DE EJECUCIÓN: {symbol}")
                 reject_reason = str(

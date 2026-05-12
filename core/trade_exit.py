@@ -1,6 +1,7 @@
+import logging
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from config import Config
 from core.cooldown_state import set_symbol_cooldown
@@ -18,6 +19,69 @@ from core.trade_helpers import (
 from core.symbol_utils import normalize_position_symbol
 from core.time_utils import parse_datetime_utc, utc_now
 from learning import shadow_logger
+
+logger = logging.getLogger("SniperAI")
+
+# MTF win-rate tracking accumulators
+_MTF_TRADE_RESULTS: List[Dict[str, Any]] = []
+
+
+def _record_mtf_trade_outcome(trade: dict, pnl_percent: float, bot=None) -> None:
+    """Track MTF-filtered trade outcome for periodic reporting."""
+    global _MTF_TRADE_RESULTS
+    snapshot = trade.get("market_snapshot", {})
+    mtf_reason = snapshot.get("mtf_reason")
+    if not mtf_reason:
+        return
+    _MTF_TRADE_RESULTS.append({
+        "mtf_reason": mtf_reason,
+        "pnl_percent": pnl_percent,
+        "is_win": pnl_percent > 0,
+    })
+    if len(_MTF_TRADE_RESULTS) >= int(getattr(Config, "MTF_METRICS_WINDOW", 100)):
+        _log_mtf_winrate_report(bot)
+
+
+def _log_mtf_winrate_report(bot=None) -> None:
+    """Log aggregated MTF win-rate report and reset accumulator."""
+    global _MTF_TRADE_RESULTS
+    if not _MTF_TRADE_RESULTS:
+        return
+    results = list(_MTF_TRADE_RESULTS)
+    _MTF_TRADE_RESULTS = []
+
+    total = len(results)
+    wins = sum(1 for r in results if r["is_win"])
+    win_rate = (wins / total * 100) if total > 0 else 0.0
+
+    reasons = {}
+    for r in results:
+        reason = r["mtf_reason"]
+        if reason not in reasons:
+            reasons[reason] = {"total": 0, "wins": 0}
+        reasons[reason]["total"] += 1
+        if r["is_win"]:
+            reasons[reason]["wins"] += 1
+
+    per_reason = {}
+    for reason, stats in reasons.items():
+        per_reason[reason] = {
+            "total": stats["total"],
+            "wins": stats["wins"],
+            "win_rate_pct": round((stats["wins"] / stats["total"]) * 100, 2) if stats["total"] > 0 else 0.0,
+        }
+
+    append_execution_event(
+        bot,
+        "MTF_WINRATE_REPORT",
+        {
+            "total_trades": total,
+            "wins": wins,
+            "losses": total - wins,
+            "win_rate_pct": round(win_rate, 2),
+            "per_reason": per_reason,
+        },
+    )
 from notifier import Priority, send_telegram_msg, send_telegram_photo
 
 
@@ -240,6 +304,8 @@ def close_trade(
                     pnl_neto_percent,
                 )
 
+                _record_mtf_trade_outcome(trade, pnl_neto_percent, bot=bot)
+
                 votos = trade.get("market_snapshot", {}).get("votos", {})
                 if votos:
                     shadow_logger.log(
@@ -350,7 +416,8 @@ def close_trade(
                 shock_dist_pct = (
                     abs(float(shock_level) - float(exit_price)) / float(exit_price)
                 ) * 100.0
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"⚠️ shock_dist_pct calculation failed: {exc}")
             shock_dist_pct = None
 
         atr_val = float(
@@ -377,7 +444,8 @@ def close_trade(
                 duration = utc_now() - entry_dt
                 duration_mins = int(duration.total_seconds() / 60)
                 duration = f"{duration_mins}m"
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"⚠️ Duration parse failed: {exc}")
                 duration = "N/A"
 
         emoji_pnl = "\U0001f7e2" if pnl_neto_percent > 0 else "\U0001f534"
@@ -450,7 +518,8 @@ def close_trade(
             if current_raw is not None:
                 try:
                     current_until = parse_datetime_utc(current_raw)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(f"⚠️ Cooldown parse(1) failed: {exc}")
                     current_until = now
             if freeze_until > current_until:
                 set_symbol_cooldown(bot, symbol, freeze_until)
@@ -472,7 +541,8 @@ def close_trade(
             if current_raw is not None:
                 try:
                     current_until = parse_datetime_utc(current_raw)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(f"⚠️ Cooldown parse(2) failed: {exc}")
                     current_until = now
             if anti_revenge_until > current_until:
                 set_symbol_cooldown(bot, symbol, anti_revenge_until)

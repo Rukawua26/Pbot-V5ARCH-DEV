@@ -156,7 +156,8 @@ class Strategy:
 
         # 5. Ejecución del Consenso (Orquestador)
         agent_performances = brain_instance.get_agent_performance(
-            context_type=f"{base_trend}_{'VOLATIL' if adx > 25 else 'CALMO'}"
+            context_type=f"{base_trend}_{'VOLATIL' if adx > 25 else 'CALMO'}",
+            primary_ids=["MT", "SR", "G"],
         )
 
         score_final, votos = cls._orchestrator.calculate_consensus(

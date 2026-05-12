@@ -65,6 +65,8 @@ def init_runtime_state(bot, has_weight_tracker, weight_tracker_cls):
     bot.lock = threading.RLock()
     bot.price_lock = threading.Lock()
     bot.db_lock = threading.RLock()
+    bot.balance_lock = threading.Lock()
+    bot.scanner_lock = threading.Lock()
 
     bot.is_hedge_mode = False
     bot.ghost_model = None
