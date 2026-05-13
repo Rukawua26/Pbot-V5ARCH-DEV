@@ -7,18 +7,18 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.6--PRO%20%7C%20Phase_15-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.7--PRO%20%7C%20Phase_16-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
 ![Risk](https://img.shields.io/badge/Risk_Engine-v118.5-red)
-![Tests](https://img.shields.io/badge/Tests-615%20ok%20%7C%202%20skipped-22c55e)
+![Tests](https://img.shields.io/badge/Tests-623%20ok%20%7C%202%20skipped-22c55e)
 
 **Bot de trading con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.6-PRO` • `Phase 15` • `MTF regime-aware filter` • `Dynamic spread veto per regime` • `Regime tuning enabled by default` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
+`v118.7-PRO` • `Phase 16` • `Kinetic deceleration SR agent` • `MTF regime-aware filter` • `Dynamic spread veto per regime` • `Regime tuning enabled by default` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
 
 ---
 
@@ -36,6 +36,7 @@
 | Característica | Descripción |
 |---|---|
 | 🧬 Markov regime | BTC HMM publica probabilidades de transición y regula la confianza IA sin bloquear el Guardian |
+| ⚡ Kinetic SR | SRAgent mide desaceleración/aceleración en S/R: boost x1.3 en absorción, penalty x0.7 en falling knife |
 | 👻 Shadow lab | Hasta `20` operaciones shadow concurrentes para explorar sin tocar capital real |
 | 🧱 Tactical matrix | Matriz táctica exige muestra válida antes de bloquear símbolos |
 | 🛡️ OI Delta filter | Veta short squeezes y long liquidations antes de ejecución |
@@ -73,6 +74,7 @@ flowchart LR
 | 🧠 Motor multi-agente | Combina votos `MT`, `SR` y `G` para la decisión final |
 | 🧬 HMM Markov | Clasifica BTC y calcula transición probable a `BULL_TREND`, `BEAR_TREND` o `RANGE` |
 | 🛡️ OI Delta | Compara precio reciente vs Open Interest para vetar squeezes/liquidaciones falsas |
+| ⚡ Kinetic SR | Z-score + cinética de velas: boost x1.3 si hay absorción (cuerpos pequeños + mecha larga), penalty x0.7 si hay inercia (cuerpos grandes + sin mecha) |
 | 🧭 MTF 15m/5m | `15m` puede vetar conflicto de setup; `5m` solo ajusta timing/confianza; régimen-aware: pullback 0.75 si macro alinea pero 15m opone |
 | 🔬 CVD order flow | CVD rolling por `aggTrade`, boost/penalty conservador sin veto duro inicial |
 | 📉 Correlación dinámica | Size reducer por correlación media contra posiciones abiertas |
@@ -104,6 +106,7 @@ flowchart LR
 | 13 | `v118.5-PRO`: MARKET order fallback, CycleContext, IntentDeduper, CandleCloseCache, unified risk policy, threshold governance, promotion gate, REAL pilot | ✅ |
 | 14 | Refactorización: emergencia close unificado, endurecimiento config, eliminación código muerto, fix mock leak en tests | ✅ |
 | 15 | MTF regime-aware (pullback 0.75 en BULL/BEAR), spread dinámico por régimen, REGIME_TUNING activado por defecto con MIN_TRADES=20 | ✅ |
+| 16 | Kinetic deceleration en SRAgent: boost x1.3 en absorción (pin bar/doji), penalty x0.7 en falling knife (marubozu) | ✅ |
 
 ---
 
@@ -151,6 +154,7 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Runtime modular | ✅ Activo | `Bot`, `BotFacade`, ciclos, IO loops y monitorización desacoplados |
 | Triage dinámico | ✅ Activo | Top pares por liquidez, spread, volumen y latencia |
 | Motor de señales | ✅ Activo | Análisis 1H, veto macro 4H, votos de agentes y decisión final |
+| SR agent (cinética) | ✅ Activo | Z-score dinámico + entropía + desaceleración/aceleración en S/R (boost x1.3 / penalty x0.7) |
 | Filtro régimen BTC | ✅ Activo | HMM dinámico con fallback heurístico, penalización/range veto y pesos por régimen |
 | Spread dinámico | ✅ Activo | Umbral de spread veto se adapta por régimen HMM: BULL 0.10%, BEAR 0.08%, RANGE 0.05% |
 | Filtro OI Delta | ✅ Activo | Open Interest externo con cache TTL para vetar short squeezes y long liquidations |
@@ -528,7 +532,7 @@ SNIPER_DISABLE_FILE_TELEMETRY=1 ./.venv/bin/python -m unittest tests/test_tempor
 
 > `SNIPER_DISABLE_FILE_TELEMETRY=1` evita que las pruebas contaminen `logs/execution_events.jsonl` con datos mock. El archivo `tests/__init__.py` lo establece automáticamente al importar el paquete de tests.
 
-Estado local verificado: `615` tests `unittest` OK (`2` skipped: hmmlearn en entorno con dependencia, e integración testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
+Estado local verificado: `623` tests `unittest` OK (`2` skipped: hmmlearn en entorno con dependencia, e integración testnet requiere `RUN_BINANCE_TESTNET_E2E=true`).
 
 ### Testnet E2E Opt-In
 
@@ -614,6 +618,7 @@ bash tools/stop_real_pilot.sh
 - flows avanzados de runtime
 - filtro HMM de régimen BTC y fallback heurístico
 - filtro Open Interest Delta y cache de OI
+- SR agent con cinética de velas (desaceleración/aceleración en S/R)
 - filtro MTF 15m/5m con régimen-aware (pullback BULL/BEAR, veto RANGE)
 - filtro CVD / order flow
 - correlación dinámica de riesgo
@@ -665,7 +670,7 @@ bash tools/stop_real_pilot.sh
 |   |   |-- filters.py               # Signal filtering, execution mode routing
 |   |   `-- execution.py             # _execute_and_update_symbol
 |   `-- ...
-|-- tests/                           # 615 tests (unittest)
+|-- tests/                           # 623 tests (unittest)
 |   |-- __init__.py                  # SNIPER_DISABLE_FILE_TELEMETRY=1
 |   |-- test_trade_manager_helpers.py
 |   |-- test_execute_order_coverage.py

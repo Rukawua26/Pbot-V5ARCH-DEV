@@ -1,5 +1,6 @@
 # Secrets
 .env
+.env.*
 *.key
 *.pem
 
@@ -42,3 +43,4 @@ reports/
 Thumbs.db
 .idea/
 .vscode/
+.cursorrules

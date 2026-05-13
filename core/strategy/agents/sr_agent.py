@@ -44,6 +44,45 @@ class SRAgent(BaseAgent):
         except Exception:
             return 0.0
 
+    def _calculate_kinetic_modifier(self, df: Any, z_score: float) -> float:
+        """Mide desaceleración/aceleración en las últimas 3 velas.
+
+        Retorna:
+          > 1.0 si hay desaceleración (absorción en el nivel).
+          < 1.0 si hay aceleración (inercia devastadora, falling knife).
+          1.0 si es neutro.
+        """
+        if df is None or not isinstance(df, pd.DataFrame) or len(df) < 3:
+            return 1.0
+
+        try:
+            last = df.tail(3)
+            ranges = (last["high"] - last["low"]).replace(0, float("nan"))
+            bodies = (last["close"] - last["open"]).abs()
+            body_ratios = bodies / ranges
+
+            if z_score < 0:
+                # BUY zone → mirar lower wick (rechazo del soporte)
+                low_price = last[["open", "close"]].min(axis=1)
+                rejection = (low_price - last["low"]) / ranges
+            else:
+                # SELL zone → mirar upper wick (rechazo de la resistencia)
+                high_price = last[["open", "close"]].max(axis=1)
+                rejection = (last["high"] - high_price) / ranges
+
+            avg_body = body_ratios.mean()
+            avg_rejection = rejection.mean()
+
+            # Desaceleración: cuerpos pequeños + mecha larga de rechazo
+            if avg_body < 0.4 and avg_rejection >= 0.5:
+                return 1.3
+            # Aceleración: cuerpos grandes + sin mecha de rechazo
+            if avg_body > 0.8 and avg_rejection < 0.2:
+                return 0.7
+            return 1.0
+        except Exception:
+            return 1.0
+
     def vote(self, context: Dict[str, Any]) -> float:
         df = context.get("df")
         z_score = context.get("z_score", 0.0)
@@ -90,4 +129,8 @@ class SRAgent(BaseAgent):
         elif z_score_dinamico < -z_score_threshold:
             score = 80.0 - (entropy * 5)  # Voto fuerte a BUY
 
-        return min(max(score, 0), 100)
+        # [KINETIC v118.7] Modulador por desaceleración/aceleración en el nivel
+        modifier = self._calculate_kinetic_modifier(df, z_score_dinamico)
+        score = min(100.0, max(0.0, score * modifier))
+
+        return score
