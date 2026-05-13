@@ -120,15 +120,38 @@ def execute_order(
         bot.log(
             f"\U0001f6d1 GHOST_MODEL_MISSING: bloqueando nueva entrada {symbol} hasta restaurar modelo IA."
         )
+        append_execution_event(
+            bot,
+            "GHOST_MODEL_MISSING",
+            {
+                "symbol": symbol,
+                "side": side,
+                "execution_mode": execution_mode,
+            },
+        )
+        if "REAL" in str(execution_mode).upper():
+            send_telegram_msg(
+                f"\U0001f6a8 *GHOST MODEL FALTANTE*\n"
+                f"{symbol}: modelo ML no cargado — todas las señales REAL están bloqueadas.\n"
+                f"Revise logs para determinar la causa.",
+                Priority.WARNING,
+            )
         return _discard_pending_signal("GHOST_MODEL_MISSING")
 
-    atr_pct = context.get("atr_pct", 0) if context else 0
+    atr_pct = context.get("atr_pct", 0) if context else 0.02
     if atr_pct * 100 > Config.NATR_THRESHOLD:
         bot.log(
             f"⚠️ VOLATILIDAD ALTA: {symbol} NATR {atr_pct * 100:.1f}%. Degradando a SHADOW."
         )
         is_shadow = True
         degradation_reason = "HIGH_VOLATILITY"
+        if not req_shadow:
+            send_telegram_msg(
+                f"\U0001f6a8 *DEGRADACIÓN A SHADOW*\n"
+                f"{symbol}: NATR {atr_pct * 100:.1f}% supera umbral {Config.NATR_THRESHOLD:.1f}%.\n"
+                f"Señal REAL movida a SHADOW por volatilidad alta.",
+                Priority.INFO,
+            )
 
     trend = (context or {}).get("trend", "RANGO")
     spread = (context or {}).get("spread", 0.0)
@@ -243,6 +266,13 @@ def execute_order(
         )
         is_shadow = True
         degradation_reason = reason
+        if not req_shadow:
+            send_telegram_msg(
+                f"\U0001f6a8 *DEGRADACIÓN A SHADOW*\n"
+                f"{symbol}: mercado no seguro ({reason}, prob: {prob:.0f}%).\n"
+                f"Señal REAL movida a SHADOW por protección de capital.",
+                Priority.INFO,
+            )
 
     runtime_decision = evaluate_runtime_entry_decision(bot, symbol, is_shadow)
     if runtime_decision:

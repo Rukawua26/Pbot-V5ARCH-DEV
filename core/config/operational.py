@@ -25,7 +25,7 @@ def _env_int(name: str, default: int) -> int:
 class OperationalConfig:
     """Configuración de infraestructura, conectividad y sistema."""
 
-    VERSION = "v118.4-PRO"
+    VERSION = "v118.7-PRO"
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
@@ -167,4 +167,4 @@ class OperationalConfig:
     MAX_SYMBOLS = 100
     MIN_CANDLE_HISTORY = 200
     MAX_REAL_PAIRS = 20
-    MAX_SHADOW_PAIRS = 0
+    MAX_SHADOW_PAIRS = 20
