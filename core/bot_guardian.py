@@ -427,6 +427,13 @@ def run_guardian_loop(bot):
                                 )
                                 t["ghost_error_logged"] = True
 
+                    # HARD STOP LOSS: Límite absoluto de pérdida
+                    max_loss = (
+                        Config.SHADOW_HARD_SL_PERCENT
+                        if t.get("is_shadow", False)
+                        else Config.REAL_HARD_SL_PERCENT
+                    )
+
                     # PRE-HARD SL WARNING: evaluar trailing antes de llegar al Hard SL
                     pre_sl_warning = max_loss * 0.5  # -1.5% para REAL, -2.5% para SHADOW
                     if t["pnl"] <= pre_sl_warning and not t.get("pre_sl_warning_logged", False):
@@ -457,12 +464,6 @@ def run_guardian_loop(bot):
                                 bot.close_trade(s, exit_reason, curr)
                                 continue
 
-                    # HARD STOP LOSS: Límite absoluto de pérdida
-                    max_loss = (
-                        Config.SHADOW_HARD_SL_PERCENT
-                        if t.get("is_shadow", False)
-                        else Config.REAL_HARD_SL_PERCENT
-                    )
                     if t["pnl"] <= max_loss:
                         bot.close_trade(s, f"Hard SL ({max_loss}%)", curr)
                         continue

@@ -218,6 +218,66 @@ class SmartExitConfidenceGuardrailsTest(unittest.TestCase):
         bot.close_trade.assert_called_once()
         self.assertEqual(bot.close_trade.call_args.args[2], 1.0)
 
+    @patch("core.bot_guardian.time.sleep", return_value=None)
+    def test_guardian_pre_sl_warning_uses_configured_hard_sl(self, _sleep_mock):
+        trade = {
+            "symbol": "XPL/USDT",
+            "side": "BUY",
+            "entry": 1.0,
+            "amount": 1.0,
+            "sl": 0.9,
+            "tp": 1.1,
+            "pnl": 0.0,
+            "peak_pnl": 0.0,
+            "open_time": utc_now_iso(),
+            "is_shadow": True,
+            "entry_confidence": 80.0,
+            "leverage": 10,
+            "market_snapshot": {},
+            "trailing_active": False,
+        }
+
+        bot = SimpleNamespace()
+        bot.is_running = True
+        bot.lock = threading.Lock()
+        bot.price_lock = threading.Lock()
+        bot.active_trades = {"XPL/USDT": trade}
+        bot.live_prices = {"XPLUSDT": 0.998}
+        bot.log = MagicMock()
+        bot.close_trade = MagicMock()
+        bot.sync_wallet = MagicMock()
+        bot._guardian_stats = {"bailout_count": 0, "loops": 0, "work_s": 0.0, "sleep_s": 0.0}
+        bot._exit_eval_last_log = {}
+        bot.ghost_model = None
+        bot.ghost_model_type = None
+        bot.execution = SimpleNamespace(fetch_ticker=MagicMock(return_value={"last": 0.998}))
+        bot.exit_engine = SimpleNamespace(
+            evaluate_exit=MagicMock(return_value={"should_exit": False, "reason": "HOLD"})
+        )
+        bot.risk_engine = SimpleNamespace(
+            should_abort_trade=MagicMock(return_value=(False, "CONF_OK")),
+            should_defer_confidence_exit_for_fee_noise=MagicMock(
+                return_value=(False, "NOT_FEE_NOISE_REASON")
+            ),
+        )
+        bot.brain = SimpleNamespace(
+            pending_model_update=False,
+            upsert_confidence_exit_audit=MagicMock(return_value=1),
+        )
+
+        def _monitor_once():
+            bot.is_running = False
+
+        bot.monitor_open_trades = _monitor_once
+
+        run_guardian_loop(bot)
+
+        self.assertTrue(trade["pre_sl_warning_logged"])
+        self.assertFalse(
+            any("Guardian error" in str(call.args[0]) for call in bot.log.call_args_list)
+        )
+        bot.close_trade.assert_not_called()
+
     @patch("core.bot_trade_monitor.Strategy.analyze")
     def test_monitor_updates_trade_current_confidence(self, analyze_mock):
         trade = {

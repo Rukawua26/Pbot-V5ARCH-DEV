@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <script>
+        (function() {
+            var t = localStorage.getItem('sniper-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sniper v118-PRO | Master Control</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --neon-blue: #00f2ff;
+            --neon-green: #39ff14;
+            --neon-red: #ff0055;
+            --neon-amber: #ffb300;
+            --bg: #050508;
+            --panel-bg: rgba(13, 13, 21, 0.8);
+            --text: #e2e8f0;
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+            --border: rgba(255, 255, 255, 0.05);
+            --border-panel: #1e293b;
+            --hover: rgba(0, 242, 255, 0.05);
+            --thead-bg: rgba(15, 23, 42, 0.8);
+            --scroll-track: #0a0a0f;
+            --scroll-thumb: #1e293b;
+            --inset-bg: rgba(0, 0, 0, 0.25);
+            --scan-opacity: 1;
+        }
+        [data-theme="light"] {
+            --neon-blue: #0284c7;
+            --neon-green: #16a34a;
+            --neon-red: #dc2626;
+            --neon-amber: #d97706;
+            --bg: #f1f5f9;
+            --panel-bg: rgba(255, 255, 255, 0.92);
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+            --border: rgba(0, 0, 0, 0.08);
+            --border-panel: #e2e8f0;
+            --hover: rgba(0, 242, 255, 0.08);
+            --thead-bg: rgba(226, 232, 240, 0.8);
+            --scroll-track: #e2e8f0;
+            --scroll-thumb: #cbd5e1;
+            --inset-bg: rgba(0, 0, 0, 0.03);
+            --scan-opacity: 0;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: var(--scroll-track); }
+        ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--neon-blue); }
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .glow-blue { text-shadow: 0 0 10px rgba(0, 242, 255, 0.5); color: var(--neon-blue); }
+        .glow-red { text-shadow: 0 0 10px rgba(255, 0, 85, 0.5); color: var(--neon-red); }
+        .glow-green { text-shadow: 0 0 10px rgba(57, 255, 20, 0.5); color: var(--neon-green); }
+        [data-theme="light"] .glow-blue { text-shadow: 0 0 6px rgba(2, 132, 199, 0.4); }
+        [data-theme="light"] .glow-red { text-shadow: 0 0 6px rgba(220, 38, 38, 0.4); }
+        [data-theme="light"] .glow-green { text-shadow: 0 0 6px rgba(22, 163, 74, 0.4); }
+        .scanline {
+            position: fixed; top: 0; left: 0; width: 100%; height: 2px;
+            background: rgba(0, 242, 255, 0.03);
+            animation: scan 6s linear infinite;
+            pointer-events: none;
+            z-index: 50;
+            opacity: var(--scan-opacity);
+            transition: opacity 0.3s;
+        }
+        @keyframes scan {
+            0% { transform: translateY(-100px); }
+            100% { transform: translateY(100vh); }
+        }
+        .pulse { animation: pulse-anim 2s infinite; }
+        @keyframes pulse-anim {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .radar-row:hover { background: var(--hover); }
+        .btn-panic {
+            background: linear-gradient(135deg, rgba(255,0,85,0.2), rgba(255,0,85,0.05));
+            border: 1px solid rgba(255,0,85,0.4);
+            transition: all 0.2s;
+        }
+        .btn-panic:hover {
+            background: linear-gradient(135deg, rgba(255,0,85,0.4), rgba(255,0,85,0.1));
+            box-shadow: 0 0 20px rgba(255,0,85,0.3);
+        }
+        .btn-ctrl {
+            background: rgba(0, 242, 255, 0.05);
+            border: 1px solid rgba(0, 242, 255, 0.2);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .btn-ctrl:hover {
+            background: rgba(0, 242, 255, 0.15);
+            border-color: rgba(0, 242, 255, 0.5);
+        }
+        .status-dot {
+            width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+        }
+        .btn-theme {
+            background: var(--inset-bg);
+            border: 1px solid var(--border-panel);
+            transition: all 0.2s;
+            cursor: pointer;
+            width: 40px; height: 40px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 10px;
+            font-size: 18px;
+        }
+        .btn-theme:hover {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 12px rgba(0, 242, 255, 0.2);
+        }
+        .text-theme { color: var(--text); }
+        .text-muted { color: var(--text-muted); }
+        .text-dim { color: var(--text-dim); }
+        .border-theme { border-color: var(--border-panel); }
+        .bg-inset { background: var(--inset-bg); }
+        .bg-thead { background: var(--thead-bg); }
+        .theme-transition {
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
+    </style>
+</head>
+<body class="p-4 lg:p-6">
+    <div class="scanline"></div>
+
+    <header class="max-w-[1600px] mx-auto flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+            <h1 class="text-3xl font-black italic tracking-tighter mono">
+                SNIPER <span id="mode-display" class="glow-blue">v118-PRO</span>
+            </h1>
+            <p class="text-[10px] uppercase tracking-[0.3em] text-muted font-bold">Neural Trading Architecture / Master Monitor</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="px-4 py-2 glass-panel rounded-lg border-l-4 border-red-500 theme-transition">
+                <p class="text-[10px] text-muted font-bold uppercase">BTC Sentiment</p>
+                <p id="sentiment-display" class="text-sm font-bold glow-red">🔴 CARGANDO...</p>
+            </div>
+            <button onclick="toggleTheme()" class="btn-theme" title="Cambiar tema" id="theme-btn">🌙</button>
+            <div class="px-4 py-2 glass-panel rounded-lg border-l-4 border-cyan-500 theme-transition">
+                <p class="text-[10px] text-muted font-bold uppercase">System Clock</p>
+                <p id="clock" class="text-sm font-bold mono">--:--:--</p>
+            </div>
+        </div>
+    </header>
+
+    <div class="max-w-[1600px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6">
+
+        <!-- LEFT SIDEBAR -->
+        <div class="xl:col-span-3 space-y-6">
+
+            <!-- Account Summary -->
+            <div class="glass-panel p-5 rounded-2xl border-theme border shadow-2xl theme-transition">
+                <h3 class="text-xs font-bold text-muted uppercase tracking-widest mb-4 flex items-center gap-2">
+                    <span class="w-2 h-2 bg-blue-500 rounded-full pulse"></span> Datos de Cuenta
+                </h3>
+                <div class="space-y-4">
+                    <div class="flex justify-between items-end border-b border-theme pb-2">
+                        <span class="text-sm text-muted italic">Balance</span>
+                        <span id="balance-display" class="text-2xl font-bold mono glow-blue">$--.--</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-inset p-3 rounded-xl border border-theme">
+                            <p class="text-[9px] text-muted uppercase font-bold">Shadow WR</p>
+                            <p id="shadow-wr" class="text-lg font-bold glow-green">--.-%</p>
+                        </div>
+                        <div class="bg-inset p-3 rounded-xl border border-theme">
+                            <p class="text-[9px] text-muted uppercase font-bold">Real WR</p>
+                            <p id="real-wr" class="text-lg font-bold text-dim">--.-%</p>
+                        </div>
+                    </div>
+                    <div class="flex justify-between gap-2 text-[11px] text-muted font-mono">
+                        <span>Modo: <span id="mode-label" class="text-theme">...</span></span>
+                        <span>Estado: <span id="status-label" class="text-theme">...</span></span>
+                    </div>
+                    <div class="text-[11px] text-muted font-mono space-y-1">
+                        <p>PnL Hoy: <span id="pnl-display" class="text-theme">--.--%</span></p>
+                        <p>Escaneando: <span id="scanner-pairs" class="text-theme">--</span> pares</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Trades -->
+            <div class="glass-panel p-5 rounded-2xl border-theme border theme-transition">
+                <h3 class="text-xs font-bold text-muted uppercase tracking-widest mb-4">Trades Abiertos</h3>
+                <div class="space-y-3">
+                    <div class="p-3 bg-red-500/5 rounded-xl border border-red-500/20">
+                        <p class="text-[10px] font-bold text-red-400 uppercase mb-1">🔴 Reales (<span id="real-count">0</span>)</p>
+                        <div id="real-trades-list" class="text-xs space-y-1 text-dim">
+                            <p class="italic text-muted">No hay posiciones activas</p>
+                        </div>
+                    </div>
+                    <div class="p-3 bg-amber-500/5 rounded-xl border border-amber-500/20">
+                        <p class="text-[10px] font-bold text-amber-400 uppercase mb-1">🟡 Shadow (<span id="shadow-count">0</span>)</p>
+                        <div id="shadow-trades-list" class="text-xs space-y-1 text-dim">
+                            <p class="italic text-muted">Ninguno en seguimiento</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="glass-panel p-4 rounded-2xl border-theme border theme-transition">
+                <h3 class="text-xs font-bold text-muted uppercase tracking-widest mb-3">Centro de Mando</h3>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="sendCmd('/pause')" class="btn-ctrl px-3 py-2 rounded-lg text-xs font-bold text-amber-400">⏸ PAUSAR</button>
+                    <button onclick="sendCmd('/resume')" class="btn-ctrl px-3 py-2 rounded-lg text-xs font-bold text-emerald-400">▶ REANUDAR</button>
+                    <button onclick="sendCmd('/panic')" class="btn-panic px-3 py-2 rounded-lg text-xs font-bold text-rose-400 col-span-2">🔴 PÁNICO (HALT)</button>
+                    <button onclick="sendCmd('/recover_halt')" class="btn-ctrl px-3 py-2 rounded-lg text-xs font-bold text-cyan-400 col-span-2">🔄 RECOVER HALT</button>
+                </div>
+            </div>
+
+            <!-- Mini Terminal -->
+            <div class="glass-panel p-4 rounded-2xl border-theme border h-[220px] flex flex-col theme-transition">
+                <p class="text-[10px] text-muted uppercase font-bold mb-2">System Logs</p>
+                <div id="mini-log" class="flex-1 overflow-y-auto font-mono text-[11px] space-y-1 text-dim">
+                    <p class="text-cyan-500">[--:--:--] Esperando datos...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: RADAR TABLE -->
+        <div class="xl:col-span-9 glass-panel rounded-2xl border-theme border overflow-hidden flex flex-col shadow-2xl theme-transition">
+            <div class="bg-thead p-4 border-b border-theme flex justify-between items-center theme-transition">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                        <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                    </div>
+                    <h2 class="font-bold text-sm uppercase tracking-widest">Radar de Inteligencia <span id="radar-count" class="text-muted font-mono">(0 PARES)</span></h2>
+                </div>
+                <div class="text-[10px] font-mono text-muted bg-inset px-3 py-1 rounded-full border border-theme theme-transition">
+                    MACHINE LEARNING ACTIVE
+                </div>
+            </div>
+            <div class="overflow-x-auto flex-1">
+                <table class="w-full text-left text-xs mono">
+                    <thead class="bg-thead text-muted uppercase border-b border-theme theme-transition">
+                        <tr>
+                            <th class="px-4 py-3 font-bold">#</th>
+                            <th class="px-4 py-3 font-bold">Symbol</th>
+                            <th class="px-4 py-3 font-bold">Signal</th>
+                            <th class="px-4 py-3 font-bold">Prob</th>
+                            <th class="px-4 py-3 font-bold text-center">RSI</th>
+                            <th class="px-4 py-3 font-bold">Trend</th>
+                            <th class="px-4 py-3 font-bold">Result / Veto Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="radar-body" class="divide-y divide-[var(--border-panel)]">
+                        <tr><td colspan="7" class="px-4 py-8 text-center text-muted italic">Esperando datos del radar...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '/api/v1';
+        const KEY = 'sniper-local-2026';
+        const HEADERS = {'X-API-Key': KEY};
+
+        function clockTick() {
+            const now = new Date();
+            document.getElementById('clock').textContent = now.toTimeString().slice(0, 8);
+        }
+
+        async function fetchState() {
+            try {
+                const r = await fetch(API + '/state', {headers: HEADERS});
+                if (!r.ok) return;
+                const s = await r.json();
+
+                // -- Mode --
+                const mode = s.mode || 'PAPER';
+                const el = document.getElementById('mode-display');
+                el.textContent = mode;
+                el.className = mode === 'REAL' ? 'glow-red' : 'glow-green';
+                document.getElementById('mode-label').textContent = mode;
+
+                // -- Balance --
+                const bal = s.balance || 0;
+                document.getElementById('balance-display').textContent = '$' + bal.toFixed(2);
+
+                // -- PnL --
+                const pnl = s.daily_pnl_pct || 0;
+                const pnlEl = document.getElementById('pnl-display');
+                pnlEl.textContent = pnl.toFixed(2) + '%';
+                pnlEl.className = pnl >= 0 ? 'glow-green' : 'glow-red';
+
+                // -- Estado --
+                const paused = s.is_paused;
+                const halt = s.halt_system_active;
+                let statusTxt = '🟢 Activo';
+                if (halt) statusTxt = '🔴 HALT';
+                else if (paused) statusTxt = '🟡 Pausado';
+                document.getElementById('status-label').textContent = statusTxt;
+
+                // -- Counts --
+                document.getElementById('real-count').textContent = s.active_trades_count || 0;
+                document.getElementById('shadow-count').textContent = s.shadow_trades_count || 0;
+                document.getElementById('scanner-pairs').textContent = s.scanner_pairs || 0;
+
+                // -- Sentiment --
+            const sentEl = document.getElementById('sentiment-display');
+            let sent = s.sentiment || 'NEUTRAL';
+            if (Array.isArray(sent)) sent = sent[0];
+            const isBear = String(sent).includes('BAJISTA');
+            sentEl.textContent = isBear ? '🔴 ' + sent : '🟢 ' + sent;
+            sentEl.className = 'text-sm font-bold ' + (isBear ? 'glow-red' : 'glow-green');
+
+                // -- Radar --
+            renderRadar(s.radar || []);
+
+                // -- Trades --
+            renderTrades('real-trades-list', s.active_trades || [], false);
+            renderTrades('shadow-trades-list', s.shadow_trades || [], true);
+            } catch(e) { /* bot not available yet */ }
+        }
+
+        function renderTrades(containerId, trades, isShadow) {
+            const el = document.getElementById(containerId);
+            if (!trades.length) {
+                el.innerHTML = '<p class="italic text-muted">No hay posiciones activas</p>';
+                return;
+            }
+            el.innerHTML = trades.map(t => {
+                const pnl = Number(t.pnl_pct || 0);
+                const entry = Number(t.entry_price || 0);
+                const size = Number(t.size || 0);
+                const conf = Number(t.confidence || 0);
+                return `<div class="rounded-lg border border-white/5 bg-black/20 p-2">` +
+                    `<p class="flex justify-between gap-2"><span>${t.symbol} ${t.side}</span>` +
+                    `<span class="${pnl >= 0 ? 'glow-green' : 'glow-red'}">${pnl.toFixed(2)}%</span></p>` +
+                    `<p class="mt-1 flex justify-between text-[10px] text-muted">` +
+                    `<span>Entry ${entry ? entry.toFixed(6) : '-'}</span>` +
+                    `<span>$${size.toFixed(2)} | IA ${conf.toFixed(1)}%</span></p>` +
+                    `</div>`;
+            }).join('');
+        }
+
+        async function fetchLogs() {
+            try {
+                const r = await fetch(API + '/logs?lines=30', {headers: HEADERS});
+                if (!r.ok) return;
+                const data = await r.json();
+                const el = document.getElementById('mini-log');
+                el.innerHTML = (data.lines || []).map(l => {
+                    const cls = l.includes('FATAL') || l.includes('EMERGENCIA') ? 'text-rose-400' :
+                               l.includes('⚠') || l.includes('error') ? 'text-amber-400' :
+                               l.includes('✅') || l.includes('iniciado') ? 'text-emerald-400' :
+                               l.includes('📡') ? 'text-cyan-500' : 'text-dim';
+                    return `<p class="${cls}">${l}</p>`;
+                }).join('');
+                el.scrollTop = el.scrollHeight;
+            } catch(e) {}
+        }
+
+        function renderRadar(entries) {
+            const body = document.getElementById('radar-body');
+            const countEl = document.getElementById('radar-count');
+            if (!entries || !entries.length) {
+                body.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-muted italic">Esperando datos del radar...</td></tr>';
+                countEl.textContent = '(0 PARES)';
+                return;
+            }
+            countEl.textContent = '(' + entries.length + ' PARES)';
+            body.innerHTML = entries.map(function(e, i) {
+                var sig = e.signal || 'WAIT';
+                var sigClass = sig === 'BUY' ? 'text-emerald-400' : (sig === 'SELL' ? 'text-rose-400' : 'text-muted');
+                var probVal = e.prob > 0 ? e.prob.toFixed(1) + '%' : '---';
+                var probClass = e.prob > 70 ? 'text-emerald-400' : (e.prob > 40 ? 'text-amber-400' : 'text-muted');
+                var rsi = e.rsi || 0;
+                var trend = e.trend || 'N/A';
+                var result = e.result || '';
+                var resultClass = result.includes('VETO') ? 'text-rose-400' : (result.includes('SHADOW') ? 'text-amber-400' : 'text-dim');
+                return '<tr class="radar-row transition-colors">' +
+                    '<td class="px-4 py-2 text-muted">' + (i + 1) + '</td>' +
+                    '<td class="px-4 py-2 font-bold text-theme">' + e.symbol + '</td>' +
+                    '<td class="px-4 py-2 ' + sigClass + ' font-bold">' + sig + '</td>' +
+                    '<td class="px-4 py-2 ' + probClass + '">' + probVal + '</td>' +
+                    '<td class="px-4 py-2 text-center text-theme">' + rsi + '</td>' +
+                    '<td class="px-4 py-2 ' + (trend === 'UP' ? 'text-emerald-400' : trend === 'DOWN' ? 'text-rose-400' : 'text-muted') + '">' + trend + '</td>' +
+                    '<td class="px-4 py-2 ' + resultClass + ' text-[10px]">' + result + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        async function sendCmd(action) {
+            try {
+                await fetch(API + '/command', {
+                    method: 'POST',
+                    headers: {...HEADERS, 'Content-Type': 'application/json'},
+                    body: JSON.stringify({action})
+                });
+            } catch(e) { console.error('Command failed', e); }
+        }
+
+        function toggleTheme() {
+            var html = document.documentElement;
+            var cur = html.getAttribute('data-theme') || 'dark';
+            var next = cur === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-theme', next);
+            localStorage.setItem('sniper-theme', next);
+            document.getElementById('theme-btn').textContent = next === 'dark' ? '🌙' : '☀️';
+        }
+
+        function initThemeBtn() {
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.getElementById('theme-btn').textContent = cur === 'dark' ? '🌙' : '☀️';
+        }
+
+        // -- Init --
+        initThemeBtn();
+        clockTick();
+        setInterval(clockTick, 1000);
+        fetchState(); fetchLogs();
+        setInterval(fetchState, 3000);
+        setInterval(fetchLogs, 4000);
+    </script>
+</body>
+</html>

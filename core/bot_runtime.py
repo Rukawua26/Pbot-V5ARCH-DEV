@@ -51,6 +51,7 @@ def run_initial_load(bot, dashboard_module):
         threading.Thread(target=bot._terminal_command_listener, daemon=True).start()
         threading.Thread(target=bot.start_silent_sync, daemon=True).start()
         threading.Thread(target=bot._runtime_monitor_loop, daemon=True).start()
+        threading.Thread(target=bot._start_state_snapshot_loop, daemon=True).start()
 
     except Exception as error:
         bot.startup_error = error
