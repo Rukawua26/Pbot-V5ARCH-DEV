@@ -114,6 +114,8 @@ flowchart LR
 
 ![Dashboard](docs/images/dashboard.svg)
 
+> **Dashboard Localhost**: El bot arrancar automáticamente el dashboard web en `http://127.0.0.1:8000` cuando se ejecuta. Muestra estado runtime, trades activos (shadow y real), radar de señales y logs en tiempo real. Para iniciar manualmente: `bash dashboard/run.sh`.
+
 ---
 
 ## 🚀 Inicio Rápido
@@ -180,6 +182,7 @@ Antes de arrancar, crea `.env` manualmente con tus variables operativas y creden
 | Promotion gate | ✅ Activo | `tools/promotion_gate.py` — gate compuesto SHADOW→REAL |
 | Strategy validation | ✅ Activo | Walk-forward + ablation + regime scorecard + validation report |
 | Chaos matrix | ✅ Activo | 6 escenarios de caos validados con `tests/test_chaos_matrix.py` |
+| Shadow delta report | ✅ Activo | `tools/shadow_delta_report.py` — herramienta de medición para comparar candidatos, fills y KPIs antes/después de cambios de parámetros |
 | REAL pilot | ✅ Activo | Bot operando en Binance Futures con $24.90 USDT, riesgo 0.3%/trade |
 | Docker/systemd | ✅ Disponible | Despliegue en VPS o contenedor |
 
