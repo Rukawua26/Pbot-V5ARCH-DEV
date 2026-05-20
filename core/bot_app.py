@@ -104,6 +104,7 @@ from core.bot_misc_ops import (
     self_adjust_exigency as adjust_exigency,
 )
 from core.bot_shutdown import request_graceful_shutdown
+from core.state_snapshot import start_state_snapshot_loop as run_start_state_snapshot_loop
 
 try:
     from export_master_dataset import export_dataset
@@ -346,6 +347,9 @@ class Bot(BotFacade):
 
     def start_silent_sync(self):
         return run_start_silent_sync(self)
+
+    def _start_state_snapshot_loop(self):
+        return run_start_state_snapshot_loop(self)
 
     def get_current_balance(self):
         return fetch_current_balance(self)

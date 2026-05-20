@@ -236,6 +236,6 @@ class StrategyOrchestrator:
         if not context.get("breakout_ready", False):
             regime = context.get("regime", "RANGE")
             if regime in ("RANGE", "BEAR_TREND"):
-                p_final *= 0.85  # 15% penalización sin breakout confirmado
+                p_final *= 0.95  # 5% penalización sin breakout confirmado
 
         return float(p_final), votes

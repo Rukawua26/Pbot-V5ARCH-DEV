@@ -65,11 +65,8 @@ class StrategyConfig:
     EMA_200 = 200
 
     # --- UMBRALES DE CONFIANZA IA ---
-    # DELEGADO A core/config/manager.py (Config REAL_MODE_THRESHOLD/SHADOW_MODE_MIN)
-    # Se mantiene solo como alias de compatibilidad; la fuente de verdad es manager.py.
-    REAL_CONFIDENCE_MIN = 0.70
-    SHADOW_PROB_MIN = 0.55
-    REAL_CONFIDENCE_THRESHOLD = 0.70
+    # [OBSOLETO] Delegado a core/config/manager.py (Config REAL_MODE_THRESHOLD/SHADOW_MODE_MIN)
+    # Mantenido solo para compatibilidad legacy; no modificar aquí.
 
     # --- STOP LOSS Y TAKE PROFIT (ATR DINÁMICO v119) ---
     # [RIESGO/BENEFICIO INVERTIDO] SL = 1.5x ATR (antes 3.0x)

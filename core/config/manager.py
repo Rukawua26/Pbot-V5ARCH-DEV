@@ -124,6 +124,7 @@ class Config(OperationalConfig, StrategyConfig):
 
     # --- Mapa de SHOCKS (filtro de espacio operativo) ---
     SHOCK_MIN_DIST_PCT = _env_float("SHOCK_MIN_DIST_PCT", 0.4)
+    HMM_RANGE_PENALTY = _env_float("HMM_RANGE_PENALTY", 0.80)
     SHOCK_PIVOT_WINDOW = _env_int("SHOCK_PIVOT_WINDOW", 3)
     SHOCK_LOOKBACK_BARS = _env_int("SHOCK_LOOKBACK_BARS", 240)
 

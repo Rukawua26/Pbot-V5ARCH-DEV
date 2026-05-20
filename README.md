@@ -7,7 +7,7 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.7--PRO%20%7C%20Phase_16-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.7--PRO%20%7C%20Phase_17-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
@@ -18,7 +18,21 @@
 
 **Bot de trading con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
-`v118.7-PRO` • `Phase 16` • `Kinetic deceleration SR agent` • `MTF regime-aware filter` • `Dynamic spread veto per regime` • `Regime tuning enabled by default` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
+### Phase 17 — Recalibración SHADOW (Mayo 2026)
+
+Ajuste de filtros y umbrales para permitir operación SHADOW en régimen RANGE:
+
+| Cambio | Antes | Después | Impacto |
+|--------|-------|---------|---------|
+| `SHADOW_MODE_MIN` | 50% | **40%** | +10% señales que pasan filtro de probabilidad |
+| `SHOCK_MIN_DIST_PCT` | 0.40% | **0.15%** | Evita veto masivo en mercado lateral |
+| `HMM_RANGE_PENALTY` | 0.50x | **0.80x** | Penalización más suave en RANGE |
+| Breakout penalty | 0.85x | **0.95x** | Penalización mínima sin breakout |
+| `MAX_ENTRY_SL_PCT` | 2.50% | **4.0%** | Reduce VETO_KAVA en pares volátiles |
+
+Config duplicada eliminada de `strategy.py`; `manager.py` como única fuente de verdad.
+
+`v118.7-PRO` • `Phase 17` • `Phase 2 recalibration` • `SHADOW threshold 40%` • `SHOCK 0.15%` • `RANGE penalty 0.80` • `Breakout penalty 0.95` • `VETO_KAVA 4.0%` • `Config unificada` • `Kinetic deceleration SR agent` • `MTF regime-aware filter` • `Dynamic spread veto per regime` • `Regime tuning enabled by default` • `1H owner + 15m/5m MTF filter` • `BTC HMM + Markov probabilities` • `OI Delta + CVD order flow` • `Correlation risk sizing` • `Regime SL/TP tuning` • `MARKET order fallback` • `CycleContext` • `IntentDeduper` • `CandleCloseCache` • `Unified risk policy` • `Threshold governance` • `Promotion gate` • `Telegram ops` • `systemd` • `Docker`
 
 ---
 
