@@ -14,7 +14,7 @@ def _safe_series_float(df, column, default=0.0):
 
 def _build_symbol_context(bot, symbol_raw, symbol, df_main, price, ind, audit_signal):
     decision = {"signal": audit_signal, "mode": ind.get("mode", "NONE")}
-    raw_metrics = Strategy.compute_runtime_snapshot(df_main)
+    raw_metrics = Strategy.compute_runtime_snapshot(df_main, cache_symbol=symbol)
     if not raw_metrics:
         raise KeyError("RAW_TA_UNAVAILABLE")
 

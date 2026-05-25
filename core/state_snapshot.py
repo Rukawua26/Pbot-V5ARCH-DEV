@@ -11,6 +11,30 @@ _INTERVAL = 2.0
 logger = logging.getLogger(__name__)
 
 
+def _radar_entry(entry):
+    return {
+        "symbol": entry.get("symbol", "?"),
+        "signal": entry.get("signal", "WAIT"),
+        "prob": entry.get("ml_score", -1),
+        "rsi": entry.get("rsi_val", 0),
+        "trend": entry.get("trend_val", "N/A"),
+        "result": entry.get("result", ""),
+        "tier": entry.get("tier", "IRON"),
+    }
+
+
+def _pending_target_entry(symbol):
+    return {
+        "symbol": symbol,
+        "signal": "WAIT",
+        "prob": -1,
+        "rsi": 0,
+        "trend": "N/A",
+        "result": "PENDIENTE",
+        "tier": "TARGET",
+    }
+
+
 def _write_state_snapshot(bot):
     try:
         ts = time.time()
@@ -75,33 +99,21 @@ def _write_state_snapshot(bot):
         }
         slock = getattr(bot, "scanner_lock", None)
         history = getattr(bot, "scanner_history", [])
+        targets = list(getattr(bot, "pairs_to_scan", []) or [])
         if slock and history:
             with slock:
-                snapshot["radar"] = [
-                    {
-                        "symbol": e.get("symbol", "?"),
-                        "signal": e.get("signal", "WAIT"),
-                        "prob": e.get("ml_score", -1),
-                        "rsi": e.get("rsi_val", 0),
-                        "trend": e.get("trend_val", "N/A"),
-                        "result": e.get("result", ""),
-                        "tier": e.get("tier", "IRON"),
-                    }
-                    for e in history[:36]
-                ]
-        elif history:
-            snapshot["radar"] = [
-                {
-                    "symbol": e.get("symbol", "?"),
-                    "signal": e.get("signal", "WAIT"),
-                    "prob": e.get("ml_score", -1),
-                    "rsi": e.get("rsi_val", 0),
-                    "trend": e.get("trend_val", "N/A"),
-                    "result": e.get("result", ""),
-                    "tier": e.get("tier", "IRON"),
-                }
-                for e in history[:36]
-            ]
+                radar = [_radar_entry(e) for e in history[:100]]
+        else:
+            radar = [_radar_entry(e) for e in history[:100]]
+        seen = {item["symbol"] for item in radar}
+        for symbol in targets:
+            if symbol in seen:
+                continue
+            radar.append(_pending_target_entry(symbol))
+            seen.add(symbol)
+            if len(radar) >= 100:
+                break
+        snapshot["radar"] = radar
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(snapshot, f)

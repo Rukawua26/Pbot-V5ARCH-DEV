@@ -422,6 +422,7 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
                 **_ticker("KEEP/USDT", volume=50_000_000, price=1.0),
                 "bid": 0.999,
                 "ask": 1.0,
+                "info": {"raw": "large-exchange-payload"},
             },
             "WIDE/USDT": {
                 **_ticker("WIDE/USDT", volume=50_000_000, price=1.0),
@@ -449,6 +450,12 @@ class MarketIntelligencePipelineTests(unittest.TestCase):
         self.assertIn("KEEP/USDT", symbols)
         self.assertNotIn("WIDE/USDT", symbols)
         self.assertNotIn("MISSING/USDT", symbols)
+        keep_ticker = next(
+            item["ticker"] for item in ranked if item["symbol"] == "KEEP/USDT"
+        )
+        self.assertEqual(keep_ticker["last"], 1.0)
+        self.assertEqual(keep_ticker["quoteVolume"], 50_000_000.0)
+        self.assertNotIn("info", keep_ticker)
 
 
 class BalanceOpsPressureTests(unittest.TestCase):

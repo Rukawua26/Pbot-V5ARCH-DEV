@@ -300,8 +300,8 @@ class Strategy:
         return StrategyUtils.detect_order_block(df, symbol)
 
     @classmethod
-    def compute_runtime_snapshot(cls, df):
-        return StrategyUtils.compute_runtime_snapshot(df)
+    def compute_runtime_snapshot(cls, df, cache_symbol: str = "runtime"):
+        return StrategyUtils.compute_runtime_snapshot(df, cache_symbol=cache_symbol)
 
     @classmethod
     def prepare_ghost_features(cls, rsi, adx, vol_rel):

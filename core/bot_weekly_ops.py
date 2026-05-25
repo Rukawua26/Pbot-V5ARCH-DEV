@@ -1,6 +1,11 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from notifier import send_telegram_msg
+from core.strategy.utils import StrategyUtils
+
+
+MAINTENANCE_WEEKDAY_UTC = 4  # Friday
+MAINTENANCE_HOUR_UTC = 10
 
 
 def check_weekly_schedule(bot, module_available_fn):
@@ -28,18 +33,73 @@ def check_weekly_schedule(bot, module_available_fn):
 
 
 def check_weekly_maintenance_utc(bot):
-    """Domingo 00:00 UTC: purga shadow >30d y VACUUM en sniper_brain.db."""
-    now_utc = datetime.utcnow()
+    """Viernes 10:00 UTC: purga DB y limpia cachés transitorios una vez por semana."""
+    now_utc = datetime.now(UTC)
     maintenance_key = f"{now_utc.isocalendar().year}-W{now_utc.isocalendar().week}"
 
-    if now_utc.weekday() == 6 and now_utc.hour == 0 and now_utc.minute < 5:
-        if bot._last_weekly_maintenance_utc != maintenance_key:
-            bot.log("🧹 Mantenimiento semanal DB (UTC): iniciando purge+VACUUM...")
-            result = bot.brain.weekly_maintenance(shadow_days_to_keep=30)
-            if result.get("error"):
-                bot.log(f"⚠️ Mantenimiento DB falló: {result['error']}")
-            else:
-                bot.log(
-                    f"✅ Mantenimiento DB OK: shadow_deleted={result.get('shadow_deleted', 0)} cutoff={result.get('cutoff')} vacuum={result.get('vacuum_ok', False)}"
-                )
-            bot._last_weekly_maintenance_utc = maintenance_key
+    if bot._last_weekly_maintenance_utc == maintenance_key:
+        return
+    if not _weekly_maintenance_due(now_utc):
+        return
+
+    bot.log("🧹 Mantenimiento semanal DB (viernes 10:00 UTC): iniciando purge+VACUUM...")
+    result = bot.brain.weekly_maintenance(shadow_days_to_keep=30, signal_days_to_keep=30)
+    if result.get("error"):
+        bot.log(f"⚠️ Mantenimiento DB falló: {result['error']}")
+    else:
+        caches_cleared = _clear_transient_runtime_caches(bot)
+        bot.log(
+            "✅ Mantenimiento DB OK: "
+            f"shadow_deleted={result.get('shadow_deleted', 0)} "
+            f"signal_deleted={result.get('signal_deleted', 0)} "
+            f"cutoff={result.get('cutoff')} "
+            f"vacuum={result.get('vacuum_ok', False)} "
+            f"caches_cleared={caches_cleared}"
+        )
+    bot._last_weekly_maintenance_utc = maintenance_key
+
+
+def _weekly_maintenance_due(now_utc):
+    if now_utc.weekday() > MAINTENANCE_WEEKDAY_UTC:
+        return True
+    if now_utc.weekday() < MAINTENANCE_WEEKDAY_UTC:
+        return False
+    return now_utc.hour >= MAINTENANCE_HOUR_UTC
+
+
+def _clear_transient_runtime_caches(bot):
+    cleared = []
+
+    candle_cache = getattr(bot, "candle_cache", None)
+    if candle_cache is not None and hasattr(candle_cache, "clear"):
+        candle_cache.clear()
+        cleared.append("candle_cache")
+
+    if getattr(StrategyUtils, "_ob_cache", None):
+        StrategyUtils._ob_cache.clear()
+        cleared.append("orderbook_cache")
+
+    data_service = getattr(bot, "data_service", None)
+    if data_service is not None:
+        if getattr(data_service, "data_cache", None):
+            data_service.data_cache.clear()
+            cleared.append("data_cache")
+        if getattr(data_service, "last_ohlcv_fetch", None):
+            data_service.last_ohlcv_fetch.clear()
+            cleared.append("ohlcv_fetch_ts")
+
+    if getattr(bot, "_funding_rate_cache", None):
+        bot._funding_rate_cache.clear()
+        cleared.append("funding_rate_cache")
+
+    if getattr(bot, "_btc_data_cache", None) is not None:
+        bot._btc_data_cache = None
+        bot._btc_data_cache_ts = 0
+        cleared.append("btc_data_cache")
+
+    if getattr(bot, "_market_cache", None):
+        bot._market_cache = {}
+        bot._market_cache_ts = 0
+        cleared.append("market_cache")
+
+    return ",".join(cleared) if cleared else "none"

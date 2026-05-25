@@ -280,7 +280,7 @@ async def _fetch_triage_data_async(bot, top_triage):
                 results[sym_map] = {"data": data, "elapsed": elapsed}
             except Exception as e_thread:
                 bot.log(f"⚠️ Error devuelto por tarea async para {sym_map}: {e_thread}")
-                results[sym_map] = {"data": (None, None), "elapsed": -1}
+                results[sym_map] = {"data": None, "elapsed": -1, "error": "TASK_ERROR"}
                 bot.update_radar(
                     sym_map,
                     {"signal": "WAIT", "mode": "NONE"},
@@ -292,7 +292,7 @@ async def _fetch_triage_data_async(bot, top_triage):
                 )
         elif error == "TIMEOUT":
             timeout_count += 1
-            results[sym_map] = {"data": (None, None), "elapsed": -1}
+            results[sym_map] = {"data": None, "elapsed": -1, "error": "TIMEOUT"}
             bot.update_radar(
                 sym_map,
                 {"signal": "WAIT", "mode": "NONE"},
@@ -304,7 +304,7 @@ async def _fetch_triage_data_async(bot, top_triage):
             )
         else:
             bot.log(f"⚠️ Error async en fetch para {sym_map}: {error}")
-            results[sym_map] = {"data": (None, None), "elapsed": -1}
+            results[sym_map] = {"data": None, "elapsed": -1, "error": "FETCH_ERROR"}
             bot.update_radar(
                 sym_map,
                 {"signal": "WAIT", "mode": "NONE"},
@@ -355,11 +355,11 @@ def fetch_triage_data_parallel(bot, top_triage):
                 _, data, elapsed = future.result()
                 results[sym_map] = {"data": data, "elapsed": elapsed}
             except Exception:
-                results[sym_map] = {"data": (None, None), "elapsed": -1}
+                results[sym_map] = {"data": None, "elapsed": -1, "error": "TASK_ERROR"}
         for future in not_done:
             sym_map = future_to_sym[future]
             future.cancel()
-            results[sym_map] = {"data": (None, None), "elapsed": -1}
+            results[sym_map] = {"data": None, "elapsed": -1, "error": "TIMEOUT"}
     return results
 
 

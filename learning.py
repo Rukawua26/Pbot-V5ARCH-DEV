@@ -8,7 +8,7 @@ SNIPER AI v118 - LEARNING MODULE (KNN VECTORIAL)
 
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import json
 import random
 import numpy as np
@@ -24,6 +24,12 @@ except ImportError:
 import threading
 import time
 from queue import Empty, Queue
+
+RAG_CACHE_MAX_TRADES = 5000
+
+
+def _utc_now_naive():
+    return datetime.now(UTC).replace(tzinfo=None)
 
 # [v118] Ruta de la DB con soporte para inyección por ENV (Docker/OCI).
 # Si no hay ENV, usa la ruta por defecto anclada al directorio del módulo.
@@ -568,21 +574,22 @@ class Brain:
         conn.close()
 
     def _init_rag_cache(self):
-        """Inicializa la caché de vectores RAG en memoria RAM (NumPy) para 18,000+ trades."""
+        """Inicializa la caché RAG en RAM con un límite fijo de trades recientes."""
         self.rag_cache_matrix = None
         self.rag_cache_meta = []
 
         try:
             conn = self._get_conn()
             c = conn.cursor()
-            # Cargar TODOS los trades con snapshot válido
+            # Cargar solo los trades recientes necesarios para evitar crecimiento RAM infinito.
             c.execute("""
-                SELECT symbol, pnl_percent, market_snapshot, timestamp 
-                FROM trades 
-                WHERE market_snapshot IS NOT NULL 
-                ORDER BY id ASC
-            """)
-            rows = c.fetchall()
+                SELECT symbol, pnl_percent, market_snapshot, timestamp
+                FROM trades
+                WHERE market_snapshot IS NOT NULL
+                ORDER BY id DESC
+                LIMIT ?
+            """, (RAG_CACHE_MAX_TRADES,))
+            rows = list(reversed(c.fetchall()))
             conn.close()
 
             if not rows:
@@ -677,6 +684,10 @@ class Brain:
                     "snap": snap,
                 }
             )
+            if len(self.rag_cache_meta) > RAG_CACHE_MAX_TRADES:
+                overflow = len(self.rag_cache_meta) - RAG_CACHE_MAX_TRADES
+                self.rag_cache_meta = self.rag_cache_meta[overflow:]
+                self.rag_cache_matrix = self.rag_cache_matrix[overflow:]
         except Exception as e:
             print(f"⚠️ Error actualizando RAG cache: {e}")
 
@@ -2763,19 +2774,21 @@ class Brain:
             print(f"❌ Error en rotación de historial: {e}")
             return "Error"
 
-    def weekly_maintenance(self, shadow_days_to_keep=30):
-        """Mantenimiento semanal: purga shadow_telemetry antigua y VACUUM."""
+    def weekly_maintenance(self, shadow_days_to_keep=30, signal_days_to_keep=30):
+        """Mantenimiento semanal: purga telemetría/alertas antiguas y VACUUM."""
         result = {
             "shadow_deleted": 0,
+            "signal_deleted": 0,
             "vacuum_ok": False,
             "cutoff": None,
+            "signal_cutoff": None,
             "error": None,
         }
         try:
-            cutoff = (
-                datetime.utcnow() - timedelta(days=shadow_days_to_keep)
-            ).isoformat()
+            cutoff = (_utc_now_naive() - timedelta(days=shadow_days_to_keep)).isoformat()
             result["cutoff"] = cutoff
+            signal_cutoff = (_utc_now_naive() - timedelta(days=signal_days_to_keep)).isoformat()
+            result["signal_cutoff"] = signal_cutoff
 
             conn = self._get_conn()
             c = conn.cursor()
@@ -2788,6 +2801,15 @@ class Brain:
             if has_shadow:
                 c.execute("DELETE FROM shadow_telemetry WHERE timestamp < ?", (cutoff,))
                 result["shadow_deleted"] = c.rowcount if c.rowcount >= 0 else 0
+
+            c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_alerts'"
+            )
+            has_signal_alerts = c.fetchone() is not None
+
+            if has_signal_alerts:
+                c.execute("DELETE FROM signal_alerts WHERE ts < ?", (signal_cutoff,))
+                result["signal_deleted"] = c.rowcount if c.rowcount >= 0 else 0
 
             conn.commit()
             c.execute("VACUUM")

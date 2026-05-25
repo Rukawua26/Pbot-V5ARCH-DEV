@@ -43,6 +43,18 @@ def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
         df_main, df_4h = res_data["data"]
         elapsed = res_data["elapsed"]
 
+        if df_main is None or getattr(df_main, "empty", False):
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "❌ NO_DATA",
+                {"tier": "IRON"},
+                response_ms=elapsed,
+            )
+            continue
+
         # [V118-PRO] CIRCUIT BREAKER DE LATENCIA (Veto Activo)
         latency_veto_ms = int(getattr(Config, "LATENCY_VETO_MS", 4500))
         latency_quarantine_seconds = int(

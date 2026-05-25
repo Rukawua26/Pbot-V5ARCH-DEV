@@ -84,6 +84,9 @@ class DashboardIpcTest(unittest.TestCase):
         self.assertEqual(data["active_trades"][0]["confidence"], 72.5)
         self.assertEqual(data["shadow_trades"][0]["entry_price"], 2000.0)
         self.assertEqual(data["radar"][0]["symbol"], "BTC/USDT")
+        self.assertIn("ETH/USDT", [item["symbol"] for item in data["radar"]])
+        pending = [item for item in data["radar"] if item["symbol"] == "ETH/USDT"][0]
+        self.assertEqual(pending["result"], "PENDIENTE")
 
     def test_command_consumer_accepts_only_dashboard_commands(self):
         bot = _DummyBot()

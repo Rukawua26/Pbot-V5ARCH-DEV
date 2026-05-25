@@ -24,7 +24,7 @@ class StrategyUtils:
     _candle_cache: Optional["CandleCloseCache"] = None
 
     @staticmethod
-    def compute_runtime_snapshot(df: pd.DataFrame) -> Optional[Dict[str, float]]:
+    def compute_runtime_snapshot(df: pd.DataFrame, cache_symbol: str = "runtime") -> Optional[Dict[str, float]]:
         if df is None or df.empty:
             return None
 
@@ -32,7 +32,7 @@ class StrategyUtils:
         if cc is not None and "time" in df.columns:
             try:
                 candle_ms = int(df["time"].iloc[-1])
-                cached = cc.get("snapshot", "runtime", "1h", candle_ms)
+                cached = cc.get("snapshot", cache_symbol, "1h", candle_ms)
                 if cached is not None:
                     return cached
             except Exception:
@@ -101,7 +101,7 @@ class StrategyUtils:
 
             if cc is not None and "time" in df.columns:
                 try:
-                    cc.set("snapshot", "runtime", "1h", int(df["time"].iloc[-1]), result)
+                    cc.set("snapshot", cache_symbol, "1h", int(df["time"].iloc[-1]), result)
                 except Exception:
                     logger.debug("CandleCloseCache write failed", exc_info=True)
 

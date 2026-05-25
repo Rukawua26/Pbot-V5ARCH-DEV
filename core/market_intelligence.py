@@ -42,6 +42,21 @@ def _snapshot_tickers(snapshot):
     return {item["symbol"]: item.get("ticker", {}) for item in snapshot}
 
 
+def _compact_ticker(ticker, vol_24h=None, last=None):
+    """Keep only fields consumed downstream; CCXT raw tickers retain large info blobs."""
+    compact = {
+        "last": float(last if last is not None else ticker.get("last", 0) or 0),
+        "quoteVolume": float(
+            vol_24h if vol_24h is not None else ticker.get("quoteVolume", 0) or 0
+        ),
+    }
+    for key in ("ask", "bid", "markPrice", "percentage"):
+        value = ticker.get(key)
+        if value is not None:
+            compact[key] = value
+    return compact
+
+
 def apply_hard_operability_filters(bot, snapshot):
     load_controls = getattr(
         bot,
@@ -388,12 +403,17 @@ def get_active_market_snapshot(bot, pool_limit=None):
                             if vol_24h <= 0:
                                 base_vol = float(ticker.get("baseVolume", 0) or 0)
                                 vol_24h = base_vol * last
-                            all_candidates.append({
-                                "symbol": clean_sym,
-                                "ticker": ticker,
-                                "vol_24h": vol_24h,
-                                "last": last
-                            })
+                            compact_ticker = _compact_ticker(
+                                ticker, vol_24h=vol_24h, last=last
+                            )
+                            all_candidates.append(
+                                {
+                                    "symbol": clean_sym,
+                                    "ticker": compact_ticker,
+                                    "vol_24h": vol_24h,
+                                    "last": last,
+                                }
+                            )
 
                     bot._market_cache = {
                         "candidates": all_candidates,
