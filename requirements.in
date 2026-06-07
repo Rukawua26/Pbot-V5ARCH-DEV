@@ -1,0 +1,35 @@
+# Exchange & Trading
+ccxt
+
+# Data & Analysis
+pandas
+pyarrow
+ta
+pandas_ta
+
+# Terminal UI
+rich
+
+# Configuration
+python-dotenv
+
+# HTTP
+requests
+
+# Dashboard API
+fastapi
+uvicorn
+
+# Machine Learning
+scikit-learn
+xgboost
+lightgbm
+imbalanced-learn
+hmmlearn
+
+# WebSockets
+websockets
+websocket-client
+
+# Optimization
+optuna

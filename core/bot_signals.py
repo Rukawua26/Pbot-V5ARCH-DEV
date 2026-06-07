@@ -1,0 +1,389 @@
+import asyncio
+import concurrent.futures
+import time
+
+import pandas as pd
+
+from config import Config
+from core.cooldown_state import is_symbol_in_cooldown
+from core.execution_telemetry import append_execution_event
+from core.market_breadth import calculate_market_breadth
+
+
+_ANALYSIS_MISSING = object()
+
+
+def _precompute_signal_analysis(bot, top_triage, results):
+    workers = int(getattr(Config, "SIGNAL_ANALYSIS_WORKERS", 1) or 1)
+    if workers <= 1:
+        return {}
+
+    candidates = []
+    for triage_entry in top_triage:
+        symbol_raw = triage_entry["symbol"]
+        symbol = symbol_raw.split(":")[0]
+        res_data = results.get(symbol_raw)
+        if not res_data or not res_data.get("data"):
+            continue
+        df_main, df_4h = res_data["data"]
+        elapsed = res_data["elapsed"]
+        if df_main is None or getattr(df_main, "empty", False):
+            continue
+        latency_veto_ms = int(getattr(Config, "LATENCY_VETO_MS", 4500))
+        if elapsed > latency_veto_ms or elapsed == -1:
+            continue
+        candidates.append((symbol_raw, symbol, df_main, df_4h, elapsed))
+
+    if len(candidates) <= 1:
+        return {}
+
+    max_workers = max(1, min(workers, len(candidates)))
+    analysis_by_symbol = {}
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="signal-analysis",
+    ) as executor:
+        future_to_symbol = {
+            executor.submit(
+                bot._analyze_symbol_candidate,
+                symbol_raw,
+                symbol,
+                df_main,
+                df_4h,
+                elapsed,
+            ): symbol_raw
+            for symbol_raw, symbol, df_main, df_4h, elapsed in candidates
+        }
+        for future in concurrent.futures.as_completed(future_to_symbol):
+            symbol_raw = future_to_symbol[future]
+            try:
+                analysis_by_symbol[symbol_raw] = future.result()
+            except Exception as error:
+                bot.log(f"⚠️ Error análisis paralelo {symbol_raw}: {error}")
+                analysis_by_symbol[symbol_raw] = None
+    return analysis_by_symbol
+
+
+def run_signal_scan_cycle(bot, top_triage, results, signal_stats, pnl_real_hoy):
+    # FASE B: Análisis Secuencial (IA)
+    breadth = calculate_market_breadth(
+        results,
+        fear_threshold=float(getattr(Config, "MARKET_BREADTH_FEAR_THRESHOLD", 0.70)),
+        greed_threshold=float(getattr(Config, "MARKET_BREADTH_GREED_THRESHOLD", 0.70)),
+    )
+    bot.market_breadth = breadth.as_dict()
+    if breadth.total_count > 0:
+        bot.log(
+            f"🌡️ MARKET_BREADTH sentiment={breadth.sentiment} "
+            f"dump={breadth.dump_ratio * 100:.0f}% ({breadth.dump_count}/{breadth.total_count}) "
+            f"pump={breadth.pump_ratio * 100:.0f}% ({breadth.pump_count}/{breadth.total_count})"
+        )
+
+    precomputed_analysis = _precompute_signal_analysis(bot, top_triage, results)
+
+    for triage_entry in top_triage:
+        symbol_raw = triage_entry["symbol"]
+        symbol = symbol_raw.split(":")[0]
+
+        res_data = results.get(symbol_raw)
+        if not res_data or not res_data.get("data"):
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "⏱️ TIMEOUT",
+                {"tier": "IRON"},
+            )
+            continue
+
+        df_main, df_4h = res_data["data"]
+        elapsed = res_data["elapsed"]
+
+        if df_main is None or getattr(df_main, "empty", False):
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "❌ NO_DATA",
+                {"tier": "IRON"},
+                response_ms=elapsed,
+            )
+            continue
+
+        # [V118-PRO] CIRCUIT BREAKER DE LATENCIA (Veto Activo)
+        latency_veto_ms = int(getattr(Config, "LATENCY_VETO_MS", 4500))
+        latency_quarantine_seconds = int(
+            getattr(Config, "LATENCY_QUARANTINE_SECONDS", 300)
+        )
+        if elapsed > latency_veto_ms or elapsed == -1:
+            bot.log(
+                f"🔌 VETO LATENCIA: {symbol} tardó {elapsed}ms. "
+                f"Cuarentena de {int(latency_quarantine_seconds / 60)} min."
+            )
+            bot.latency_quarantine[symbol] = time.time() + latency_quarantine_seconds
+            bot.update_radar(
+                symbol,
+                {"signal": "WAIT", "mode": "NONE"},
+                0.0,
+                "⚪",
+                "🔌 LATENCIA",
+                {"tier": "IRON"},
+                response_ms=elapsed,
+            )
+            continue
+
+        analysis = precomputed_analysis.get(symbol_raw, _ANALYSIS_MISSING)
+        if analysis is _ANALYSIS_MISSING:
+            analysis = bot._analyze_symbol_candidate(
+                symbol_raw, symbol, df_main, df_4h, elapsed
+            )
+        if analysis is None:
+            continue
+
+        audit_signal, mode, price, prob_final, ind, votos = analysis
+        append_execution_event(
+            bot,
+            "SIGNAL_ANALYZED",
+            {
+                "symbol": symbol,
+                "side": audit_signal,
+                "mode": mode,
+                "price": float(price) if price is not None else None,
+                "prob_final": float(prob_final),
+                "market_regime": getattr(bot, "market_regime", None),
+                "market_regime_source": getattr(bot, "market_regime_source", None),
+            },
+        )
+
+        try:
+            # [v118.5] Abortar si la estrategia detectó problemas de integridad
+            if "error" in ind:
+                # bot.log(f"⏭️ {symbol} descartado por estrategia: {ind['error']}")
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    f"⏭️ {ind['error']}",
+                    ind,
+                )
+                continue
+
+            bot._update_signal_diagnostics(
+                symbol,
+                audit_signal,
+                prob_final,
+                mode,
+                votos,
+                ind,
+                signal_stats,
+            )
+
+            (
+                decision,
+                ctx,
+                ob_status,
+                vol_rel,
+            ) = bot._build_symbol_context(
+                symbol_raw,
+                symbol,
+                df_main,
+                price,
+                ind,
+                audit_signal,
+            )
+
+            prob_final, filter_passed, filter_reason, ctx = (
+                bot._apply_entry_filters_and_adjust_prob(
+                    symbol=symbol,
+                    symbol_raw=symbol_raw,
+                    df_main=df_main,
+                    audit_signal=audit_signal,
+                    prob_final=prob_final,
+                    ctx=ctx,
+                    vol_rel=vol_rel,
+                )
+            )
+
+            # --- Telemetría ML UI ---
+            bot.last_ml_confidence = prob_final
+            ml_pure_prob = 0.0 if bot.bootstrap_heuristic_mode else votos.get("G", 0.0)
+            bot.last_ghost_weight = (
+                0.0
+                if bot.bootstrap_heuristic_mode
+                else getattr(bot, "ghost_weight_override", 35.0)
+            )
+
+            audit_verdict = bot._resolve_audit_verdict_and_stats(
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                ob_status=ob_status,
+                pnl_real_hoy=pnl_real_hoy,
+                mode=mode,
+                ctx=ctx,
+                filter_passed=filter_passed,
+                filter_reason=filter_reason,
+                ml_pure_prob=ml_pure_prob,
+                signal_stats=signal_stats,
+            )
+
+            if (
+                not ind
+                or ind.get("rsi", {}).get("val") == "--"
+                or pd.isna(ind.get("rsi", {}).get("val"))
+            ):
+                bot.log(
+                    f"⚠️ SKIP {symbol}: RSI={ind.get('rsi', {}).get('val')} ind={bool(ind)}"
+                )
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    "⏳ RSI N/A",
+                    ind,
+                )
+                continue
+
+            bot.log(
+                f"🔎 {symbol}: signal={audit_signal} prob={prob_final} verdict={audit_verdict[:30] if audit_verdict else 'None'}"
+            )
+
+            # Actualizar radar unificado para evitar duplicados y errores de matching.
+            bot.update_radar(
+                symbol_raw,
+                decision,
+                prob_final / 100.0,
+                ob_status,
+                audit_verdict,
+                ctx,
+                votos,
+                response_ms=elapsed,
+            )
+
+            is_shadow_exec = True
+            should_execute = False
+
+            # --- BLOQUEO DE CONCURRENCIA POR SÍMBOLO (INSTRUCCIÓN 1) ---
+            # Verificar que no haya operaciones activas en este símbolo ANTES de evaluar señales
+            with bot.lock:
+                if symbol in bot.active_trades:
+                    bot.log(
+                        f"🔒 BLOQUEADO {symbol}: Ya existe operación activa en este símbolo"
+                    )
+                    bot.update_radar(
+                        symbol_raw,
+                        {"signal": "WAIT", "mode": "NONE"},
+                        0.0,
+                        "⚪",
+                        "🔒 OPERACIÓN ACTIVA",
+                        ind,
+                    )
+                    continue
+
+            # --- COOLDOWN UNIVERSAL (INSTRUCCIÓN 2) ---
+            # Verificar cooldown sin importar si es Shadow o Real
+            in_cd, remaining = is_symbol_in_cooldown(bot, symbol)
+            if in_cd:
+                bot.log(f"❄️ COOLDOWN {symbol}: {remaining}m restantes")
+                bot.update_radar(
+                    symbol_raw,
+                    {"signal": "WAIT", "mode": "NONE"},
+                    0.0,
+                    "⚪",
+                    f"❄️ COOLDOWN ({remaining}m)",
+                    ind,
+                )
+                continue
+
+            (
+                should_execute,
+                is_shadow_exec,
+                audit_verdict,
+                filter_passed,
+                filter_reason,
+            ) = bot._plan_execution_mode(
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                audit_verdict=audit_verdict,
+                filter_passed=filter_passed,
+                filter_reason=filter_reason,
+                ctx=ctx,
+            )
+
+            if audit_signal in ["BUY", "SELL"] and not should_execute:
+                payload = bot.data_service.sanitize_context(
+                    {
+                        **(ctx or {}),
+                        "audit_verdict": audit_verdict,
+                        "filter_passed": filter_passed,
+                        "filter_reason": filter_reason,
+                        "votos": votos,
+                        "prob_final": prob_final,
+                    }
+                )
+                if getattr(bot, "main_loop", None) is not None and bot.main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        asyncio.to_thread(
+                            bot.brain.log_signal_alert,
+                            symbol=symbol,
+                            alert_type=audit_signal,
+                            execution_mode=(
+                                "BOOTSTRAP_NONE"
+                                if bot.bootstrap_heuristic_mode
+                                else "NONE"
+                            ),
+                            status="DISCARDED",
+                            features=payload,
+                        ),
+                        bot.main_loop,
+                    )
+                else:
+                    with bot.db_lock:
+                        bot.brain.log_signal_alert(
+                            symbol=symbol,
+                            alert_type=audit_signal,
+                            execution_mode=(
+                                "BOOTSTRAP_NONE"
+                                if bot.bootstrap_heuristic_mode
+                                else "NONE"
+                            ),
+                            status="DISCARDED",
+                            features=payload,
+                        )
+
+            # EJECUCIÓN FINAL + REFRESCO DE RADAR
+            bot._execute_and_update_symbol(
+                symbol_raw=symbol_raw,
+                symbol=symbol,
+                audit_signal=audit_signal,
+                prob_final=prob_final,
+                audit_verdict=audit_verdict,
+                should_execute=should_execute,
+                is_shadow_exec=is_shadow_exec,
+                df_main=df_main,
+                ctx=ctx,
+                ob_status=ob_status,
+                votos=votos,
+                decision=decision,
+                elapsed=elapsed,
+            )
+
+        except Exception as e:
+            # Solo loggear errores críticos, no todos
+            import traceback
+
+            error_str = str(e)
+            bot.log(
+                f"❌ ERROR en {symbol}: {error_str} | {traceback.format_exc(limit=3)}"
+            )
+
+            # Reportar el crash en el radar.
+            for item in bot.scanner_history:
+                if item["symbol"] == symbol:
+                    item["result"] = f"❌ CRASH: {str(e)[:15]}"
+                    break
