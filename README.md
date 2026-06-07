@@ -7,14 +7,14 @@
 ![CI](https://github.com/Rukawua26/Pbot-V5ARCH-DEV/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Exchange](https://img.shields.io/badge/Exchange-Binance_Futures-F3BA2F?logo=binance&logoColor=black)
 ![Runtime](https://img.shields.io/badge/Runtime-Modular-7c3aed)
-![Bot](https://img.shields.io/badge/Bot-v118.7--PRO%20%7C%20Phase_17-2563eb)
+![Bot](https://img.shields.io/badge/Bot-v118.7--PRO%20%7C%20Phase_18-2563eb)
 ![Markov](https://img.shields.io/badge/HMM-Markov_Intelligence-f97316)
 ![Coverage](https://img.shields.io/badge/Coverage-47%25-22c55e)
 ![Modes](https://img.shields.io/badge/Modes-PAPER%20%7C%20REAL%20%7C%20SHADOW-0ea5e9)
 ![Shadow](https://img.shields.io/badge/Shadow_Capacity-20-9333ea)
 ![Deploy](https://img.shields.io/badge/Deploy-systemd%20%7C%20Docker-111827)
-![Risk](https://img.shields.io/badge/Risk_Engine-v118.5-red)
-![Tests](https://img.shields.io/badge/Tests-838%20ok%20%7C%202%20skipped-22c55e)
+![Risk](https://img.shields.io/badge/Risk_Engine-v118.7-red)
+![Tests](https://img.shields.io/badge/Tests-623%20ok%20%7C%202%20skipped-22c55e)
 
 **Bot de trading con enfoque runtime-first: decisión, ejecución, reconciliación y observabilidad en una arquitectura modular.**
 
@@ -134,6 +134,9 @@ flowchart LR
 | 14 | Refactorización: emergencia close unificado, endurecimiento config, eliminación código muerto, fix mock leak en tests | ✅ |
 | 15 | MTF regime-aware (pullback 0.75 en BULL/BEAR), spread dinámico por régimen, REGIME_TUNING activado por defecto con MIN_TRADES=20 | ✅ |
 | 16 | Kinetic deceleration en SRAgent: boost x1.3 en absorción (pin bar/doji), penalty x0.7 en falling knife (marubozu) | ✅ |
+| 17 | Recalibración SHADOW: umbrales `SHADOW_MODE_MIN 40%`, `SHOCK_MIN_DIST_PCT 0.15%`, `HMM_RANGE_PENALTY 0.80x`; config unificada en `manager.py` | ✅ |
+| 18 | Hardening técnico: retiro de wrappers legacy, rutas canónicas `tools.dashboard`, RAG vectorizado NumPy, maturity cache hash-debounce, `DB_PATH` canónico compartido, 623 tests validados | ✅ |
+| 19 | GitHub Projects v2 Kanban: integración async no-bloqueante para ciclo de vida de operaciones (entrada → posición → cierre → PnL) | ✅ |
 
 ---
 
@@ -790,12 +793,18 @@ bash tools/stop_real_pilot.sh
 
 ## 📚 Documentación Adicional
 
-- `CONTRIBUTING.md`
-- `SECURITY.md`
-- `SPEC.md`
-- `BOT_TECHNICAL_ROADMAP.md`
-- `RELEASE_FREEZE_REPORT_2026-04-01.md`
-- `docs/runbooks/sre-intent-recovery.md`
+| Archivo | Descripción |
+|---|---|
+| `CHANGELOG.md` | Historial de versiones y cambios por release |
+| `CONTRIBUTING.md` | Guía para contribuidores y convenciones de código |
+| `SECURITY.md` | Política de seguridad y reporte de vulnerabilidades |
+| `SPEC.md` | Especificación técnica del sistema |
+| `BOT_TECHNICAL_ROADMAP.md` | Hoja de ruta técnica y fases planeadas |
+| `RELEASE_FREEZE_REPORT_2026-04-01.md` | Reporte de freeze de release Abril 2026 |
+| `docs/runbooks/sre-intent-recovery.md` | Runbook de recovery de intents SRE |
+| `docs/runbooks/real-trading.md` | Checklist de activación del modo REAL |
+| `docs/runbooks/recovery.md` | Procedimientos de recuperación de estado |
+| `docs/runbooks/github-projects-kanban.md` | Guía de integración GitHub Projects Kanban |
 
 ---
 
